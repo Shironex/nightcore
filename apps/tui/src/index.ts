@@ -1,23 +1,42 @@
 #!/usr/bin/env bun
 /**
- * Nightcore TUI — STUB for the foundation.
+ * Nightcore TUI entry — the daily-driver surface.
  *
- * The full terminal UI (OpenTUI/Ink + React, plan-vs-build toggle, streamed
- * render, interactive permission approval) is deferred. This stub exists to lock
- * the dependency boundary: the TUI imports the engine FAÇADE + contracts only,
- * never the SDK directly. See docs/architecture.md for the build-out plan.
+ * Wires the engine façade to an OpenTUI + React view: it resolves config, builds
+ * a `SessionManager`, creates the terminal renderer, and mounts `<App>`. The
+ * surface speaks ONLY `SurfaceCommand`/`NightcoreEvent` — the SDK is never
+ * imported here (enforced by the architectural eslint boundary).
+ *
+ * Run: `bun run apps/tui/src/index.ts`
  */
+import { createElement } from 'react';
+import { createCliRenderer } from '@opentui/core';
+import { createRoot } from '@opentui/react';
+import { resolveConfig } from '@nightcore/config';
 import { SessionManager } from '@nightcore/engine';
-import type { Config } from '@nightcore/contracts';
+import type { PermissionMode } from '@nightcore/contracts';
+import { App } from './App.js';
 
-// Type-only reference proving the façade boundary compiles. The real TUI will
-// construct a SessionManager and render its event stream.
-export type TuiEngine = SessionManager;
-export type TuiConfig = Config;
-
-function main(): void {
-  process.stdout.write('Nightcore TUI — coming soon.\n');
-  process.stdout.write('Use the headless CLI for now: `bun run apps/cli/src/index.ts "<prompt>"`\n');
+/** The TUI drives the two interactive modes; anything else from config maps to
+ *  the safe default (plan = read-only). Shift+Tab flips plan ↔ build at runtime. */
+function normalizeMode(mode: PermissionMode): PermissionMode {
+  return mode === 'acceptEdits' ? 'acceptEdits' : 'plan';
 }
 
-main();
+async function main(): Promise<void> {
+  const config = resolveConfig();
+  const manager = new SessionManager(config);
+
+  const renderer = await createCliRenderer({ exitOnCtrlC: false });
+  createRoot(renderer).render(
+    createElement(App, {
+      manager,
+      defaults: {
+        model: config.model,
+        permissionMode: normalizeMode(config.permissions.mode),
+      },
+    }),
+  );
+}
+
+void main();
