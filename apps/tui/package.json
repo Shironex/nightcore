@@ -1,0 +1,17 @@
+{
+  "name": "@nightcore/tui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "nightcore-tui": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun run src/index.ts"
+  },
+  "dependencies": {
+    "@nightcore/contracts": "workspace:*",
+    "@nightcore/engine": "workspace:*",
+    "@nightcore/config": "workspace:*"
+  }
+}
