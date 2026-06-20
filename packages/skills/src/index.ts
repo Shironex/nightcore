@@ -1,12 +1,14 @@
 /**
- * @nightcore/skills — placeholder for Nightcore skill / subagent presets.
+ * @nightcore/skills — Nightcore skill / subagent presets.
  *
  * A "skill" maps onto the SDK's `AgentDefinition` (own prompt, tools, model,
- * permission mode), invoked via the SDK's `Agent` tool. For the foundation this
- * is an empty, typed registry; presets get fleshed out once the thin core
- * proves out (see docs/architecture.md — deferred).
+ * permission mode), invoked via the SDK's `Agent` tool. The engine reads
+ * `nightcoreSkills` to offer subagents/presets.
  *
- * Imports `contracts` only — never the engine (dependency inversion).
+ * Imports `contracts` only — never the engine (dependency inversion). Tool
+ * names use the same `mcp__nightcore__<tool>` namespace `@nightcore/tools`
+ * exposes; they are declared as literals here so this package stays SDK-free
+ * and dependency-light.
  */
 
 /** A Nightcore skill preset. Structurally compatible with the SDK's
@@ -24,5 +26,65 @@ export interface SkillDefinition {
   model?: string;
 }
 
-/** The registered skills. Empty for the foundation. */
-export const nightcoreSkills: SkillDefinition[] = [];
+/** Fully-qualified name of a Nightcore in-process tool, e.g. `mcp__nightcore__grep`. */
+function nightcoreTool(name: string): string {
+  return `mcp__nightcore__${name}`;
+}
+
+/**
+ * Read-only investigator. Has every non-mutating capability (read, list, search,
+ * git inspection) but no write/edit/exec — it can analyse a codebase and report
+ * without changing anything. Pair with a strict permission mode upstream.
+ */
+const reviewerSkill: SkillDefinition = {
+  name: 'reviewer',
+  description: 'Read-only code reviewer: inspects and reports, never edits.',
+  prompt: [
+    'You are a meticulous code reviewer operating in read-only mode.',
+    'Investigate the codebase using read_file, list_dir, glob, grep, git_status,',
+    'and git_diff. You must NOT modify any file or run shell commands.',
+    'Produce findings as a concise, prioritised report: correctness bugs first,',
+    'then maintainability and reuse opportunities. Cite file paths and line',
+    'numbers. If you are unsure, say so rather than guessing.',
+  ].join(' '),
+  tools: [
+    nightcoreTool('read_file'),
+    nightcoreTool('list_dir'),
+    nightcoreTool('glob'),
+    nightcoreTool('grep'),
+    nightcoreTool('git_status'),
+    nightcoreTool('git_diff'),
+  ],
+};
+
+/**
+ * Full-capability implementer. Adds the mutating tools (write, edit, run) on top
+ * of the read/search surface so it can actually land changes. Mutating tools
+ * remain gated by the engine's PermissionLayer at execution time.
+ */
+const builderSkill: SkillDefinition = {
+  name: 'builder',
+  description: 'Implements changes end-to-end: reads, edits, and verifies.',
+  prompt: [
+    'You are a focused implementation agent. Read and search the codebase to',
+    'understand it, then make the smallest correct change to satisfy the task.',
+    'Use write_file and edit_file to apply changes and run_command to verify',
+    '(typecheck, tests). Follow existing conventions, avoid unrelated edits, and',
+    'leave the working tree in a verifiable state. Report what you changed and',
+    'how you confirmed it.',
+  ].join(' '),
+  tools: [
+    nightcoreTool('read_file'),
+    nightcoreTool('list_dir'),
+    nightcoreTool('glob'),
+    nightcoreTool('grep'),
+    nightcoreTool('write_file'),
+    nightcoreTool('edit_file'),
+    nightcoreTool('git_status'),
+    nightcoreTool('git_diff'),
+    nightcoreTool('run_command'),
+  ],
+};
+
+/** The registered skills the engine can offer as subagents. */
+export const nightcoreSkills: SkillDefinition[] = [reviewerSkill, builderSkill];
