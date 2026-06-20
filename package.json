@@ -21,6 +21,7 @@
     "cli": "bun run apps/cli/src/index.ts",
     "tui": "bun run apps/tui/src/index.ts",
     "new:tool": "bun run tools/codegen/new-tool.ts",
+    "test": "bun test",
     "lint": "eslint ."
   },
   "devDependencies": {

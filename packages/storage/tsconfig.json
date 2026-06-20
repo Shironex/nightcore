@@ -3,11 +3,22 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*"
+  ],
   "references": [
-    { "path": "../contracts" },
-    { "path": "../shared" }
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../shared"
+    }
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

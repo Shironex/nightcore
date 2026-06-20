@@ -1,0 +1,113 @@
+/// <reference types="bun" />
+import { describe, expect, test } from 'bun:test';
+import { NightcoreEventSchema, type NightcoreEvent } from './events.js';
+
+describe('NightcoreEventSchema round-trips', () => {
+  const valid: NightcoreEvent[] = [
+    {
+      type: 'session-started',
+      sessionId: 1,
+      prompt: 'hello',
+      model: 'claude-opus-4-8',
+      permissionMode: 'default',
+    },
+    {
+      type: 'session-ready',
+      sessionId: 1,
+      sdkSessionId: 'uuid-abc',
+      model: 'claude-opus-4-8',
+      tools: ['Read', 'Bash'],
+    },
+    { type: 'assistant-delta', sessionId: 2, text: 'partial', partial: true },
+    {
+      type: 'tool-use-requested',
+      sessionId: 3,
+      toolUseId: 'tu_1',
+      toolName: 'Bash',
+      input: { command: 'ls' },
+    },
+    {
+      type: 'permission-required',
+      sessionId: 4,
+      requestId: 'req_1',
+      toolName: 'Write',
+      input: { path: '/tmp/x' },
+    },
+    {
+      type: 'session-completed',
+      sessionId: 5,
+      result: 'ok',
+      costUsd: 0.1,
+      numTurns: 3,
+    },
+    {
+      type: 'session-failed',
+      sessionId: 6,
+      reason: 'rate-limit',
+      message: 'slow down',
+    },
+    { type: 'session-status', sessionId: 7, status: 'running' },
+  ];
+
+  for (const event of valid) {
+    test(`accepts and preserves a ${event.type} event`, () => {
+      const parsed = NightcoreEventSchema.parse(event);
+      expect(parsed).toEqual(event);
+    });
+  }
+});
+
+describe('NightcoreEventSchema rejections', () => {
+  test('rejects an unknown discriminant', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'not-a-real-event',
+      sessionId: 1,
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a negative sessionId', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'session-status',
+      sessionId: -1,
+      status: 'running',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a non-integer sessionId', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'session-status',
+      sessionId: 1.5,
+      status: 'running',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a session-failed event with an unlisted reason', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'session-failed',
+      sessionId: 1,
+      reason: 'meltdown',
+      message: 'x',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a session-status event with an unknown status', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'session-status',
+      sessionId: 1,
+      status: 'vibing',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a session-started event missing required fields', () => {
+    const result = NightcoreEventSchema.safeParse({
+      type: 'session-started',
+      sessionId: 1,
+    });
+    expect(result.success).toBe(false);
+  });
+});

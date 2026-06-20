@@ -3,16 +3,37 @@
   "compilerOptions": {
     "rootDir": "src",
     "outDir": "dist",
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src/**/*"],
+  "include": [
+    "src/**/*"
+  ],
   "references": [
-    { "path": "../contracts" },
-    { "path": "../config" },
-    { "path": "../storage" },
-    { "path": "../shared" },
-    { "path": "../tools" },
-    { "path": "../skills" },
-    { "path": "../mcp" }
+    {
+      "path": "../contracts"
+    },
+    {
+      "path": "../config"
+    },
+    {
+      "path": "../storage"
+    },
+    {
+      "path": "../shared"
+    },
+    {
+      "path": "../tools"
+    },
+    {
+      "path": "../skills"
+    },
+    {
+      "path": "../mcp"
+    }
+  ],
+  "exclude": [
+    "src/**/*.test.ts"
   ]
 }

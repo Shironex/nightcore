@@ -1,0 +1,247 @@
+/// <reference types="bun" />
+import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
+import * as fs from 'node:fs';
+import * as os from 'node:os';
+import * as path from 'node:path';
+import type { Config, NightcoreEvent } from '@nightcore/contracts';
+
+/**
+ * The SDK boundary is stubbed so no live Claude model is ever spawned. Each
+ * fake `query()` call pulls the next scripted message script from `nextScript`,
+ * exposing a controllable async-iterable plus the control methods the runner
+ * proxies to (`interrupt`/`setModel`/`setPermissionMode`).
+ */
+type Script =
+  | { kind: 'messages'; messages: unknown[] }
+  | { kind: 'throw'; error: unknown };
+
+let scripts: Script[] = [];
+const interruptCalls: number[] = [];
+
+function makeFakeQuery() {
+  const script = scripts.shift() ?? { kind: 'messages', messages: [] };
+  let index = 0;
+  const iterator: AsyncGenerator<unknown> = {
+    async next() {
+      if (script.kind === 'throw') {
+        throw script.error;
+      }
+      if (index >= script.messages.length) {
+        return { value: undefined, done: true };
+      }
+      return { value: script.messages[index++], done: false };
+    },
+    async return() {
+      return { value: undefined, done: true };
+    },
+    async throw(e) {
+      throw e;
+    },
+    [Symbol.asyncIterator]() {
+      return iterator;
+    },
+  };
+  return Object.assign(iterator, {
+    async interrupt() {
+      interruptCalls.push(1);
+    },
+    async setModel() {},
+    async setPermissionMode() {},
+  });
+}
+
+// Spread the real module so all other named exports the engine pulls (`tool`,
+// `createSdkMcpServer`, …) still resolve; override only `query` so no live
+// model is ever spawned.
+const realSdk = await import('@anthropic-ai/claude-agent-sdk');
+mock.module('@anthropic-ai/claude-agent-sdk', () => ({
+  ...realSdk,
+  query: () => makeFakeQuery(),
+}));
+
+// Imported AFTER the mock is registered so the runner picks up the stub.
+const { SessionManager } = await import('./session-manager.js');
+
+let tmp: string;
+
+function makeConfig(): Config {
+  const home = path.join(tmp, 'home');
+  return {
+    model: 'claude-opus-4-8',
+    permissions: { allow: [], deny: [], mode: 'default' },
+    paths: { home, sessions: path.join(home, 'sessions') },
+    logLevel: 'silent',
+  };
+}
+
+/** A scripted `result: success` SDK message. */
+function successMessage(): unknown {
+  return {
+    type: 'result',
+    subtype: 'success',
+    result: 'done',
+    total_cost_usd: 0.01,
+    num_turns: 1,
+  };
+}
+
+function initMessage(): unknown {
+  return {
+    type: 'system',
+    subtype: 'init',
+    session_id: 'sdk-uuid',
+    model: 'claude-opus-4-8',
+    tools: [],
+  };
+}
+
+/** Collect events and resolve once an event matching `until` arrives. */
+function collect(
+  manager: InstanceType<typeof SessionManager>,
+  until: (e: NightcoreEvent) => boolean,
+): { events: NightcoreEvent[]; done: Promise<void> } {
+  const events: NightcoreEvent[] = [];
+  let resolve!: () => void;
+  const done = new Promise<void>((r) => (resolve = r));
+  manager.on((event) => {
+    events.push(event);
+    if (until(event)) resolve();
+  });
+  return { events, done };
+}
+
+beforeEach(() => {
+  tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nightcore-sm-'));
+  scripts = [];
+  interruptCalls.length = 0;
+});
+
+afterEach(() => {
+  fs.rmSync(tmp, { recursive: true, force: true });
+});
+
+describe('SessionManager happy path', () => {
+  test('emits started → ready → completed for a successful session', async () => {
+    scripts = [{ kind: 'messages', messages: [initMessage(), successMessage()] }];
+    const manager = new SessionManager(makeConfig());
+    const { events, done } = collect(manager, (e) => e.type === 'session-completed');
+
+    await manager.dispatch({ type: 'start-session', prompt: 'hi' });
+    await done;
+
+    const types = events.map((e) => e.type);
+    expect(types).toContain('session-started');
+    expect(types).toContain('session-ready');
+    expect(types).toContain('session-completed');
+  });
+
+  test('persists a session record to disk', async () => {
+    scripts = [{ kind: 'messages', messages: [initMessage(), successMessage()] }];
+    const manager = new SessionManager(makeConfig());
+    const { done } = collect(manager, (e) => e.type === 'session-completed');
+    await manager.dispatch({ type: 'start-session', prompt: 'persist me' });
+    await done;
+
+    const indexFile = path.join(tmp, 'home', 'sessions', 'index.jsonl');
+    expect(fs.existsSync(indexFile)).toBe(true);
+    expect(fs.readFileSync(indexFile, 'utf8')).toContain('persist me');
+  });
+});
+
+describe('SessionManager monotonic ids', () => {
+  test('hands out climbing ids that never reset across sessions', async () => {
+    scripts = [
+      { kind: 'messages', messages: [successMessage()] },
+      { kind: 'messages', messages: [successMessage()] },
+      { kind: 'messages', messages: [successMessage()] },
+    ];
+    const manager = new SessionManager(makeConfig());
+    const started: number[] = [];
+    let completed = 0;
+    let resolve!: () => void;
+    const allDone = new Promise<void>((r) => (resolve = r));
+    manager.on((e) => {
+      if (e.type === 'session-started') started.push(e.sessionId);
+      if (e.type === 'session-completed' && ++completed === 3) resolve();
+    });
+
+    await manager.dispatch({ type: 'start-session', prompt: 'a' });
+    await manager.dispatch({ type: 'start-session', prompt: 'b' });
+    await manager.dispatch({ type: 'start-session', prompt: 'c' });
+    await allDone;
+
+    expect(started).toEqual([1, 2, 3]);
+    // Strictly increasing, no reuse.
+    expect(new Set(started).size).toBe(3);
+  });
+});
+
+describe('SessionManager degrade-not-throw', () => {
+  test('a runner crash surfaces as session-failed and never rejects dispatch', async () => {
+    scripts = [{ kind: 'throw', error: new Error('sdk exploded') }];
+    const manager = new SessionManager(makeConfig());
+    const { events, done } = collect(manager, (e) => e.type === 'session-failed');
+
+    // dispatch must resolve (never reject) even though the runner crashes.
+    await expect(
+      manager.dispatch({ type: 'start-session', prompt: 'boom' }),
+    ).resolves.toBeUndefined();
+    await done;
+
+    const failed = events.find((e) => e.type === 'session-failed');
+    expect(failed).toBeDefined();
+    if (failed?.type === 'session-failed') {
+      expect(failed.reason).toBe('runner-crash');
+      expect(failed.message).toContain('sdk exploded');
+    }
+  });
+
+  test('the manager retires a crashed session (activeCount returns to 0)', async () => {
+    scripts = [{ kind: 'throw', error: new Error('crash') }];
+    const manager = new SessionManager(makeConfig());
+    const { done } = collect(manager, (e) => e.type === 'session-failed');
+    await manager.dispatch({ type: 'start-session', prompt: 'x' });
+    await done;
+    // retire() runs in the run().finally microtask; flush it.
+    await Promise.resolve();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.activeCount).toBe(0);
+  });
+
+  test('a command for an unknown session id is dropped, not thrown', async () => {
+    const manager = new SessionManager(makeConfig());
+    await expect(
+      manager.dispatch({ type: 'interrupt', sessionId: 9999 }),
+    ).resolves.toBeUndefined();
+  });
+});
+
+describe('SessionManager late-event dropping', () => {
+  test('after a session retires, a completed terminal still routes cleanly', async () => {
+    // A session that completes then has its runner fully torn down. A second
+    // start gets a fresh id; the first id is never reused, so any late event
+    // bearing id 1 after retirement is dropped by the monotonic-id guard.
+    scripts = [
+      { kind: 'messages', messages: [successMessage()] },
+      { kind: 'messages', messages: [successMessage()] },
+    ];
+    const manager = new SessionManager(makeConfig());
+    const startedIds: number[] = [];
+    let completed = 0;
+    let resolve!: () => void;
+    const twoDone = new Promise<void>((r) => (resolve = r));
+    manager.on((e) => {
+      if (e.type === 'session-started') startedIds.push(e.sessionId);
+      if (e.type === 'session-completed' && ++completed === 2) resolve();
+    });
+
+    await manager.dispatch({ type: 'start-session', prompt: 'first' });
+    await manager.dispatch({ type: 'start-session', prompt: 'second' });
+    await twoDone;
+    // retire() runs in each run().finally microtask; flush before asserting.
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(startedIds).toEqual([1, 2]);
+    expect(manager.activeCount).toBe(0);
+  });
+});
