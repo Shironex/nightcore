@@ -65,6 +65,15 @@ export type ConfigPaths = z.infer<typeof ConfigPathsSchema>;
  * The layered Nightcore configuration. Built by merging:
  * defaults → `~/.nightcore/config.json` → `./.nightcore/config.json`.
  */
+export const LogLevelSchema = z.enum([
+  'silent',
+  'error',
+  'warn',
+  'info',
+  'debug',
+]);
+export type LogLevel = z.infer<typeof LogLevelSchema>;
+
 export const ConfigSchema = z.object({
   /** Default model for new sessions. Free string to allow any SDK-supported id. */
   model: z.string().default('claude-opus-4-8'),
@@ -73,13 +82,30 @@ export const ConfigSchema = z.object({
   /** Resolved filesystem paths. */
   paths: ConfigPathsSchema,
   /** Log verbosity. */
-  logLevel: z.enum(['silent', 'error', 'warn', 'info', 'debug']).default('info'),
+  logLevel: LogLevelSchema.default('info'),
 });
 export type Config = z.infer<typeof ConfigSchema>;
 
 /**
  * The user-authored portion of config (everything except resolved `paths`,
  * which the resolver computes). This is what lives in the on-disk JSON files.
+ *
+ * Critically, this schema carries **no defaults**: a field is present only if
+ * the file set it explicitly. Defaults live solely on `ConfigSchema` (the
+ * resolved shape). This is what lets `@nightcore/config` layer files correctly —
+ * an absent key in a higher-precedence layer must *inherit*, not clobber with a
+ * defaulted value. (`ConfigSchema.omit().partial()` would re-introduce field
+ * defaults, which silently dropped inherited allow/deny lists.)
  */
-export const ConfigFileSchema = ConfigSchema.omit({ paths: true }).partial();
+export const ConfigFileSchema = z.object({
+  model: z.string().optional(),
+  permissions: z
+    .object({
+      allow: z.array(z.string()).optional(),
+      deny: z.array(z.string()).optional(),
+      mode: PermissionModeSchema.optional(),
+    })
+    .optional(),
+  logLevel: LogLevelSchema.optional(),
+});
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;

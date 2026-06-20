@@ -38,16 +38,24 @@ function readLayer(dir: string, logger?: Logger): ConfigFile {
   return validated.data;
 }
 
-/** Shallow-merge config layers, lowest precedence first. Later layers win;
- *  nested `permissions` is merged one level deep so a project can override the
- *  mode without dropping the inherited allow/deny lists. */
+/** Merge config layers, lowest precedence first. Later layers win, but only for
+ *  keys they set explicitly — `ConfigFileSchema` carries no defaults, so an
+ *  absent key inherits rather than clobbers. `permissions` is merged one level
+ *  deep so a project can override `mode` without dropping the inherited
+ *  allow/deny lists. */
 function mergeLayers(...layers: ConfigFile[]): ConfigFile {
   const out: ConfigFile = {};
   for (const layer of layers) {
     if (layer.model !== undefined) out.model = layer.model;
     if (layer.logLevel !== undefined) out.logLevel = layer.logLevel;
     if (layer.permissions !== undefined) {
-      out.permissions = { ...out.permissions, ...layer.permissions };
+      const p = layer.permissions;
+      out.permissions = {
+        ...out.permissions,
+        ...(p.allow !== undefined ? { allow: p.allow } : {}),
+        ...(p.deny !== undefined ? { deny: p.deny } : {}),
+        ...(p.mode !== undefined ? { mode: p.mode } : {}),
+      };
     }
   }
   return out;
