@@ -115,6 +115,7 @@ export function ModelPicker({
       >
         <select
           focused
+          style={{ flexGrow: 1 }}
           options={effortOptions}
           onSelect={onEffortChosen}
           showDescription
@@ -141,6 +142,7 @@ export function ModelPicker({
     >
       <select
         focused
+        style={{ flexGrow: 1 }}
         options={modelOptions}
         onSelect={onModelChosen}
         showDescription
