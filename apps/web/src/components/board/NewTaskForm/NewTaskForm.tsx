@@ -38,12 +38,12 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
       role="dialog"
       aria-modal="true"
       aria-label="New task"
-      className="fixed inset-0 z-20 flex items-start justify-center overflow-y-auto bg-black/60 px-4 py-16 backdrop-blur-sm"
+      className="fixed inset-0 z-20 flex justify-end bg-black/60 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="flex max-h-full w-full max-w-lg flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
-        style={{ animation: 'nc-rise .22s cubic-bezier(.22,1,.36,1)' }}
+        className="flex h-full w-full max-w-lg flex-col overflow-hidden border-l border-border bg-popover shadow-2xl"
+        style={{ animation: 'nc-sheet-in .28s cubic-bezier(.22,1,.36,1)' }}
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
