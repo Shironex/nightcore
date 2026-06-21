@@ -68,6 +68,19 @@ describe('resolveConfig precedence', () => {
     expect(config.permissions.mode).toBe('acceptEdits');
   });
 
+  test('carries effort across layers (home sets it, project inherits)', () => {
+    writeHomeConfig(JSON.stringify({ effort: 'high' }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.effort).toBe('high');
+  });
+
+  test('a project layer overrides the inherited effort', () => {
+    writeHomeConfig(JSON.stringify({ effort: 'high' }));
+    writeProjectConfig(project, JSON.stringify({ effort: 'low' }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.effort).toBe('low');
+  });
+
   // A project layer overriding `mode` must inherit the home allow/deny lists.
   // Guaranteed by the default-free `ConfigFileSchema` + explicit nested merge in
   // `mergeLayers` (an absent key stays absent, so it can't clobber).

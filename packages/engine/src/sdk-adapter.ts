@@ -5,6 +5,7 @@
  * surface (which drifts across versions) confined to one place.
  */
 import type {
+  ModelInfo,
   Options,
   PermissionMode,
   Query,
@@ -14,7 +15,7 @@ import type {
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { NightcoreEvent } from '@nightcore/contracts';
 
-export type { Options, PermissionMode, Query, SDKMessage, SDKUserMessage };
+export type { ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKUserMessage };
 export { query };
 
 /** Map an `SDKAssistantMessageError` onto a stable Nightcore failure reason. */

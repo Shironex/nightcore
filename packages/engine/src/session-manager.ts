@@ -1,6 +1,7 @@
 import { EventEmitter } from 'node:events';
 import type {
   Config,
+  ModelDescriptor,
   NightcoreEvent,
   SessionRecord,
   SessionStatus,
@@ -9,6 +10,22 @@ import type {
 import { SessionStore } from '@nightcore/storage';
 import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionRunner } from './session-runner.js';
+import type { ModelInfo } from './sdk-adapter.js';
+
+/**
+ * Map an SDK `ModelInfo` to a contract `ModelDescriptor`. Pure so it can be
+ * unit-tested without spinning a live query. The SDK marks `supportsEffort` /
+ * `supportedEffortLevels` optional; default to the most-conservative values.
+ */
+export function toModelDescriptor(info: ModelInfo): ModelDescriptor {
+  return {
+    value: info.value,
+    displayName: info.displayName,
+    description: info.description,
+    supportsEffort: info.supportsEffort ?? false,
+    supportedEffortLevels: info.supportedEffortLevels ?? [],
+  };
+}
 
 interface ManagedSession {
   id: number;
@@ -95,11 +112,57 @@ export class SessionManager {
     return this.sessions.size;
   }
 
+  /**
+   * List the models the SDK currently offers (dynamic — fetched at runtime, not
+   * hardcoded), each with its supported effort levels. Powers the surface's
+   * `/model` picker.
+   *
+   * Reuses a live session's runner when one exists; otherwise spins a transient,
+   * input-less runner whose `supportedModels()` probe tears its own query down.
+   * Degrades to `[]` on any error (logged at debug) — never throws.
+   */
+  async listModels(): Promise<ModelDescriptor[]> {
+    try {
+      const runner = this.firstLiveRunner() ?? this.makeProbeRunner();
+      const models = await runner.supportedModels();
+      return models.map(toModelDescriptor);
+    } catch (error) {
+      this.logger?.debug('listModels() failed; returning empty list', error);
+      return [];
+    }
+  }
+
+  /** Any currently-live runner, to piggyback its already-open query. */
+  private firstLiveRunner(): SessionRunner | undefined {
+    for (const session of this.sessions.values()) return session.runner;
+    return undefined;
+  }
+
+  /** A runner used only to probe `supportedModels()`. It never runs a session —
+   *  `supportedModels()` spins and tears down its own transient query. */
+  private makeProbeRunner(): SessionRunner {
+    return new SessionRunner(
+      {
+        sessionId: -1,
+        prompt: '',
+        model: this.config.model,
+        effort: this.config.effort,
+        permissionMode: this.config.permissions.mode,
+        permissionPolicy: this.config.permissions,
+        cwd: process.cwd(),
+        apiKeyFallback: this.apiKeyFallback,
+      },
+      () => {},
+      this.logger?.child('model-probe'),
+    );
+  }
+
   private startSession(
     command: Extract<SurfaceCommand, { type: 'start-session' }>,
   ): number {
     const id = this.nextSessionId();
     const model = command.model ?? this.config.model;
+    const effort = command.effort ?? this.config.effort;
     const permissionMode =
       command.permissionMode ?? this.config.permissions.mode;
     const cwd = command.cwd ?? process.cwd();
@@ -119,6 +182,7 @@ export class SessionManager {
         sessionId: id,
         prompt: command.prompt,
         model,
+        effort,
         permissionMode,
         permissionPolicy: this.config.permissions,
         cwd,

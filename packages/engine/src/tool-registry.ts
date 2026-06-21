@@ -8,7 +8,7 @@ import {
   nightcoreToolDescriptors,
 } from '@nightcore/tools';
 import { externalMcpServers } from '@nightcore/mcp';
-import type { ToolDescriptor } from '@nightcore/contracts';
+import type { ToolDescriptor, ToolRisk } from '@nightcore/contracts';
 
 /**
  * Assembles the tool surface handed to the SDK:
@@ -44,5 +44,22 @@ export class ToolRegistry {
       mutating: true,
     }));
     return [...nightcoreToolDescriptors, ...external];
+  }
+
+  /**
+   * Look up a tool's risk class by the name the model uses. The model sees
+   * fully-qualified names (`mcp__nightcore__run_command`); descriptors store the
+   * same, but match is made robust to namespacing by falling back to a suffix
+   * match. Returns `undefined` when no descriptor declares a risk — callers must
+   * treat that as the most-cautious class (`dangerous`).
+   */
+  riskOf(toolName: string): ToolRisk | undefined {
+    const descriptors = this.descriptors();
+    const exact = descriptors.find((d) => d.name === toolName);
+    if (exact) return exact.risk;
+    const suffix = descriptors.find(
+      (d) => d.name.endsWith(`__${toolName}`) || toolName.endsWith(`__${d.name}`),
+    );
+    return suffix?.risk;
   }
 }

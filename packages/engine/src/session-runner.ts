@@ -1,4 +1,5 @@
 import type {
+  EffortLevel,
   NightcoreEvent,
   PermissionMode,
   PermissionPolicy,
@@ -7,6 +8,7 @@ import type { Logger } from '@nightcore/shared';
 import {
   query,
   translateMessage,
+  type ModelInfo,
   type Options,
   type Query,
   type SDKUserMessage,
@@ -14,11 +16,35 @@ import {
 import { PermissionLayer, type ApprovalDecision } from './permission-layer.js';
 import { ToolRegistry } from './tool-registry.js';
 import { HookBus } from './hook-bus.js';
+import { resolveClaudeBinary } from './resolve-claude-binary.js';
+
+/**
+ * A streaming input that yields NO user message and parks until `signal` aborts.
+ * Used by the transient model probe so the SDK enters streaming mode (control
+ * requests like `supportedModels()` require it) without starting a real turn.
+ *
+ * Deliberately yield-less: it must be an async generator to satisfy the SDK's
+ * streaming-input contract, but it never emits a turn — it just keeps the input
+ * stream open until teardown.
+ */
+// eslint-disable-next-line require-yield
+async function* emptyInputStream(
+  signal: AbortSignal,
+): AsyncGenerator<SDKUserMessage> {
+  if (signal.aborted) return;
+  await new Promise<void>((resolve) => {
+    signal.addEventListener('abort', () => resolve(), { once: true });
+  });
+}
 
 export interface SessionRunnerConfig {
   sessionId: number;
   prompt: string;
   model: string;
+  /** Reasoning effort for the session. Fixed at query construction — the SDK has
+   *  no live `setEffort()`, so a surface's effort choice applies to the next
+   *  session. Omitted = let the model decide. */
+  effort?: EffortLevel;
   permissionMode: PermissionMode;
   permissionPolicy: PermissionPolicy;
   cwd: string;
@@ -65,8 +91,10 @@ export class SessionRunner {
           requestId: req.requestId,
           toolName: req.toolName,
           input: req.input,
+          risk: req.risk,
           title: req.title,
         }),
+      (name) => this.registry.riskOf(name),
       logger,
     );
   }
@@ -78,19 +106,15 @@ export class SessionRunner {
     this.enqueueInput(this.cfg.prompt);
 
     const options: Options = {
-      cwd: this.cfg.cwd,
+      ...this.baseOptions(),
       model: this.cfg.model,
       permissionMode: this.cfg.permissionMode,
-      executable: 'bun',
       includePartialMessages: true,
       canUseTool: this.permissions.canUseTool,
       mcpServers: this.registry.mcpServers(),
       hooks: this.hooks.hooks(),
       abortController: this.abort,
-      // Auth: never pass an apiKey. The SDK's bundled CLI resolves the user's
-      // local Claude credentials (~/.claude); ANTHROPIC_API_KEY in the inherited
-      // env is honored as a fallback automatically. See README.
-      stderr: (data) => this.logger?.debug('[sdk stderr]', data),
+      ...(this.cfg.effort !== undefined ? { effort: this.cfg.effort } : {}),
     };
 
     try {
@@ -136,6 +160,51 @@ export class SessionRunner {
   /** Resolve a parked interactive permission from a surface command. */
   approvePermission(requestId: string, decision: ApprovalDecision): boolean {
     return this.permissions.resolve(requestId, decision);
+  }
+
+  /**
+   * Fetch the SDK's dynamic model list. `supportedModels()` is a control request
+   * that needs a live streaming query: if this runner already owns one, reuse it;
+   * otherwise spin a TRANSIENT query (a streaming input that sends no user turn),
+   * ask, then tear it down via its abort controller in `finally` so no subprocess
+   * leaks. Degrades to `[]` on any error.
+   */
+  async supportedModels(): Promise<ModelInfo[]> {
+    if (this.query) {
+      return this.query.supportedModels();
+    }
+
+    const abort = new AbortController();
+    let transient: Query | undefined;
+    try {
+      transient = query({
+        prompt: emptyInputStream(abort.signal),
+        options: { ...this.baseOptions(), abortController: abort },
+      });
+      return await transient.supportedModels();
+    } catch (error) {
+      this.logger?.debug('supportedModels() transient query failed', error);
+      return [];
+    } finally {
+      abort.abort();
+      await transient?.interrupt().catch(() => {});
+    }
+  }
+
+  /** SDK options shared by the main run loop and the transient model probe. Auth:
+   *  never pass an apiKey — the SDK's bundled CLI resolves the user's local Claude
+   *  credentials (~/.claude); ANTHROPIC_API_KEY in the env is honored as a
+   *  fallback automatically. `pathToClaudeCodeExecutable` is set ONLY when the
+   *  resolver names a binary (compiled-distributable case); otherwise it stays
+   *  unset so the SDK's normal in-repo node_modules default applies. */
+  private baseOptions(): Options {
+    const claudePath = resolveClaudeBinary();
+    return {
+      cwd: this.cfg.cwd,
+      executable: 'bun',
+      stderr: (data) => this.logger?.debug('[sdk stderr]', data),
+      ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
+    };
   }
 
   // --- streaming input internals ---------------------------------------------

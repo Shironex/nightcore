@@ -52,68 +52,80 @@ export const nightcoreTools: Array<SdkMcpToolDefinition<any>> = [
 
 /**
  * Static metadata for each tool, for surfaces that want to render the catalog.
- * `mutating` drives the permission tier: read-only tools auto-allow; mutating
- * tools (write/edit/exec) are gated by the engine's PermissionLayer.
+ * `risk` drives the permission tier: `safe` (read-only) may auto-allow; `mutating`
+ * (write/edit) is gated by mode + allow/deny; `dangerous` (shell exec) always
+ * prompts unless explicitly allow-listed. `mutating` is kept in sync with `risk`
+ * (`risk !== 'safe'`) for legacy readers.
  */
 export const nightcoreToolDescriptors: ToolDescriptor[] = [
   {
     name: qualifiedToolName('echo'),
     description: 'Echo a message back to the caller.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('read_file'),
     description: 'Read a UTF-8 text file from the local filesystem.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('write_file'),
     description: 'Write (create or overwrite) a UTF-8 text file.',
     source: 'nightcore',
+    risk: 'mutating',
     mutating: true,
   },
   {
     name: qualifiedToolName('edit_file'),
     description: 'Edit a text file by exact string replacement.',
     source: 'nightcore',
+    risk: 'mutating',
     mutating: true,
   },
   {
     name: qualifiedToolName('list_dir'),
     description: 'List the entries of a directory.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('glob'),
     description: 'Find files by glob pattern.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('grep'),
     description: 'Search file contents by regex (ripgrep with Node fallback).',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('git_status'),
     description: 'Show the git working-tree status.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('git_diff'),
     description: 'Show the git diff of the working tree.',
     source: 'nightcore',
+    risk: 'safe',
     mutating: false,
   },
   {
     name: qualifiedToolName('run_command'),
     description: 'Run a shell command (dangerous; permission-gated).',
     source: 'nightcore',
+    risk: 'dangerous',
     mutating: true,
   },
 ];

@@ -1,6 +1,10 @@
-import type { PermissionPolicy } from '@nightcore/contracts';
+import type { PermissionPolicy, ToolRisk } from '@nightcore/contracts';
 import { createRequestIdFactory, type Logger } from '@nightcore/shared';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+
+/** Look up a tool's declared risk class by the name the model uses. Returns
+ *  `undefined` when no descriptor declares one — treated as `dangerous`. */
+export type RiskLookup = (toolName: string) => ToolRisk | undefined;
 
 /**
  * A pending interactive approval. The PermissionLayer hands the request out to
@@ -15,6 +19,8 @@ export interface PermissionPromptRequest {
   requestId: string;
   toolName: string;
   input: Record<string, unknown>;
+  /** Risk class of the requested tool, threaded onto the emitted event. */
+  risk?: ToolRisk;
   title?: string;
 }
 
@@ -25,9 +31,16 @@ export type ApprovalDecision =
 
 /**
  * Implements the SDK's `canUseTool` callback. Resolution order per request:
- *   1. explicit deny list  → deny immediately
- *   2. explicit allow list → allow immediately
- *   3. otherwise           → emit `permission-required` and await the surface
+ *   1. explicit deny list                       → deny immediately
+ *   2. `dangerous` (or unknown/absent risk) tool
+ *      NOT in the explicit allow list           → always prompt + await surface
+ *   3. explicit allow list                       → allow immediately
+ *   4. otherwise                                 → emit `permission-required`
+ *
+ * Step 2 guarantees shell exec (and any tool whose risk we can't establish) is
+ * never auto-allowed by a broad allow heuristic — even though the SDK only
+ * consults `canUseTool` for calls the mode would prompt on, an over-eager
+ * mode/allow combination must not silently grant arbitrary effect.
  *
  * Note: this layer is the harness-level policy gate. The SDK's own
  * `permissionMode` (plan / acceptEdits / bypassPermissions / …) still applies
@@ -40,6 +53,7 @@ export class PermissionLayer {
   constructor(
     private readonly policy: PermissionPolicy,
     private readonly onPrompt: (req: PermissionPromptRequest) => void,
+    private readonly riskOf: RiskLookup = () => undefined,
     private readonly logger?: Logger,
   ) {}
 
@@ -51,10 +65,31 @@ export class PermissionLayer {
         message: `Tool "${toolName}" is denied by Nightcore policy.`,
       };
     }
-    if (this.policy.allow.includes(toolName)) {
+
+    const risk = this.riskOf(toolName);
+    const isAllowed = this.policy.allow.includes(toolName);
+
+    // A dangerous tool (or one whose risk we can't establish) always prompts
+    // unless explicitly allow-listed — never auto-allowed by the steps below.
+    const dangerous = risk === 'dangerous' || risk === undefined;
+    if (dangerous && !isAllowed) {
+      return this.prompt(toolName, input, risk, options);
+    }
+
+    if (isAllowed) {
       return { behavior: 'allow', updatedInput: input };
     }
 
+    return this.prompt(toolName, input, risk, options);
+  };
+
+  /** Park an interactive approval and hand the request to the surface. */
+  private prompt(
+    toolName: string,
+    input: Record<string, unknown>,
+    risk: ToolRisk | undefined,
+    options: { signal: AbortSignal; title?: string },
+  ): Promise<PermissionResult> {
     const requestId = this.nextRequestId();
     this.logger?.debug('awaiting interactive approval', { requestId, toolName });
 
@@ -69,9 +104,9 @@ export class PermissionLayer {
         { once: true },
       );
 
-      this.onPrompt({ requestId, toolName, input, title: options.title });
+      this.onPrompt({ requestId, toolName, input, risk, title: options.title });
     });
-  };
+  }
 
   /** Resolve a parked approval from a surface `approve-permission` command.
    *  Returns false if the requestId is unknown (already settled / stale). */
