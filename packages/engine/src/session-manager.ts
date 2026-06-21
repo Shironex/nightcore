@@ -10,6 +10,7 @@ import type {
 import { SessionStore } from '@nightcore/storage';
 import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionRunner } from './session-runner.js';
+import { resolveKindPreset } from './kind-presets.js';
 import type { ModelInfo } from './sdk-adapter.js';
 
 /**
@@ -165,9 +166,18 @@ export class SessionManager {
     const id = this.nextSessionId();
     const model = command.model ?? this.config.model;
     const effort = command.effort ?? this.config.effort;
-    const permissionMode =
-      command.permissionMode ?? this.config.permissions.mode;
     const cwd = command.cwd ?? process.cwd();
+
+    // M4: resolve the task kind to its agent preset (system prompt + tool
+    // restrictions + a DEFAULT permission mode). Absent kind ⇒ `build` ⇒ an
+    // empty preset, so the session is identical to pre-M4.
+    const preset = resolveKindPreset(command.kind);
+    // Permission-mode precedence: an explicit command mode wins, then the kind's
+    // default, then the configured session default.
+    const permissionMode =
+      command.permissionMode ??
+      preset.permissionMode ??
+      this.config.permissions.mode;
 
     const record: SessionRecord = {
       id,
@@ -191,6 +201,15 @@ export class SessionManager {
         apiKeyFallback: this.apiKeyFallback,
         settingSources: this.config.settingSources,
         todoFeatureEnabled: this.config.todoFeatureEnabled,
+        ...(preset.appendSystemPrompt !== undefined
+          ? { appendSystemPrompt: preset.appendSystemPrompt }
+          : {}),
+        ...(preset.allowedTools !== undefined
+          ? { allowedTools: preset.allowedTools }
+          : {}),
+        ...(preset.disallowedTools !== undefined
+          ? { disallowedTools: preset.disallowedTools }
+          : {}),
       },
       (event) => this.handleEvent(id, event),
       this.logger?.child(`session-${id}`),
