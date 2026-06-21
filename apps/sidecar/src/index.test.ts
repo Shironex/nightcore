@@ -132,7 +132,7 @@ describe('createSidecar — event sink', () => {
     }
   });
 
-  test('auto-denies a permission request without human input', () => {
+  test('relays a permission request without answering it', () => {
     const manager = new StubManager();
     const lines: string[] = [];
     createSidecar(manager, (line) => lines.push(line));
@@ -145,17 +145,17 @@ describe('createSidecar — event sink', () => {
       input: { command: 'rm -rf /' },
     });
 
-    // The event is still forwarded to the core...
+    // The event is forwarded to the core verbatim...
     expect(lines).toHaveLength(1);
-    // ...and a deny decision is dispatched straight back, no prompt.
-    expect(manager.dispatched).toEqual([
-      {
-        type: 'approve-permission',
-        sessionId: 7,
-        requestId: 'req-1',
-        decision: { behavior: 'deny', message: expect.any(String) },
-      },
-    ]);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: 'permission-required',
+      sessionId: 7,
+      requestId: 'req-1',
+      toolName: 'shell',
+    });
+    // ...and the sidecar dispatches NOTHING back: the request parks in the engine
+    // until the Rust core sends an interactive (or fail-closed) decision.
+    expect(manager.dispatched).toEqual([]);
   });
 });
 

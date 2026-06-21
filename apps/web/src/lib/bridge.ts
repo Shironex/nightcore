@@ -32,6 +32,15 @@ export interface Task {
   summary: string | null;
   error: string | null;
   costUsd: number | null;
+  /** Plan text captured when a `plan`-mode run hits `ExitPlanMode` and the task
+   *  enters `waiting_approval`. Shown in the detail panel; null until produced. */
+  plan: string | null;
+  /** True once `commit_task` created a commit on the task's worktree branch. */
+  committed: boolean;
+  /** True once `merge_task` integrated the branch into the project base. */
+  merged: boolean;
+  /** True when `merge_task` hit a conflict it refused to force. */
+  conflict: boolean;
 }
 
 /** Partial update sent to `update_task`. All fields optional. */
@@ -76,6 +85,22 @@ export type NcEvent =
 export interface SessionEnvelope {
   taskId: string;
   event: NcEvent;
+}
+
+/** A surface decision for a parked permission prompt. Mirrors the Rust
+ *  `respond_permission` arguments. An allow may rewrite the tool input; a deny may
+ *  carry a short reason returned to the model. */
+export type PermissionDecision = 'allow' | 'deny';
+
+/** `nc:permission` payload: an interactive permission prompt for a running task.
+ *  The input may contain paths/commands — render it, but the core never logs it. */
+export interface PermissionPrompt {
+  taskId: string;
+  requestId: string;
+  toolName: string;
+  input: Record<string, unknown>;
+  /** Optional SDK-provided choices the surface can offer (rarely present). */
+  suggestions?: unknown;
 }
 
 /** A known project. Mirrors the Rust `Project` serde struct (camelCase). */
@@ -192,6 +217,58 @@ export async function runTask(id: string): Promise<void> {
 /** Best-effort interrupt of the current run. */
 export async function cancelTask(id: string): Promise<void> {
   await invoke('cancel_task', { id });
+}
+
+// --- Interactive permissions (M3) -----------------------------------------
+
+/** Answer a parked permission prompt (`nc:permission`). An allow may rewrite the
+ *  tool input via `updatedInput`; a deny may carry a short `message` reason.
+ *  No-ops outside Tauri (browser preview). */
+export async function respondPermission(
+  taskId: string,
+  requestId: string,
+  decision: PermissionDecision,
+  options: { updatedInput?: Record<string, unknown>; message?: string } = {},
+): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('respond_permission', {
+    taskId,
+    requestId,
+    decision,
+    updatedInput: options.updatedInput ?? null,
+    message: options.message ?? null,
+  });
+}
+
+// --- Plan approval (M3) ---------------------------------------------------
+
+/** Approve a waiting plan: the same session switches to building it. */
+export async function approveTask(id: string): Promise<void> {
+  await invoke('approve_task', { id });
+}
+
+/** Reject a waiting plan: the session ends and the task fails. */
+export async function rejectTask(id: string): Promise<void> {
+  await invoke('reject_task', { id });
+}
+
+/** Send a waiting plan back to the backlog with the plan kept for editing. */
+export async function refineTask(id: string): Promise<void> {
+  await invoke('refine_task', { id });
+}
+
+// --- Commit / merge (M3) --------------------------------------------------
+
+/** Commit a verified task's worktree (git add -A + commit from its title).
+ *  Rejects with "nothing to commit" when the tree is clean. */
+export async function commitTask(id: string): Promise<void> {
+  await invoke('commit_task', { id });
+}
+
+/** Merge a verified task's branch into the project base. Rejects (and marks the
+ *  task `conflict`) on a merge conflict — never forced. */
+export async function mergeTask(id: string): Promise<void> {
+  await invoke('merge_task', { id });
 }
 
 // --- Autonomous loop (M2) -------------------------------------------------
@@ -383,5 +460,27 @@ export async function onLoopEvent(
   if (!isTauri()) return () => {};
   return listen<unknown>('nc:loop', (event) => {
     if (isLoopEnvelope(event.payload)) handler(event.payload);
+  });
+}
+
+/** Narrow an unknown payload to a `PermissionPrompt` defensively. */
+function isPermissionPrompt(value: unknown): value is PermissionPrompt {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    typeof v.taskId === 'string' &&
+    typeof v.requestId === 'string' &&
+    typeof v.toolName === 'string'
+  );
+}
+
+/** Subscribe to `nc:permission` interactive prompts. Returns an unlisten function
+ *  (a no-op outside Tauri). */
+export async function onPermissionEvent(
+  handler: (prompt: PermissionPrompt) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<unknown>('nc:permission', (event) => {
+    if (isPermissionPrompt(event.payload)) handler(event.payload);
   });
 }

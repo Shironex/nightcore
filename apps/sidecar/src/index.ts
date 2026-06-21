@@ -73,9 +73,13 @@ export class CommandLineBuffer {
  * Wire a manager to an event sink and return a command handler.
  *
  * - Every event the manager emits is encoded and pushed to `sink` (one line).
- * - Permission requests are auto-denied: interactive approval isn't wired through
- *   the UI yet, so we answer rather than hang. The Rust core mirrors this for
- *   defence in depth; either denial is harmless (the runner ignores a second).
+ * - Permission requests are RELAYED, not auto-denied: a `permission-required`
+ *   event reaches the wire like any other and the session parks in the engine
+ *   awaiting a surface decision. The Rust core surfaces the prompt to the UI and
+ *   sends back an `approve-permission` command (interactively, or a fail-closed
+ *   deny on cancel/abort) — long waits are fine, the engine settles the parked
+ *   request when the decision arrives. The sidecar stays dumb; it answers nothing
+ *   on its own.
  * - The returned `handleLine` parses one NDJSON command and dispatches it,
  *   logging (never throwing) on malformed JSON so one bad line can't kill the
  *   stream.
@@ -87,17 +91,6 @@ export function createSidecar(
 ): { handleLine: (line: string) => void } {
   manager.on((event) => {
     sink(encodeEvent(event));
-    if (event.type === 'permission-required') {
-      void manager.dispatch({
-        type: 'approve-permission',
-        sessionId: event.sessionId,
-        requestId: event.requestId,
-        decision: {
-          behavior: 'deny',
-          message: 'sidecar: interactive approval not wired yet.',
-        },
-      });
-    }
   });
 
   function handleLine(line: string): void {

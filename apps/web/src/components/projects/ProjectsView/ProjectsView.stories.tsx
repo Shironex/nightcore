@@ -37,6 +37,10 @@ const tasks: Task[] = [
     summary: null,
     error: null,
     costUsd: null,
+    plan: null,
+    committed: false,
+    merged: false,
+    conflict: false,
   },
   {
     id: 't2',
@@ -52,6 +56,10 @@ const tasks: Task[] = [
     summary: null,
     error: null,
     costUsd: null,
+    plan: null,
+    committed: false,
+    merged: false,
+    conflict: false,
   },
 ];
 

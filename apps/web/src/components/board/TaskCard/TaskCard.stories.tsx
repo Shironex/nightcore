@@ -12,6 +12,10 @@ const meta = {
     onRun: fn(),
     onCancel: fn(),
     onDelete: fn(),
+    onApprove: fn(),
+    onRefine: fn(),
+    onCommit: fn(),
+    onMerge: fn(),
   },
   decorators: [
     (Story) => (
@@ -59,5 +63,45 @@ export const CancelRun: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /cancel run/i }));
     await expect(args.onCancel).toHaveBeenCalledWith('t-running');
+  },
+};
+
+/** A running task with a parked permission prompt — pulses + "needs approval". */
+export const NeedsApproval: Story = {
+  args: { task: TASKS_BY_STATUS.in_progress, needsApproval: true, logCount: 2 },
+};
+
+/** A verified task already committed — its primary action is now Merge. */
+export const Committed: Story = {
+  args: { task: { ...TASKS_BY_STATUS.done, committed: true } },
+};
+
+/** A verified task merged into the base — the action shows disabled "Merged". */
+export const Merged: Story = {
+  args: { task: { ...TASKS_BY_STATUS.done, committed: true, merged: true } },
+};
+
+/** A verified task whose merge hit a conflict — surfaces the conflict chip. */
+export const MergeConflict: Story = {
+  args: { task: { ...TASKS_BY_STATUS.done, committed: true, conflict: true } },
+};
+
+/** Play test: Approve on a waiting card invokes onApprove(id). */
+export const ApprovePlan: Story = {
+  args: { task: TASKS_BY_STATUS.waiting_approval },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: /approve/i }));
+    await expect(args.onApprove).toHaveBeenCalledWith('t-waiting');
+  },
+};
+
+/** Play test: Commit on a verified card invokes onCommit(id). */
+export const CommitVerified: Story = {
+  args: { task: TASKS_BY_STATUS.done },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+    await userEvent.click(canvas.getByRole('button', { name: /commit/i }));
+    await expect(args.onCommit).toHaveBeenCalledWith('t-done');
   },
 };

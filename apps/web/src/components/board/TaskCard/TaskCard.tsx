@@ -53,6 +53,7 @@ export function TaskCard({
   task,
   selected,
   blocked = false,
+  needsApproval = false,
   logCount = 0,
   draggable = false,
   onDragStart,
@@ -60,6 +61,10 @@ export function TaskCard({
   onRun,
   onCancel,
   onDelete,
+  onApprove,
+  onRefine,
+  onCommit,
+  onMerge,
 }: TaskCardProps) {
   const running = task.status === 'in_progress';
   const elapsed = useElapsed(task.updatedAt, running);
@@ -69,10 +74,11 @@ export function TaskCard({
     (running || task.status === 'waiting_approval' || task.status === 'done' || task.status === 'failed');
 
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+  const pulse = needsApproval ? 'animate-pulse ring-1 ring-warning/60' : '';
 
   return (
     <div
-      className={`${CARD_BASE} ${containerClass(task.status, running, selected)} ${
+      className={`${CARD_BASE} ${containerClass(task.status, running, selected)} ${pulse} ${
         draggable ? 'cursor-grab active:cursor-grabbing' : ''
       }`}
       draggable={draggable}
@@ -116,12 +122,24 @@ export function TaskCard({
           </div>
         )}
 
-        {(showBranch || blocked || task.status === 'failed') && (
+        {(showBranch || blocked || needsApproval || task.conflict || task.status === 'failed') && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {showBranch && (
               <span className="flex items-center gap-1 rounded-md bg-white/[0.03] px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground">
                 <BranchIcon size={11} />
                 {branch}
+              </span>
+            )}
+            {needsApproval && (
+              <span className="flex items-center gap-1 rounded-md bg-warning/[0.14] px-1.5 py-0.5 font-mono text-[9.5px] text-warning">
+                <AlertIcon size={11} />
+                needs approval
+              </span>
+            )}
+            {task.conflict && (
+              <span className="flex items-center gap-1 rounded-md bg-destructive/[0.12] px-1.5 py-0.5 font-mono text-[9.5px] text-destructive">
+                <AlertIcon size={11} />
+                merge conflict
               </span>
             )}
             {blocked && (
@@ -194,27 +212,52 @@ export function TaskCard({
           <>
             <button
               type="button"
-              disabled
-              title="Refine arrives in M3"
-              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+              onClick={() => onApprove?.(task.id)}
+              className={`${ACTION_BASE} ${ACTION_PRIMARY}`}
             >
-              <RefineIcon size={13} />
-              Refine
-              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
+              <CheckIcon size={13} />
+              Approve
             </button>
             <button
               type="button"
-              disabled
-              title="Commit arrives in M3"
-              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+              onClick={() => onRefine?.(task.id)}
+              className={`${ACTION_BASE} ${ACTION_GHOST}`}
             >
-              <CommitIcon size={13} />
-              Commit
-              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
+              <RefineIcon size={13} />
+              Refine
             </button>
           </>
         ) : task.status === 'done' ? (
           <>
+            {task.merged ? (
+              <button
+                type="button"
+                disabled
+                title="Branch merged into the base"
+                className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+              >
+                <BranchIcon size={13} />
+                Merged
+              </button>
+            ) : task.committed ? (
+              <button
+                type="button"
+                onClick={() => onMerge?.(task.id)}
+                className={`${ACTION_BASE} ${ACTION_PRIMARY}`}
+              >
+                <BranchIcon size={13} />
+                Merge
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={() => onCommit?.(task.id)}
+                className={`${ACTION_BASE} ${ACTION_PRIMARY}`}
+              >
+                <CommitIcon size={13} />
+                Commit
+              </button>
+            )}
             <button
               type="button"
               onClick={() => onSelect(task.id)}
@@ -222,16 +265,6 @@ export function TaskCard({
             >
               <LogsIcon size={13} />
               Logs
-            </button>
-            <button
-              type="button"
-              disabled
-              title="Commit & merge arrives in M3"
-              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
-            >
-              <CheckIcon size={13} />
-              Commit
-              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
             </button>
           </>
         ) : (

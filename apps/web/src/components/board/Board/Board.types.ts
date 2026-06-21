@@ -24,6 +24,8 @@ export interface BoardProps {
   /** Backend-computed blocked-task ids (deps unsatisfied). Drives the blocked
    *  chip + locked Run; owned by the shell so it refreshes on `nc:task`. */
   blockedIds: Set<string>;
+  /** Task ids with a parked permission prompt — drives the card's pulse. */
+  promptIds: Set<string>;
   onSelect: (id: string) => void;
   onNewTask: () => void;
   onRun: (id: string) => void;
@@ -33,6 +35,12 @@ export interface BoardProps {
   onMoveTask: (id: string, status: Task['status']) => void;
   /** Clear all tasks in a column (Verified/Failed). */
   onClearColumn: (statuses: Task['status'][]) => void;
+  /** Waiting Approval card actions. */
+  onApprove: (id: string) => void;
+  onRefine: (id: string) => void;
+  /** Verified card actions. */
+  onCommit: (id: string) => void;
+  onMerge: (id: string) => void;
   /** Start/stop the autonomous loop (the header Auto Mode toggle). */
   onToggleAutoMode: () => void;
   /** Resize the live agent pool (the header concurrency slider). */

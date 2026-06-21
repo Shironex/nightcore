@@ -165,6 +165,20 @@ impl SettingsStore {
         self.settings.lock().expect("settings store poisoned").clone()
     }
 
+    /// The effective permission mode for a project (its override, else the global),
+    /// mapped to the engine's SDK `permissionMode`:
+    ///   `auto-accept` → `acceptEdits`, `ask` → `default`, `plan` → `plan`.
+    /// Fail-closed: an unknown value maps to `default` (prompt), never to
+    /// `bypassPermissions`.
+    pub fn sdk_permission_mode(&self, project_id: Option<&str>) -> String {
+        let settings = self.get();
+        let raw = project_id
+            .and_then(|id| settings.project_overrides.get(id))
+            .and_then(|ov| ov.permission_mode.clone())
+            .unwrap_or(settings.permission_mode);
+        sdk_permission_mode(&raw)
+    }
+
     /// Apply a patch, persist, and return the merged settings.
     fn update(&self, patch: SettingsPatch) -> Result<Settings, String> {
         let mut guard = self.settings.lock().expect("settings store poisoned");
@@ -173,6 +187,19 @@ impl SettingsStore {
         write_settings(&self.config_dir.join("settings.json"), &snapshot)?;
         Ok(snapshot)
     }
+}
+
+/// Map a Nightcore permission-mode setting to the engine's SDK `permissionMode`.
+/// Fail-closed: anything unrecognized maps to `default` (the engine then prompts),
+/// never to an auto-allowing mode.
+pub fn sdk_permission_mode(raw: &str) -> String {
+    match raw {
+        "auto-accept" => "acceptEdits",
+        "plan" => "plan",
+        "ask" => "default",
+        _ => "default",
+    }
+    .to_string()
 }
 
 fn read_settings(path: &Path) -> Option<Settings> {
@@ -270,6 +297,31 @@ mod tests {
         let ov = merged.project_overrides.get("proj-1").expect("override exists");
         assert_eq!(ov.default_model.as_deref(), Some("haiku-4.5"));
         assert!(ov.default_effort.is_none(), "only the patched field is set");
+    }
+
+    #[test]
+    fn maps_permission_modes_to_sdk_and_fails_closed() {
+        assert_eq!(sdk_permission_mode("auto-accept"), "acceptEdits");
+        assert_eq!(sdk_permission_mode("plan"), "plan");
+        assert_eq!(sdk_permission_mode("ask"), "default");
+        // Fail-closed: anything unrecognized prompts, never bypasses.
+        assert_eq!(sdk_permission_mode("garbage"), "default");
+        assert_eq!(sdk_permission_mode("bypassPermissions"), "default");
+    }
+
+    #[test]
+    fn sdk_permission_mode_prefers_project_override() {
+        let (store, _tmp) = temp_store();
+        // Global default is auto-accept → acceptEdits.
+        assert_eq!(store.sdk_permission_mode(None), "acceptEdits");
+
+        // A per-project override to `plan` wins for that project only.
+        let patch: SettingsPatch =
+            serde_json::from_str(r#"{"projectId":"p1","permissionMode":"plan"}"#).unwrap();
+        store.update(patch).expect("update");
+        assert_eq!(store.sdk_permission_mode(Some("p1")), "plan");
+        assert_eq!(store.sdk_permission_mode(Some("other")), "acceptEdits");
+        assert_eq!(store.sdk_permission_mode(None), "acceptEdits");
     }
 
     #[test]

@@ -35,6 +35,7 @@ export function Board({
   selectedId,
   logCounts,
   blockedIds,
+  promptIds,
   onSelect,
   onNewTask,
   onRun,
@@ -42,6 +43,10 @@ export function Board({
   onDelete,
   onMoveTask,
   onClearColumn,
+  onApprove,
+  onRefine,
+  onCommit,
+  onMerge,
   onToggleAutoMode,
   onConcurrencyChange,
   onResume,
@@ -178,6 +183,7 @@ export function Board({
             clearable={def.clearable}
             selectedId={selectedId}
             blockedIds={blockedIds}
+            promptIds={promptIds}
             logCounts={logCounts}
             dropStatus={def.statuses[0]}
             emptyText={search.trim() !== '' ? 'No matches' : EMPTY_TEXT[def.key]}
@@ -186,6 +192,10 @@ export function Board({
             onCancel={onCancel}
             onDelete={onDelete}
             onMoveTask={onMoveTask}
+            onApprove={onApprove}
+            onRefine={onRefine}
+            onCommit={onCommit}
+            onMerge={onMerge}
             onClear={() => onClearColumn(def.statuses)}
           />
         ))}

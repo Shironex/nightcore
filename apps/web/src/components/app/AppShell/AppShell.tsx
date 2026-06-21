@@ -95,6 +95,7 @@ export function AppShell() {
                   selectedId={selectedId}
                   logCounts={board.logCounts}
                   blockedIds={board.blockedIds}
+                  promptIds={board.promptIds}
                   onSelect={setSelectedId}
                   onNewTask={routing.openNewTask}
                   onRun={board.handleRun}
@@ -102,6 +103,10 @@ export function AppShell() {
                   onDelete={board.handleDelete}
                   onMoveTask={board.handleMoveTask}
                   onClearColumn={board.handleClearColumn}
+                  onApprove={board.handleApprove}
+                  onRefine={board.handleRefine}
+                  onCommit={board.handleCommit}
+                  onMerge={board.handleMerge}
                   onToggleAutoMode={autoLoop.toggleAutoMode}
                   onConcurrencyChange={autoLoop.changeConcurrency}
                   onResume={autoLoop.resume}
@@ -114,10 +119,15 @@ export function AppShell() {
                 task={selected}
                 stream={board.streams[selected.id] ?? EMPTY_STREAM}
                 anyRunning={anyRunning}
+                prompts={board.prompts[selected.id] ?? []}
                 onClose={() => setSelectedId(null)}
                 onRun={board.handleRun}
                 onCancel={board.handleCancel}
                 onDelete={board.handleDelete}
+                onRespondPermission={board.handleRespondPermission}
+                onApprove={board.handleApprove}
+                onReject={board.handleReject}
+                onRefine={board.handleRefine}
               />
             )}
           </div>

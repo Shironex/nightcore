@@ -13,9 +13,10 @@
 //! slot, cleans up the worktree (per `cleanupWorktrees`), feeds the breaker, and
 //! kicks a re-tick so the board drains without waiting a full interval.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
@@ -55,12 +56,62 @@ impl AutoLoop {
     }
 }
 
+/// Parked interactive permission requests, keyed by task id. A `permission-required`
+/// event registers its `requestId` here; `respond_permission` resolves and removes
+/// it; a task's cancel/abort/circuit-break fail-closed-denies and drains every
+/// request still parked for that task so a session can never hang.
+#[derive(Default)]
+pub struct PendingPermissions {
+    by_task: Mutex<HashMap<String, Vec<String>>>,
+}
+
+impl PendingPermissions {
+    /// Record a parked request for a task.
+    pub fn register(&self, task_id: &str, request_id: &str) {
+        self.by_task
+            .lock()
+            .expect("pending permissions poisoned")
+            .entry(task_id.to_string())
+            .or_default()
+            .push(request_id.to_string());
+    }
+
+    /// Drop a single resolved request from a task's parked set. Returns true when it
+    /// was actually parked (so a stale/duplicate decision is a no-op).
+    pub fn resolve(&self, task_id: &str, request_id: &str) -> bool {
+        let mut guard = self.by_task.lock().expect("pending permissions poisoned");
+        let Some(reqs) = guard.get_mut(task_id) else {
+            return false;
+        };
+        let Some(idx) = reqs.iter().position(|r| r == request_id) else {
+            return false;
+        };
+        reqs.remove(idx);
+        if reqs.is_empty() {
+            guard.remove(task_id);
+        }
+        true
+    }
+
+    /// Take and remove every request still parked for a task (its terminal/abort
+    /// drain). Returns the request ids to fail-closed-deny.
+    pub fn drain_task(&self, task_id: &str) -> Vec<String> {
+        self.by_task
+            .lock()
+            .expect("pending permissions poisoned")
+            .remove(task_id)
+            .unwrap_or_default()
+    }
+}
+
 /// The shared M2 hub held in managed Tauri state.
 pub struct Orchestrator {
     pub slots: SlotManager,
     pub breaker: CircuitBreaker,
     pub provider: SidecarProvider,
     pub auto: AutoLoop,
+    /// Parked interactive permission requests awaiting a surface decision (M3).
+    pub permissions: PendingPermissions,
     /// Kicked to run a tick immediately (on launch, on terminal events).
     kick: Notify,
 }
@@ -74,6 +125,7 @@ impl Orchestrator {
             breaker: CircuitBreaker::default(),
             provider: SidecarProvider::new(entry, cwd),
             auto: AutoLoop::default(),
+            permissions: PendingPermissions::default(),
             kick: Notify::new(),
         }
     }
@@ -90,9 +142,42 @@ impl Orchestrator {
     pub async fn interrupt_all(&self) {
         use crate::m2::provider::Provider;
         for sid in self.provider.live_sessions() {
+            // Fail-closed: deny any parked permission request for this run before
+            // interrupting, so a session waiting on approval doesn't hang.
+            if let Some(task_id) = self.provider.task_for(sid) {
+                self.deny_parked_permissions(&task_id).await;
+            }
             let _ = self.provider.interrupt(sid).await;
         }
         self.slots.abort_all();
+    }
+
+    /// Fail-closed: deny every permission request still parked for `task_id` and
+    /// clear them. Called when a task is cancelled, aborted, or circuit-broken so a
+    /// session waiting on a surface decision can never hang. Resolving the session
+    /// id is best-effort — once the run is torn down the binding may already be
+    /// gone, in which case the engine's own teardown (`failAllPending`) denies it.
+    pub async fn deny_parked_permissions(&self, task_id: &str) {
+        use crate::m2::provider::{PermissionDecision, Provider};
+        let request_ids = self.permissions.drain_task(task_id);
+        if request_ids.is_empty() {
+            return;
+        }
+        let Some(session_id) = self.provider.session_for(task_id) else {
+            return;
+        };
+        for request_id in request_ids {
+            let _ = self
+                .provider
+                .decide_permission(
+                    session_id,
+                    &request_id,
+                    PermissionDecision::Deny {
+                        message: "Nightcore: task cancelled before approval.".to_string(),
+                    },
+                )
+                .await;
+        }
     }
 
     /// Emit `nc:loop` with the current loop snapshot.
@@ -285,9 +370,10 @@ async fn launch(app: &AppHandle, task_id: &str) {
     }
 
     use crate::m2::provider::Provider;
+    let permission_mode = crate::sidecar::resolve_permission_mode(app);
     if let Err(e) = orch
         .provider
-        .start_session(task_id, task.prompt(), task.model.clone(), cwd)
+        .start_session(task_id, task.prompt(), task.model.clone(), cwd, permission_mode)
         .await
     {
         fail_task(app, task_id, &format!("dispatch failed: {e}"));
@@ -409,6 +495,28 @@ mod tests {
         t.status = TaskStatus::Ready;
         t.created_at = created_at;
         t
+    }
+
+    #[test]
+    fn pending_permissions_register_resolve_and_drain() {
+        let pending = PendingPermissions::default();
+        pending.register("task-1", "req-a");
+        pending.register("task-1", "req-b");
+        pending.register("task-2", "req-c");
+
+        // Resolving a parked request returns true and removes only it.
+        assert!(pending.resolve("task-1", "req-a"));
+        // A stale/duplicate resolve is a no-op.
+        assert!(!pending.resolve("task-1", "req-a"));
+        assert!(!pending.resolve("task-9", "ghost"));
+
+        // Draining a task takes everything still parked for it (fail-closed deny set).
+        let drained = pending.drain_task("task-1");
+        assert_eq!(drained, vec!["req-b".to_string()]);
+        // Draining again is empty; the entry is gone.
+        assert!(pending.drain_task("task-1").is_empty());
+        // Other tasks are untouched.
+        assert_eq!(pending.drain_task("task-2"), vec!["req-c".to_string()]);
     }
 
     #[test]

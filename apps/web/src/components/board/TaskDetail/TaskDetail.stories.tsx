@@ -14,6 +14,10 @@ const meta = {
     onRun: fn(),
     onCancel: fn(),
     onDelete: fn(),
+    onRespondPermission: fn(),
+    onApprove: fn(),
+    onReject: fn(),
+    onRefine: fn(),
   },
   decorators: [
     (Story) => (
@@ -57,6 +61,37 @@ export const Done: Story = {
       costUsd: 0.42,
     }),
     stream: undefined,
+  },
+};
+
+/** A plan-mode run paused at `ExitPlanMode`: the plan + Approve/Refine/Reject. */
+export const WaitingApproval: Story = {
+  args: {
+    task: makeTask({
+      id: 't-waiting',
+      status: 'waiting_approval',
+      title: 'Apply destructive migration',
+      plan: '1. Back up the users table\n2. Add the new column\n3. Backfill from email',
+      branch: 'nc/destructive-migration',
+    }),
+    stream: undefined,
+  },
+};
+
+/** A running task with a parked permission prompt rendered in the panel. */
+export const RunningWithPrompt: Story = {
+  args: {
+    task: TASKS_BY_STATUS.in_progress,
+    anyRunning: true,
+    stream: undefined,
+    prompts: [
+      {
+        taskId: 't-running',
+        requestId: 'req-1',
+        toolName: 'Bash',
+        input: { command: 'rm -rf dist && bun run build' },
+      },
+    ],
   },
 };
 

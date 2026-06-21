@@ -15,6 +15,7 @@ export function Column({
   clearable,
   selectedId,
   blockedIds,
+  promptIds,
   logCounts,
   dropStatus,
   emptyText = 'Nothing here yet',
@@ -23,6 +24,10 @@ export function Column({
   onCancel,
   onDelete,
   onMoveTask,
+  onApprove,
+  onRefine,
+  onCommit,
+  onMerge,
   onClear,
 }: ColumnProps) {
   const showClear = clearable === true && tasks.length > 0;
@@ -76,6 +81,7 @@ export function Column({
               task={task}
               selected={task.id === selectedId}
               blocked={blockedIds.has(task.id)}
+              needsApproval={promptIds?.has(task.id) ?? false}
               logCount={logCounts[task.id] ?? 0}
               draggable={onMoveTask !== undefined}
               onDragStart={(e) => {
@@ -86,6 +92,10 @@ export function Column({
               onRun={onRun}
               onCancel={onCancel}
               onDelete={onDelete}
+              onApprove={onApprove}
+              onRefine={onRefine}
+              onCommit={onCommit}
+              onMerge={onMerge}
             />
           ))
         )}

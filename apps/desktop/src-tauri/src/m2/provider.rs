@@ -53,19 +53,41 @@ pub trait Provider: Send + Sync {
         prompt: String,
         model: Option<String>,
         cwd: Option<PathBuf>,
+        permission_mode: Option<String>,
     ) -> Result<(), String>;
 
     /// Best-effort interrupt of a run by session id.
     async fn interrupt(&self, session_id: u64) -> Result<(), String>;
 
-    /// Decide a pending permission request for a run. M2 always denies (`allow =
-    /// false`); the parameter pins the seam for M3's interactive approval.
+    /// Change a live run's permission mode (SDK `setPermissionMode`). Used by the
+    /// plan-approval gate to switch the SAME session to `acceptEdits` so it builds
+    /// the approved plan without re-prompting.
+    async fn set_permission_mode(&self, session_id: u64, mode: &str) -> Result<(), String>;
+
+    /// Decide a pending permission request for a run by sending an
+    /// `approve-permission` SurfaceCommand. An `allow` echoes `updated_input` back
+    /// to the engine (the SDK requires `updatedInput` on allow; the engine fills
+    /// the original input when `None`). A `deny` carries a short `message` returned
+    /// to the model. Used both for interactive approvals and the fail-closed deny
+    /// the core issues when a task is cancelled/aborted with a parked request.
     async fn decide_permission(
         &self,
         session_id: u64,
         request_id: &str,
-        allow: bool,
+        decision: PermissionDecision,
     ) -> Result<(), String>;
+}
+
+/// A surface decision for a parked permission request. Mirrors the contract's
+/// `PermissionDecision` (allow/deny) in core terms so callers don't construct raw
+/// JSON.
+#[derive(Debug, Clone)]
+pub enum PermissionDecision {
+    /// Allow the tool call, optionally rewriting its input. `None` echoes the
+    /// original input (the engine defaults to it when omitted).
+    Allow { updated_input: Option<Value> },
+    /// Deny the tool call, returning `message` to the model.
+    Deny { message: String },
 }
 
 /// The persistent Bun sidecar provider — the M1 child generalized to N sessions.
@@ -238,12 +260,14 @@ impl Provider for SidecarProvider {
         prompt: String,
         model: Option<String>,
         cwd: Option<PathBuf>,
+        permission_mode: Option<String>,
     ) -> Result<(), String> {
         let command = serde_json::json!({
             "type": "start-session",
             "prompt": prompt,
             "model": model,
             "cwd": cwd.map(|p| p.to_string_lossy().to_string()),
+            "permissionMode": permission_mode,
         });
 
         // Push the pending launch and write the line under the same lock so the
@@ -273,19 +297,37 @@ impl Provider for SidecarProvider {
         Ok(())
     }
 
+    async fn set_permission_mode(&self, session_id: u64, mode: &str) -> Result<(), String> {
+        let command = serde_json::json!({
+            "type": "set-permission-mode",
+            "sessionId": session_id,
+            "mode": mode,
+        });
+        let mut guard = self.stdin.lock().await;
+        if let Some(stdin) = guard.as_mut() {
+            Self::write_line(stdin, &command).await?;
+        }
+        Ok(())
+    }
+
     async fn decide_permission(
         &self,
         session_id: u64,
         request_id: &str,
-        allow: bool,
+        decision: PermissionDecision,
     ) -> Result<(), String> {
-        let decision = if allow {
-            serde_json::json!({ "behavior": "allow" })
-        } else {
-            serde_json::json!({
-                "behavior": "deny",
-                "message": "Nightcore core: interactive approval not wired yet.",
-            })
+        let decision = match decision {
+            // The engine echoes the parked input when `updatedInput` is omitted, so
+            // a bare allow is valid; include it only when the surface rewrote it.
+            PermissionDecision::Allow { updated_input: None } => {
+                serde_json::json!({ "behavior": "allow" })
+            }
+            PermissionDecision::Allow {
+                updated_input: Some(input),
+            } => serde_json::json!({ "behavior": "allow", "updatedInput": input }),
+            PermissionDecision::Deny { message } => {
+                serde_json::json!({ "behavior": "deny", "message": message })
+            }
         };
         let command = serde_json::json!({
             "type": "approve-permission",

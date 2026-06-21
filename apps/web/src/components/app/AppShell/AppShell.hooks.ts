@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   activeProject,
+  approveTask,
   blockedTaskIds,
   cancelTask,
   chooseFolder,
+  commitTask,
   createProject,
   createTask,
   deleteProject,
@@ -14,12 +16,17 @@ import {
   isTauri,
   listProjects,
   listTasks,
+  mergeTask,
   moveTask,
+  refineTask,
+  rejectTask,
   onLoopEvent,
+  onPermissionEvent,
   onProjectEvent,
   onSessionEvent,
   onTaskEvent,
   resumeAutoLoop,
+  respondPermission,
   runTask,
   setActiveProject,
   setMaxConcurrency,
@@ -27,6 +34,7 @@ import {
   stopAutoLoop,
   updateSettings,
   type LoopEnvelope,
+  type PermissionPrompt,
   type Project,
   type Settings,
   type SettingsPatch,
@@ -323,6 +331,59 @@ function useBlockedIds(): Set<string> {
   return blockedIds;
 }
 
+/** Parked interactive permission prompts, grouped by task id and kept in sync with
+ *  `nc:permission`. Answering removes a prompt optimistically (the backend resolves
+ *  the parked request); a terminal `nc:task` for a task drops any stale prompts. */
+function usePermissions(tasks: Task[]) {
+  const [prompts, setPrompts] = useState<Record<string, PermissionPrompt[]>>({});
+
+  useEffect(() => {
+    const unlisten = onPermissionEvent((prompt) => {
+      setPrompts((prev) => {
+        const existing = prev[prompt.taskId] ?? [];
+        if (existing.some((p) => p.requestId === prompt.requestId)) return prev;
+        return { ...prev, [prompt.taskId]: [...existing, prompt] };
+      });
+    });
+    return () => {
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  // Drop prompts for any task no longer running — a cancel/terminal transition
+  // fail-closed-denies them on the backend, so they must not linger in the UI.
+  useEffect(() => {
+    const running = new Set(tasks.filter((t) => t.status === 'in_progress').map((t) => t.id));
+    setPrompts((prev) => {
+      const next: Record<string, PermissionPrompt[]> = {};
+      let changed = false;
+      for (const [taskId, list] of Object.entries(prev)) {
+        if (running.has(taskId)) next[taskId] = list;
+        else changed = true;
+      }
+      return changed ? next : prev;
+    });
+  }, [tasks]);
+
+  const respond = useCallback(
+    (taskId: string, requestId: string, decision: 'allow' | 'deny') => {
+      setPrompts((prev) => {
+        const list = (prev[taskId] ?? []).filter((p) => p.requestId !== requestId);
+        const next = { ...prev };
+        if (list.length === 0) delete next[taskId];
+        else next[taskId] = list;
+        return next;
+      });
+      void respondPermission(taskId, requestId, decision).catch((err) =>
+        console.error('respond_permission failed', err),
+      );
+    },
+    [],
+  );
+
+  return { prompts, respond };
+}
+
 export interface AppShellState {
   routing: ReturnType<typeof useRouting>;
   registry: ReturnType<typeof useProjectRegistry>;
@@ -334,12 +395,26 @@ export interface AppShellState {
     selected: Task | null;
     logCounts: Record<string, number>;
     blockedIds: Set<string>;
+    /** Parked permission prompts keyed by task id (`nc:permission`). */
+    prompts: Record<string, PermissionPrompt[]>;
+    /** Task ids with at least one parked prompt — drives the card's pulse. */
+    promptIds: Set<string>;
     handleCreate: (title: string, description: string) => Promise<void>;
     handleRun: (id: string) => void;
     handleCancel: (id: string) => void;
     handleDelete: (id: string) => void;
     handleClearColumn: (statuses: TaskStatus[]) => void;
     handleMoveTask: (id: string, status: TaskStatus) => void;
+    handleRespondPermission: (
+      taskId: string,
+      requestId: string,
+      decision: 'allow' | 'deny',
+    ) => void;
+    handleApprove: (id: string) => void;
+    handleReject: (id: string) => void;
+    handleRefine: (id: string) => void;
+    handleCommit: (id: string) => void;
+    handleMerge: (id: string) => void;
   };
   showSplash: boolean;
   isTauri: boolean;
@@ -364,6 +439,7 @@ export function useAppShell(): AppShellState {
   const board = useBoard();
   const blockedIds = useBlockedIds();
   const { tasks, setTasks, streams, setStreams, selectedId, setSelectedId } = board;
+  const permissions = usePermissions(tasks);
 
   const anyRunning = useMemo(
     () => tasks.some((t) => t.status === 'in_progress'),
@@ -459,6 +535,29 @@ export function useAppShell(): AppShellState {
     [setTasks],
   );
 
+  // Plan-approval + commit/merge actions. Each resolves a parked request or runs a
+  // git op on the backend; the authoritative status arrives via `nc:task`.
+  const handleApprove = useCallback((id: string) => {
+    void approveTask(id).catch((err) => console.error('approve_task failed', err));
+  }, []);
+  const handleReject = useCallback((id: string) => {
+    void rejectTask(id).catch((err) => console.error('reject_task failed', err));
+  }, []);
+  const handleRefine = useCallback((id: string) => {
+    void refineTask(id).catch((err) => console.error('refine_task failed', err));
+  }, []);
+  const handleCommit = useCallback((id: string) => {
+    void commitTask(id).catch((err) => console.error('commit_task failed', err));
+  }, []);
+  const handleMerge = useCallback((id: string) => {
+    void mergeTask(id).catch((err) => console.error('merge_task failed', err));
+  }, []);
+
+  const promptIds = useMemo(
+    () => new Set(Object.keys(permissions.prompts)),
+    [permissions.prompts],
+  );
+
   return {
     routing,
     registry,
@@ -471,12 +570,20 @@ export function useAppShell(): AppShellState {
       selected,
       logCounts,
       blockedIds,
+      prompts: permissions.prompts,
+      promptIds,
       handleCreate,
       handleRun,
       handleCancel,
       handleDelete,
       handleClearColumn,
       handleMoveTask,
+      handleRespondPermission: permissions.respond,
+      handleApprove,
+      handleReject,
+      handleRefine,
+      handleCommit,
+      handleMerge,
     },
     showSplash,
     isTauri: isTauri(),

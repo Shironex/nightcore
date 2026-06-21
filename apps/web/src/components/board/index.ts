@@ -3,6 +3,7 @@ export type { BreakerInfo } from './Board';
 export { Column } from './Column';
 export { TaskCard } from './TaskCard';
 export { TaskDetail } from './TaskDetail';
+export { PermissionPrompt } from './PermissionPrompt';
 export { TaskStatusDot } from './TaskStatusDot';
 export { NewTaskForm } from './NewTaskForm';
 export {

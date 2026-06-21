@@ -19,6 +19,10 @@ export function makeTask(overrides: Partial<Task> = {}): Task {
     summary: overrides.summary ?? null,
     error: overrides.error ?? null,
     costUsd: overrides.costUsd ?? null,
+    plan: overrides.plan ?? null,
+    committed: overrides.committed ?? false,
+    merged: overrides.merged ?? false,
+    conflict: overrides.conflict ?? false,
   };
 }
 

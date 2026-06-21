@@ -13,6 +13,8 @@
 //! the board and transitioning to `done`/`failed` on completion.
 
 mod m2;
+mod merge;
+mod plan_approval;
 mod project;
 mod settings;
 mod sidecar;
@@ -78,6 +80,12 @@ pub fn run() {
             task::blocked_task_ids,
             sidecar::run_task,
             sidecar::cancel_task,
+            sidecar::respond_permission,
+            plan_approval::approve_task,
+            plan_approval::reject_task,
+            plan_approval::refine_task,
+            merge::commit_task,
+            merge::merge_task,
             project::list_projects,
             project::active_project,
             project::create_project,

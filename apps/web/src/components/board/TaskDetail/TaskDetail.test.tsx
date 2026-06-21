@@ -6,7 +6,25 @@ import { deriveTaskDetailView } from './TaskDetail.hooks';
 import { EMPTY_STREAM } from '../session-stream';
 import { makeTask } from '../_fixtures';
 
-const { Running, Failed } = composeStories(stories);
+const { Running, Failed, WaitingApproval, RunningWithPrompt } = composeStories(stories);
+
+test('shows the plan and Approve / Refine / Reject for a waiting task', async () => {
+  const onApprove = vi.fn();
+  const screen = render(<WaitingApproval onApprove={onApprove} />);
+  await expect.element(screen.getByText('Proposed plan')).toBeInTheDocument();
+  await expect.element(screen.getByText(/Back up the users table/)).toBeInTheDocument();
+  await screen.getByRole('button', { name: /approve/i }).click();
+  expect(onApprove).toHaveBeenCalledWith('t-waiting');
+  await expect.element(screen.getByRole('button', { name: 'Reject' })).toBeInTheDocument();
+});
+
+test('renders a parked permission prompt and relays the decision', async () => {
+  const onRespondPermission = vi.fn();
+  const screen = render(<RunningWithPrompt onRespondPermission={onRespondPermission} />);
+  await expect.element(screen.getByText('Approval needed')).toBeInTheDocument();
+  await screen.getByRole('button', { name: 'Allow' }).click();
+  expect(onRespondPermission).toHaveBeenCalledWith('t-running', 'req-1', 'allow');
+});
 
 test('shows the live transcript heading and cancel control while running', async () => {
   const screen = render(<Running />);

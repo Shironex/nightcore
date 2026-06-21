@@ -23,7 +23,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::m2::coordinator::{self, Orchestrator};
-use crate::m2::provider::{parse_line, Provider};
+use crate::m2::provider::{parse_line, PermissionDecision, Provider};
 use crate::m2::worktree;
 use crate::project::ProjectStore;
 use crate::store::TaskStore;
@@ -32,6 +32,17 @@ use crate::task::{Task, TaskStatus, TASK_EVENT};
 /// The Tauri event carrying one streamed sidecar event for a task.
 /// Payload: `{ taskId: string, event: NightcoreEvent }`.
 pub const SESSION_EVENT: &str = "nc:session";
+
+/// The Tauri event carrying an interactive permission prompt for a task. Payload:
+/// `{ taskId, requestId, toolName, input, suggestions? }`. The webview renders the
+/// prompt and answers via the `respond_permission` command. Permission inputs may
+/// contain paths/commands — they are surfaced to the UI but NEVER logged.
+pub const PERMISSION_EVENT: &str = "nc:permission";
+
+/// The tool name the SDK uses when the agent finishes a plan in `plan` mode. It
+/// surfaces as a `permission-required`; the core gates it as plan approval rather
+/// than a generic tool prompt.
+const EXIT_PLAN_MODE: &str = "ExitPlanMode";
 
 /// Ensure the persistent sidecar is running and its stdout reader is installed.
 /// Idempotent: spawns lazily on first use, then a no-op. Shared by `run_task` and
@@ -85,21 +96,29 @@ async fn handle_event(app: &AppHandle, event: Value) {
         return;
     };
 
-    // M2 auto-denies any permission request (interactive approval is M3). The
-    // sidecar also denies internally; mirroring it here is defence in depth.
-    if event_type == "permission-required" {
-        if let (Some(sid), Some(request_id)) =
-            (session_id, event.get("requestId").and_then(Value::as_str))
-        {
-            let _ = orch.provider.decide_permission(sid, request_id, false).await;
-        }
-    }
-
     // Forward the raw event to the webview tagged with its task.
     let _ = app.emit(
         SESSION_EVENT,
         serde_json::json!({ "taskId": task_id, "event": event }),
     );
+
+    // M3: a permission request is relayed, not auto-denied. The plan gate
+    // (`ExitPlanMode`) transitions the task to `waiting_approval` and stores the
+    // plan; any other tool surfaces an interactive `nc:permission` prompt. Both
+    // park in the engine until `respond_permission` (or a fail-closed deny on
+    // cancel) resolves them.
+    if event_type == "permission-required" {
+        if let Some(request_id) = event.get("requestId").and_then(Value::as_str) {
+            let tool_name = event.get("toolName").and_then(Value::as_str).unwrap_or("");
+            orch.permissions.register(&task_id, request_id);
+            if tool_name == EXIT_PLAN_MODE {
+                handle_plan_gate(app, &store, &task_id, &event);
+            } else {
+                emit_permission_prompt(app, &task_id, request_id, &event);
+            }
+        }
+        return;
+    }
 
     match event_type {
         "session-started" | "session-ready" => {
@@ -147,6 +166,47 @@ async fn handle_event(app: &AppHandle, event: Value) {
     }
 }
 
+/// Surface an interactive permission prompt to the webview as `nc:permission`.
+/// Forwards the tool name + input (which may contain paths/commands — never
+/// logged) plus the SDK's `suggestions`, when present, so the UI can offer
+/// pre-filled allow/deny choices.
+fn emit_permission_prompt(app: &AppHandle, task_id: &str, request_id: &str, event: &Value) {
+    let _ = app.emit(
+        PERMISSION_EVENT,
+        serde_json::json!({
+            "taskId": task_id,
+            "requestId": request_id,
+            "toolName": event.get("toolName").and_then(Value::as_str).unwrap_or(""),
+            "input": event.get("input").cloned().unwrap_or(Value::Null),
+            "suggestions": event.get("suggestions").cloned(),
+        }),
+    );
+}
+
+/// The plan-approval gate (M3 §C): the agent finished a plan in `plan` mode and
+/// called `ExitPlanMode`, surfacing as a `permission-required`. Transition the task
+/// to `waiting_approval` and store the plan (from the tool input) so the detail
+/// panel renders it; the parked request resolves later via `approve_task` /
+/// `reject_task` / `refine_task`.
+fn handle_plan_gate(app: &AppHandle, store: &TaskStore, task_id: &str, event: &Value) {
+    let plan = extract_plan(event);
+    apply_and_emit(app, store, task_id, |task| {
+        task.status = TaskStatus::WaitingApproval;
+        task.plan = plan.clone();
+    });
+}
+
+/// Pull the plan text out of an `ExitPlanMode` tool input. The SDK passes the plan
+/// under `input.plan`; fall back to the whole input rendered as a string so the UI
+/// always has something to show.
+fn extract_plan(event: &Value) -> Option<String> {
+    let input = event.get("input")?;
+    if let Some(plan) = input.get("plan").and_then(Value::as_str) {
+        return Some(plan.to_string());
+    }
+    Some(input.to_string())
+}
+
 /// How a run ended, for terminal bookkeeping.
 enum Outcome {
     /// `session-completed`: clean up the worktree (per policy), reset the breaker.
@@ -164,6 +224,10 @@ enum Outcome {
 fn finish_run(app: &AppHandle, task_id: &str, session_id: Option<u64>, outcome: Outcome) {
     let orch = app.state::<Orchestrator>();
     orch.slots.release(task_id);
+    // Any permission request still parked for this run is moot: the session has
+    // reached a terminal state and the engine's own teardown denies its SDK control
+    // request. Drop our registry entries so they can't leak across reruns.
+    let _ = orch.permissions.drain_task(task_id);
     if let Some(sid) = session_id {
         orch.provider.forget(sid);
     }
@@ -246,9 +310,10 @@ pub async fn run_task(
         return Err(e);
     }
 
+    let permission_mode = resolve_permission_mode(&app);
     if let Err(e) = orch
         .provider
-        .start_session(&id, task.prompt(), task.model.clone(), cwd)
+        .start_session(&id, task.prompt(), task.model.clone(), cwd, permission_mode)
         .await
     {
         orch.slots.release(&id);
@@ -256,6 +321,57 @@ pub async fn run_task(
     }
 
     Ok(())
+}
+
+/// The SDK permission mode for the next run, resolved from settings (per-project
+/// override, else global) and mapped to the engine's mode. Shared by the manual
+/// `run_task` path and the coordinator's auto-loop launch so both honor the mode.
+pub fn resolve_permission_mode(app: &AppHandle) -> Option<String> {
+    use crate::settings::SettingsStore;
+    let settings = app.state::<SettingsStore>();
+    let project_id = app
+        .state::<ProjectStore>()
+        .active()
+        .map(|p| p.id);
+    Some(settings.sdk_permission_mode(project_id.as_deref()))
+}
+
+/// Respond to a parked interactive permission request (M3 §B). `decision` is
+/// `"allow"` or `"deny"`. An allow may carry `updated_input` to rewrite the tool
+/// input (the engine echoes the original when omitted); a deny carries an optional
+/// `message` returned to the model. Resolves the request in the registry and sends
+/// the `approve-permission` SurfaceCommand to the sidecar. Fail-closed: an unknown
+/// `decision` is treated as a deny.
+#[tauri::command]
+pub async fn respond_permission(
+    store: State<'_, TaskStore>,
+    orch: State<'_, Orchestrator>,
+    task_id: String,
+    request_id: String,
+    decision: String,
+    updated_input: Option<Value>,
+    message: Option<String>,
+) -> Result<(), String> {
+    let session_id = orch
+        .provider
+        .session_for(&task_id)
+        .or_else(|| store.get(&task_id).and_then(|t| t.session_id))
+        .ok_or_else(|| format!("no live session for task {task_id}"))?;
+
+    // Drop it from the parked set regardless; a stale/duplicate decision is a no-op.
+    orch.permissions.resolve(&task_id, &request_id);
+
+    let decision = match decision.as_str() {
+        "allow" => PermissionDecision::Allow {
+            updated_input,
+        },
+        _ => PermissionDecision::Deny {
+            message: message.unwrap_or_else(|| "Denied by user.".to_string()),
+        },
+    };
+    orch.provider
+        .decide_permission(session_id, &request_id, decision)
+        .await
 }
 
 /// Best-effort interrupt of a task's run. Aborts the slot's driver (if the loop
@@ -271,6 +387,10 @@ pub async fn cancel_task(
     // Abort the driver task (no-op if none attached) but keep the slot until the
     // terminal event so the reader's cleanup runs exactly once.
     orch.slots.abort(&id);
+
+    // Fail-closed: deny any permission request parked for this task before the
+    // interrupt, so a session waiting on an approval can't hang.
+    orch.deny_parked_permissions(&id).await;
 
     // Prefer the live correlation binding (set the moment the run started); fall
     // back to the persisted session id from a prior run.

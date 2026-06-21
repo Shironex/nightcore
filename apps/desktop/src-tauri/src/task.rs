@@ -57,6 +57,23 @@ pub struct Task {
     pub error: Option<String>,
     /// Cost of the last run in USD.
     pub cost_usd: Option<f64>,
+    /// The plan text captured when a `plan`-mode run calls `ExitPlanMode` and the
+    /// task enters `waiting_approval`. Retained through `refine` so the user can
+    /// edit and re-run; cleared on a fresh run. `None` until a plan is produced.
+    #[serde(default)]
+    pub plan: Option<String>,
+    /// True once the task's worktree branch has a commit from `commit_task`. The
+    /// board reflects this on the Verified card.
+    #[serde(default)]
+    pub committed: bool,
+    /// True once `merge_task` integrated the branch into the project base. The card
+    /// shows a disabled `Merged` state.
+    #[serde(default)]
+    pub merged: bool,
+    /// True when `merge_task` hit a conflict it refused to force. The card surfaces
+    /// the conflict so the user resolves it manually.
+    #[serde(default)]
+    pub conflict: bool,
 }
 
 impl Task {
@@ -77,6 +94,10 @@ impl Task {
             summary: None,
             error: None,
             cost_usd: None,
+            plan: None,
+            committed: false,
+            merged: false,
+            conflict: false,
         }
     }
 
@@ -278,6 +299,27 @@ mod tests {
         for key in ["createdAt", "updatedAt", "sessionId", "costUsd", "branch"] {
             assert!(obj.contains_key(key), "missing camelCase key {key}");
         }
+    }
+
+    #[test]
+    fn m3_fields_default_and_round_trip() {
+        let task = Task::new("t".into(), String::new());
+        assert!(task.plan.is_none(), "plan defaults to None");
+        assert!(!task.committed && !task.merged && !task.conflict, "flags default false");
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in ["plan", "committed", "merged", "conflict"] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+
+        // An older on-disk task without the M3 flags still deserializes (serde
+        // default), so existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.plan.is_none() && !back.committed && !back.merged && !back.conflict);
     }
 
     #[test]
