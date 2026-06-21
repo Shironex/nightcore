@@ -2,19 +2,26 @@ import { Board, EMPTY_STREAM, NewTaskForm, TaskDetail } from '@/components/board
 import { ProjectsView } from '@/components/projects';
 import { SettingsView } from '@/components/settings';
 import { NewProjectDialog } from '@/components/new-project';
-import { Button, EmptyState } from '@/components/ui';
+import {
+  BoardIcon,
+  Button,
+  EmptyState,
+  FolderIcon,
+  GearIcon,
+  LayersIcon,
+} from '@/components/ui';
 import { Sidebar } from '../Sidebar';
 import { Splash } from '../Splash';
 import { useAppShell } from './AppShell.hooks';
 import type { NavItem } from './AppShell.types';
 
 const NAV: NavItem[] = [
-  { view: 'projects', label: 'Projects', hint: 'P', icon: '▤' },
-  { view: 'board', label: 'Kanban Board', hint: 'K', icon: '▦' },
-  { view: 'settings', label: 'Settings', hint: 'S', icon: '⚙' },
+  { view: 'projects', label: 'Projects', hint: 'P', icon: <LayersIcon size={16} /> },
+  { view: 'board', label: 'Kanban Board', hint: 'K', icon: <BoardIcon size={16} /> },
+  { view: 'settings', label: 'Settings', hint: 'S', icon: <GearIcon size={16} /> },
 ];
 
-const MODELS = ['Opus 4.8', 'Sonnet 4.6', 'Haiku 4.5'];
+const MODELS = ['Opus 4.8', 'Sonnet 4.8', 'Haiku 4.5'];
 
 /** The Nightcore app shell and composition root: it hosts the sidebar, routes
  *  between the Board / Projects / Settings surfaces, and renders the New Project
@@ -63,33 +70,35 @@ export function AppShell() {
         {view === 'board' && (
           <div className="flex min-h-0 flex-1">
             <div className="flex min-w-0 flex-1 flex-col">
-              {active !== null && (
-                <header className="flex items-center justify-between border-b border-border px-[22px] py-3.5">
-                  <div className="flex items-baseline gap-2.5">
-                    <h1 className="text-[21px] font-semibold tracking-tight">Kanban Board</h1>
-                    <span className="font-mono text-[11px] text-muted-foreground">
-                      {anyRunning ? 'running' : `${tasks.length} tasks`}
-                    </span>
-                  </div>
-                  <Button onClick={routing.openNewTask}>+ New task</Button>
-                </header>
-              )}
               {active === null ? (
                 <EmptyState
-                  icon="📁"
+                  icon={<FolderIcon size={32} />}
                   title="No active project"
                   description="Open a project to see its board. Each project keeps its own tasks."
                   action={<Button onClick={() => routing.goto('projects')}>Go to Projects</Button>}
                 />
               ) : tasks.length === 0 ? (
                 <EmptyState
-                  icon="📥"
+                  icon={<BoardIcon size={32} />}
                   title="No tasks yet"
                   description="Describe what you want built. Each task becomes a card an agent can pick up and run."
                   action={<Button onClick={routing.openNewTask}>Create your first task</Button>}
                 />
               ) : (
-                <Board tasks={tasks} selectedId={selectedId} onSelect={setSelectedId} />
+                <Board
+                  tasks={tasks}
+                  projectPath={active.path}
+                  projectBranch={active.branch}
+                  concurrency={settings.settings?.maxConcurrency ?? 3}
+                  selectedId={selectedId}
+                  logCounts={board.logCounts}
+                  onSelect={setSelectedId}
+                  onNewTask={routing.openNewTask}
+                  onRun={board.handleRun}
+                  onCancel={board.handleCancel}
+                  onDelete={board.handleDelete}
+                  onClearColumn={board.handleClearColumn}
+                />
               )}
             </div>
 
@@ -127,6 +136,7 @@ export function AppShell() {
             settings={settings.settings}
             activeProjectId={active?.id ?? null}
             activeProjectName={active?.name ?? null}
+            activeProjectPath={active?.path ?? null}
             onUpdate={settings.update}
           />
         )}

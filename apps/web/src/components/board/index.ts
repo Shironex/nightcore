@@ -11,6 +11,8 @@ export {
   STATUS_DOT_COLOR,
   formatCost,
   isActive,
+  modelDisplayName,
+  modelDotColor,
   type ColumnDef,
 } from './status';
 export {

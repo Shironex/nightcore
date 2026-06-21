@@ -23,6 +23,7 @@ import {
   type Settings,
   type SettingsPatch,
   type Task,
+  type TaskStatus,
 } from '@/lib/bridge';
 import { EMPTY_STREAM, foldSession, type SessionStream } from '@/components/board';
 import type { AppView } from './AppShell.types';
@@ -246,10 +247,12 @@ export interface AppShellState {
   board: ReturnType<typeof useBoard> & {
     anyRunning: boolean;
     selected: Task | null;
+    logCounts: Record<string, number>;
     handleCreate: (title: string, description: string) => Promise<void>;
     handleRun: (id: string) => void;
     handleCancel: (id: string) => void;
     handleDelete: (id: string) => void;
+    handleClearColumn: (statuses: TaskStatus[]) => void;
   };
   showSplash: boolean;
   isTauri: boolean;
@@ -264,7 +267,7 @@ export function useAppShell(): AppShellState {
   const settings = useSettingsData();
   const newProject = useNewProjectFlow(routing.closeNewProject);
   const board = useBoard();
-  const { tasks, setTasks, setStreams, selectedId, setSelectedId } = board;
+  const { tasks, setTasks, streams, setStreams, selectedId, setSelectedId } = board;
 
   const anyRunning = useMemo(
     () => tasks.some((t) => t.status === 'in_progress'),
@@ -274,6 +277,14 @@ export function useAppShell(): AppShellState {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
+  // Streamed log-line count per task, for the running card's Logs badge.
+  const logCounts = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const [id, stream] of Object.entries(streams)) {
+      counts[id] = stream.tools.length;
+    }
+    return counts;
+  }, [streams]);
 
   const handleCreate = useCallback(
     async (title: string, description: string) => {
@@ -310,6 +321,24 @@ export function useAppShell(): AppShellState {
     [setTasks, setStreams, setSelectedId],
   );
 
+  const handleClearColumn = useCallback(
+    (statuses: TaskStatus[]) => {
+      const targets = tasks.filter((t) => statuses.includes(t.status));
+      for (const t of targets) {
+        void deleteTask(t.id).catch((err) => console.error('delete_task failed', err));
+      }
+      const ids = new Set(targets.map((t) => t.id));
+      setTasks((prev) => prev.filter((t) => !ids.has(t.id)));
+      setStreams((prev) => {
+        const next = { ...prev };
+        for (const id of ids) delete next[id];
+        return next;
+      });
+      setSelectedId((cur) => (cur !== null && ids.has(cur) ? null : cur));
+    },
+    [tasks, setTasks, setStreams, setSelectedId],
+  );
+
   return {
     routing,
     registry,
@@ -319,10 +348,12 @@ export function useAppShell(): AppShellState {
       ...board,
       anyRunning,
       selected,
+      logCounts,
       handleCreate,
       handleRun,
       handleCancel,
       handleDelete,
+      handleClearColumn,
     },
     showSplash,
     isTauri: isTauri(),

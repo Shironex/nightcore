@@ -2,22 +2,34 @@ import { composeStories } from '@storybook/react-vite';
 import { render } from 'vitest-browser-react';
 import { expect, test } from 'vitest';
 import * as stories from './Board.stories';
-import { groupTasksByColumn } from './Board.hooks';
-import { TASKS_BY_STATUS } from '../_fixtures';
+import { computeBlockedIds, groupTasksByColumn, matchesQuery } from './Board.hooks';
+import { BLOCKED_TASK, TASKS_BY_STATUS } from '../_fixtures';
 
 const { Empty, Populated } = composeStories(stories);
 
-test('renders the four board columns when empty', async () => {
+test('renders all five board columns, including the Verified label', async () => {
   const screen = render(<Empty />);
-  await expect.element(screen.getByText('Backlog')).toBeInTheDocument();
-  await expect.element(screen.getByText('In Progress')).toBeInTheDocument();
-  await expect.element(screen.getByText('Done')).toBeInTheDocument();
-  await expect.element(screen.getByText('Failed')).toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('heading', { name: 'Backlog', level: 2 }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('heading', { name: 'In Progress', level: 2 }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('heading', { name: 'Waiting Approval', level: 2 }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('heading', { name: 'Verified', level: 2 }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('heading', { name: 'Failed', level: 2 }))
+    .toBeInTheDocument();
 });
 
-test('renders the populated board', async () => {
+test('renders the project path and branch in the header subtitle', async () => {
   const screen = render(<Populated />);
-  await expect.element(screen.getByText('In Progress')).toBeInTheDocument();
+  await expect.element(screen.getByText('~/dev/nightcore')).toBeInTheDocument();
+  await expect.element(screen.getByText('main')).toBeInTheDocument();
 });
 
 test('groupTasksByColumn places each task in its status column, newest first', () => {
@@ -29,4 +41,26 @@ test('groupTasksByColumn places each task in its status column, newest first', (
   const backlog = grouped.find((c) => c.def.key === 'backlog');
   expect(backlog?.tasks.map((t) => t.updatedAt)).toEqual([2, 1]);
   expect(grouped.find((c) => c.def.key === 'done')?.tasks).toHaveLength(1);
+});
+
+test('computeBlockedIds flags a backlog task whose dependency is unfinished', () => {
+  const dep = { ...TASKS_BY_STATUS.in_progress, title: 'Deployment configuration' };
+  const blocked = computeBlockedIds([BLOCKED_TASK, dep]);
+  expect(blocked.has(BLOCKED_TASK.id)).toBe(true);
+});
+
+test('computeBlockedIds clears the block once the dependency is verified', () => {
+  const dep = {
+    ...TASKS_BY_STATUS.done,
+    title: 'Deployment configuration',
+    status: 'done' as const,
+  };
+  const blocked = computeBlockedIds([BLOCKED_TASK, dep]);
+  expect(blocked.has(BLOCKED_TASK.id)).toBe(false);
+});
+
+test('matchesQuery matches title and description, case-insensitively', () => {
+  expect(matchesQuery(TASKS_BY_STATUS.done, 'AUTH')).toBe(true);
+  expect(matchesQuery(TASKS_BY_STATUS.done, 'nonexistent')).toBe(false);
+  expect(matchesQuery(TASKS_BY_STATUS.done, '')).toBe(true);
 });

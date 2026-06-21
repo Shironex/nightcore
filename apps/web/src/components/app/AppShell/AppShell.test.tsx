@@ -26,7 +26,12 @@ test('routes to the Projects surface when its nav item is clicked', async () => 
 
 test('routes to the Settings surface and shows the run-shaping controls', async () => {
   const screen = render(<Default />);
-  await screen.getByText('Settings').click();
-  await expect.element(screen.getByText('Models & runs')).toBeInTheDocument();
-  await expect.element(screen.getByText('Permissions')).toBeInTheDocument();
+  await screen.getByRole('button', { name: /^Settings S$/ }).click();
+  // The Models & runs page header and its live default-model control.
+  await expect
+    .element(screen.getByRole('heading', { name: 'Models & runs', level: 1 }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByRole('button', { name: 'Opus' }))
+    .toBeInTheDocument();
 });

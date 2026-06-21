@@ -1,48 +1,282 @@
-import { Badge } from '@/components/ui';
-import { formatCost } from '../status';
-import { TaskStatusDot } from '../TaskStatusDot';
+import {
+  AlertIcon,
+  BranchIcon,
+  CheckIcon,
+  ClockIcon,
+  CommitIcon,
+  EditIcon,
+  LockIcon,
+  LogsIcon,
+  PlayIcon,
+  RefineIcon,
+  RetryIcon,
+  StopIcon,
+  TrashIcon,
+} from '@/components/ui';
+import { formatCost, modelDisplayName, modelDotColor } from '../status';
+import { useElapsed } from './TaskCard.hooks';
 import type { TaskCardProps } from './TaskCard.types';
 
-export function TaskCard({ task, selected, onSelect }: TaskCardProps) {
-  const failed = task.status === 'failed';
+const CARD_BASE =
+  'group relative w-full rounded-xl border p-3.5 text-left transition-[border-color,box-shadow,background]';
+
+/** Container classes per card look × status (mirrors the design's `cardVm`). */
+function containerClass(
+  style: NonNullable<TaskCardProps['cardStyle']>,
+  status: string,
+  running: boolean,
+  selected: boolean,
+): string {
+  const surface = style === 'outline' ? 'bg-transparent' : 'bg-card';
+  if (running) {
+    const glow =
+      style === 'glow'
+        ? 'shadow-[0_0_0_1px_oklch(80%_.14_75_/_.3),0_10px_34px_-8px_oklch(80%_.14_75_/_.45)]'
+        : style === 'outline'
+          ? 'bg-warning/[0.04]'
+          : '';
+    return `${surface} border-warning/55 ${glow}`;
+  }
+  if (status === 'failed') {
+    const glow =
+      style === 'glow'
+        ? 'shadow-[0_0_0_1px_oklch(66%_.2_22_/_.2),0_8px_26px_-14px_oklch(66%_.2_22_/_.4)]'
+        : '';
+    return `${surface} border-destructive/45 ${glow}`;
+  }
+  if (status === 'done') {
+    const glow =
+      style === 'glow'
+        ? 'shadow-[0_0_0_1px_oklch(76%_.15_152_/_.16),0_8px_26px_-14px_oklch(76%_.15_152_/_.4)]'
+        : '';
+    const accent = style === 'outline' ? '' : 'border-l-2 border-l-success/50';
+    return `${surface} border-border ${glow} ${accent}`;
+  }
+  const base = selected ? 'border-primary/60' : 'border-border hover:border-white/20';
+  const glow = style === 'glow' ? 'shadow-[0_8px_22px_-14px_oklch(0%_0_0_/_.9)]' : '';
+  return `${surface} ${base} ${glow}`;
+}
+
+const ACTION_BASE =
+  'inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-[filter,background] disabled:cursor-not-allowed';
+const ACTION_PRIMARY = 'flex-1 bg-primary text-primary-foreground hover:brightness-110';
+const ACTION_GHOST = 'flex-1 border border-border text-foreground hover:bg-white/[0.05]';
+const ACTION_DANGER =
+  'bg-destructive/[0.14] text-destructive border border-destructive/30 hover:brightness-110';
+const ACTION_DISABLED = 'flex-1 border border-border bg-white/[0.04] text-muted-foreground';
+
+/** A task card with the design's full anatomy: model badge + dot, elapsed timer
+ *  and shimmer progress while running, cost, branch/blocked/error chips, and the
+ *  per-column action set (real run/cancel/logs/delete; M3 commit/refine/merge
+ *  visible-but-disabled). Pure presentational — selection and bridge actions are
+ *  owned by the board. */
+export function TaskCard({
+  task,
+  selected,
+  cardStyle = 'glow',
+  blocked = false,
+  logCount = 0,
+  onSelect,
+  onRun,
+  onCancel,
+  onDelete,
+}: TaskCardProps) {
+  const running = task.status === 'in_progress';
+  const elapsed = useElapsed(task.updatedAt, running);
+  const branch = task.summary;
+  const showBranch =
+    branch !== null &&
+    (running || task.status === 'waiting_approval' || task.status === 'done' || task.status === 'failed');
+
+  const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
+
   return (
-    <button
-      type="button"
-      onClick={() => onSelect(task.id)}
-      className={`group w-full rounded-xl border bg-card p-3.5 text-left transition-colors ${
-        failed
-          ? 'border-destructive/45 shadow-[0_0_0_1px_var(--nc-destructive)]'
-          : selected
-            ? 'border-primary/60 shadow-[0_0_0_1px_var(--nc-primary)]'
-            : 'border-border hover:border-white/20'
-      }`}
-    >
-      <div className="mb-2 flex items-center gap-2">
-        <Badge>
-          {task.model ?? 'default model'}
-        </Badge>
-        <span className="ml-auto flex items-center gap-2">
-          {task.costUsd !== null && (
-            <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">
-              {formatCost(task.costUsd)}
-            </span>
-          )}
-          <TaskStatusDot status={task.status} glow />
-        </span>
-      </div>
-      <div className="text-sm font-semibold leading-snug text-foreground">
-        {task.title || 'Untitled task'}
-      </div>
-      {task.description.trim().length > 0 && (
-        <div className="mt-1.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
-          {task.description}
+    <div className={`${CARD_BASE} ${containerClass(cardStyle, task.status, running, selected)}`}>
+      <button
+        type="button"
+        onClick={() => onSelect(task.id)}
+        className="block w-full text-left"
+      >
+        <div className="mb-2 flex items-center gap-2">
+          <span className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-[10px] text-muted-foreground">
+            <span
+              aria-hidden
+              className="inline-block h-[5px] w-[5px] rounded-full"
+              style={{ background: modelDotColor(task.model) }}
+            />
+            {modelDisplayName(task.model)}
+          </span>
+          <span className="ml-auto flex items-center gap-2">
+            {running && (
+              <span className="flex items-center gap-1 font-mono text-[10.5px] font-semibold tabular-nums text-warning">
+                <ClockIcon size={12} />
+                {elapsed}
+              </span>
+            )}
+            {!running && task.costUsd !== null && (
+              <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">
+                {formatCost(task.costUsd)}
+              </span>
+            )}
+          </span>
         </div>
-      )}
-      {failed && task.error !== null && (
-        <div className="mt-2.5 truncate rounded-md bg-destructive/[0.12] px-2 py-1 font-mono text-[9.5px] text-destructive">
-          {task.error}
+
+        <div className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight text-foreground">
+          {task.title || 'Untitled task'}
         </div>
-      )}
-    </button>
+        {task.description.trim().length > 0 && (
+          <div className="mt-1.5 line-clamp-2 text-xs leading-snug text-muted-foreground">
+            {task.description}
+          </div>
+        )}
+
+        {(showBranch || blocked || task.status === 'failed') && (
+          <div className="mt-2.5 flex flex-wrap gap-1.5">
+            {showBranch && (
+              <span className="flex items-center gap-1 rounded-md bg-white/[0.03] px-1.5 py-0.5 font-mono text-[9.5px] text-muted-foreground">
+                <BranchIcon size={11} />
+                {branch}
+              </span>
+            )}
+            {blocked && (
+              <span className="flex items-center gap-1 rounded-md bg-[oklch(74%_.13_60_/_.12)] px-1.5 py-0.5 font-mono text-[9.5px] text-[oklch(74%_.13_60)]">
+                <LockIcon size={11} />
+                blocked · {task.dependencies[0] ?? ''}
+              </span>
+            )}
+            {task.status === 'failed' && task.error !== null && (
+              <span className="flex max-w-full items-center gap-1 truncate rounded-md bg-destructive/[0.12] px-1.5 py-0.5 font-mono text-[9.5px] text-destructive">
+                <AlertIcon size={11} />
+                {task.error}
+              </span>
+            )}
+          </div>
+        )}
+
+        {running && (
+          <div className="relative mt-2.5 h-[2.5px] overflow-hidden rounded-full bg-white/[0.06]">
+            <div
+              className="absolute inset-y-0 w-[40%] bg-gradient-to-r from-transparent via-warning to-transparent"
+              style={{ animation: 'nc-bar 1.3s ease-in-out infinite' }}
+            />
+          </div>
+        )}
+      </button>
+
+      <div className="mt-3 flex gap-1.5" onClick={stop}>
+        {task.status === 'backlog' || task.status === 'ready' ? (
+          <>
+            <button
+              type="button"
+              disabled={blocked}
+              onClick={() => onRun?.(task.id)}
+              className={`${ACTION_BASE} ${blocked ? ACTION_DISABLED : ACTION_PRIMARY}`}
+            >
+              {blocked ? <LockIcon size={13} /> : <PlayIcon size={13} />}
+              {blocked ? 'Blocked' : 'Run'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelect(task.id)}
+              className={`${ACTION_BASE} ${ACTION_GHOST}`}
+            >
+              <EditIcon size={13} />
+              Edit
+            </button>
+          </>
+        ) : running ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onSelect(task.id)}
+              className={`${ACTION_BASE} ${ACTION_PRIMARY}`}
+            >
+              <LogsIcon size={13} />
+              Logs
+              <span className="rounded bg-black/20 px-1.5 font-mono text-[10px]">{logCount}</span>
+            </button>
+            <button
+              type="button"
+              aria-label="Cancel run"
+              onClick={() => onCancel?.(task.id)}
+              className={`${ACTION_BASE} ${ACTION_DANGER}`}
+            >
+              <StopIcon size={12} />
+            </button>
+          </>
+        ) : task.status === 'waiting_approval' ? (
+          <>
+            <button
+              type="button"
+              disabled
+              title="Refine arrives in M3"
+              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+            >
+              <RefineIcon size={13} />
+              Refine
+              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Commit arrives in M3"
+              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+            >
+              <CommitIcon size={13} />
+              Commit
+              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
+            </button>
+          </>
+        ) : task.status === 'done' ? (
+          <>
+            <button
+              type="button"
+              onClick={() => onSelect(task.id)}
+              className={`${ACTION_BASE} ${ACTION_GHOST}`}
+            >
+              <LogsIcon size={13} />
+              Logs
+            </button>
+            <button
+              type="button"
+              disabled
+              title="Commit & merge arrives in M3"
+              className={`${ACTION_BASE} ${ACTION_DISABLED}`}
+            >
+              <CheckIcon size={13} />
+              Commit
+              <span className="rounded bg-primary/[0.18] px-1 font-mono text-[8px] text-primary">M3</span>
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={() => onRun?.(task.id)}
+              className={`${ACTION_BASE} ${ACTION_PRIMARY}`}
+            >
+              <RetryIcon size={13} />
+              Retry
+            </button>
+            <button
+              type="button"
+              onClick={() => onSelect(task.id)}
+              className={`${ACTION_BASE} ${ACTION_GHOST}`}
+            >
+              <LogsIcon size={13} />
+              Logs
+            </button>
+          </>
+        )}
+        <button
+          type="button"
+          aria-label="Delete task"
+          onClick={() => onDelete?.(task.id)}
+          className="flex items-center justify-center rounded-lg p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground"
+        >
+          <TrashIcon size={13} />
+        </button>
+      </div>
+    </div>
   );
 }
