@@ -8,6 +8,15 @@ import { layerRules } from './tools/lint-meta/index.mjs';
 // dir under components/<feature>/. components/ui keeps the lighter shadcn
 // convention and is excluded by the rules' own ignorePaths.
 const COMPONENTS_GLOB = 'apps/web/src/components/**';
+// Composition roots may wire features together: a shell that hosts the board,
+// projects, and settings surfaces must import across feature boundaries by
+// design. They are exempt from `no-cross-feature-imports` (mirroring shiranami's
+// COMPOSITION_ROOT_FEATURES allowlist) while still obeying every other component
+// rule (folder structure, thin shells, the single Tauri seam).
+const COMPOSITION_ROOT_FEATURES = ['app'];
+const COMPOSITION_ROOT_GLOBS = COMPOSITION_ROOT_FEATURES.map(
+  (feature) => `apps/web/src/components/${feature}/**`,
+);
 // Feature-root shared modules (data/util .ts like status.ts, session-stream.ts,
 // _fixtures.ts, and the feature barrel index.ts) are not components — the Tier-C
 // arch rules target component contracts, not domain models.
@@ -97,6 +106,17 @@ export default tseslint.config(
       // ui = shadcn primitives (the cross-feature escape hatch, skipped dir).
       'nightcore/no-cross-feature-imports': ['error', { sharedFeatures: ['ui'] }],
       'nightcore/max-hooks-per-file': 'error',
+    },
+  },
+  // Composition roots (the app shell) wire features together by design, so the
+  // cross-feature import ban is lifted for them. Every other component rule
+  // (folder structure, thin shells, hook budget) still applies via the block
+  // above; only `no-cross-feature-imports` is relaxed here.
+  {
+    files: COMPOSITION_ROOT_GLOBS.map((glob) => `${glob}/*.{ts,tsx}`),
+    ignores: [`${COMPONENTS_GLOB}/*.{stories,test}.{ts,tsx}`, FEATURE_ROOT_FILES],
+    rules: {
+      'nightcore/no-cross-feature-imports': 'off',
     },
   },
   // Frontend layer boundaries (single Tauri seam, components/ui purity).
