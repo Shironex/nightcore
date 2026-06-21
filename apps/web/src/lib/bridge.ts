@@ -24,6 +24,8 @@ export interface Task {
   status: TaskStatus;
   dependencies: string[];
   model: string | null;
+  /** The worktree branch (`nc/<id>`) once the coordinator allocates one; else null. */
+  branch: string | null;
   createdAt: number;
   updatedAt: number;
   sessionId: number | null;
@@ -165,6 +167,21 @@ export async function updateTask(id: string, patch: TaskPatch): Promise<Task> {
 /** Delete a task. */
 export async function deleteTask(id: string): Promise<void> {
   await invoke('delete_task', { id });
+}
+
+/** Ids of tasks blocked on an unfinished dependency (fail-closed). Drives the
+ *  board's blocked badge + locked Run. Returns `[]` outside Tauri (preview). */
+export async function blockedTaskIds(): Promise<string[]> {
+  if (!isTauri()) return [];
+  return invoke<string[]>('blocked_task_ids');
+}
+
+/** Manually move a task to `status` (drag between columns). The backend rejects a
+ *  move into `in_progress` and any unknown status. No-op outside Tauri (preview):
+ *  the caller keeps its optimistic update and there is no event to reconcile. */
+export async function moveTask(id: string, status: TaskStatus): Promise<void> {
+  if (!isTauri()) return;
+  await invoke<Task>('move_task', { id, status });
 }
 
 /** Run a task through the sidecar. Rejects if a task is already running. */
