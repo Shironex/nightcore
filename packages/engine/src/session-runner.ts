@@ -60,6 +60,12 @@ export interface SessionRunnerConfig {
   /** Enable the SDK's task/todo tracking. REQUIRED for the `task_*` system
    *  messages (→ `task-updated` events) to be emitted. */
   todoFeatureEnabled: boolean;
+  /** Appended to the SDK system prompt (M4 kind preset). Omitted = no append. */
+  appendSystemPrompt?: string;
+  /** Tools to explicitly allow (M4 kind preset, SDK `allowedTools`). */
+  allowedTools?: string[];
+  /** Tools to deny (M4 kind preset, SDK `disallowedTools`). */
+  disallowedTools?: string[];
 }
 
 /**
@@ -123,6 +129,17 @@ export class SessionRunner {
       hooks: this.hooks.hooks(),
       abortController: this.abort,
       ...(this.cfg.effort !== undefined ? { effort: this.cfg.effort } : {}),
+      // M4 kind preset: an absent field leaves the SDK default in place, so a
+      // `build` session (no preset overrides) is byte-identical to pre-M4.
+      ...(this.cfg.appendSystemPrompt !== undefined
+        ? { appendSystemPrompt: this.cfg.appendSystemPrompt }
+        : {}),
+      ...(this.cfg.allowedTools !== undefined
+        ? { allowedTools: this.cfg.allowedTools }
+        : {}),
+      ...(this.cfg.disallowedTools !== undefined
+        ? { disallowedTools: this.cfg.disallowedTools }
+        : {}),
     };
 
     try {
