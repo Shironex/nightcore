@@ -881,6 +881,14 @@ pub async fn run_task(
     let _ = app.emit(TASK_EVENT, &updated);
 
     if let Err(e) = ensure_reader(&app).await {
+        tracing::error!(target: "nightcore", task_id = %id, error = %e, "sidecar spawn failed; task failed");
+        // Reset to Failed so the task doesn't strand in InProgress with no log.
+        if let Ok(task) = store.mutate(&id, |task| {
+            task.status = TaskStatus::Failed;
+            task.error = Some(e.clone());
+        }) {
+            let _ = app.emit(TASK_EVENT, &task);
+        }
         orch.slots.release(&id);
         return Err(e);
     }
