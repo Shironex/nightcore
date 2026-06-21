@@ -1,14 +1,16 @@
 // @ts-check
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import { layerRules } from './tools/lint-meta/index.mjs';
 
 /**
- * Flat config. Minimal but present. The `no-restricted-imports` blocks encode
- * the layer-dependency rules from the architecture doc (§3 table): surfaces and
- * capability packages must never reach for the SDK or the engine directly.
+ * Flat config. The `no-restricted-imports` blocks encode the layer-dependency
+ * rules from the architecture doc (§3 table): surfaces and capability packages
+ * must never reach for the SDK or the engine directly.
  *
- * These are intentionally coarse — full layer enforcement is a deferred
- * `tools/lint-meta` port. See docs/architecture.md.
+ * The fine-grained frontend layer enforcement (feature-folder boundaries, the
+ * single Tauri seam, shared/ purity) lives in `tools/lint-meta` and is spread
+ * in as `layerRules` at the end. See tools/lint-meta/README.md.
  */
 export default tseslint.config(
   {
@@ -18,6 +20,9 @@ export default tseslint.config(
       '**/target/**',
       '**/node_modules/**',
       '**/*.tsbuildinfo',
+      '**/storybook-static/**',
+      '**/*.woff2',
+      'design/**',
     ],
   },
   eslint.configs.recommended,
@@ -62,4 +67,6 @@ export default tseslint.config(
       ],
     },
   },
+  // Frontend layer boundaries (feature isolation, Tauri seam, shared/ purity).
+  ...layerRules,
 );
