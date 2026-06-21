@@ -10,9 +10,10 @@
 //!
 //! This module consolidates that resolution behind [`resolve_program`]. Spawn sites
 //! launch the resolved [`Program`] via
-//! `Command::new(prog.program).args(prog.prefix_args)…`. Consumers today: the
-//! sidecar `bun` spawn (`m2/provider.rs`) and the readiness gauntlet's `bun`/`npm`
-//! steps (`gauntlet.rs`).
+//! `Command::new(prog.program).args(prog.prefix_args)…`, or via the [`std_command`]
+//! convenience for the synchronous spawn sites. Consumers today: the sidecar `bun`
+//! spawn (`m2/provider.rs`, async tokio), the readiness gauntlet's `bun`/`npm`/`cargo`
+//! steps (`gauntlet.rs`), and the `git` calls in `m2/worktree.rs` + `project.rs`.
 
 use std::path::PathBuf;
 
@@ -66,6 +67,19 @@ pub fn resolve_program(name: &str) -> Program {
 /// sidecar-spawn hot path so its call site reads as `resolve_bun_program()`.
 pub fn resolve_bun_program() -> Program {
     resolve_program("bun")
+}
+
+/// Build a synchronous [`std::process::Command`] for a bare program `name`, with
+/// the resolved program + any prefix args already applied — the caller just adds
+/// its own `.args(…)`, `.current_dir(…)`, etc. This is the ergonomic entry point
+/// for the std-Command spawn sites (`git`, `cargo`, the gauntlet steps). The async
+/// sidecar hot path uses [`resolve_bun_program`] directly because it needs a
+/// `tokio::process::Command`, which this helper does not build.
+pub fn std_command(name: &str) -> std::process::Command {
+    let prog = resolve_program(name);
+    let mut cmd = std::process::Command::new(prog.program);
+    cmd.args(prog.prefix_args);
+    cmd
 }
 
 #[cfg(test)]
@@ -124,5 +138,14 @@ mod tests {
             resolved.prefix_args.is_empty(),
             "non-Windows resolution never needs prefix args: {resolved:?}"
         );
+    }
+
+    /// `std_command` must pre-apply the resolved program so callers only add their
+    /// own args; its program must match what `resolve_program` returns for the name.
+    #[test]
+    fn std_command_prebuilds_the_resolved_program() {
+        let resolved = resolve_program("git");
+        let cmd = std_command("git");
+        assert_eq!(cmd.get_program(), resolved.program.as_os_str());
     }
 }

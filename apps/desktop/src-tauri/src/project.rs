@@ -10,7 +10,6 @@
 //! Held in managed Tauri state; commands take it as `State<'_, ProjectStore>`.
 
 use std::path::{Path, PathBuf};
-use std::process::Command as StdCommand;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -254,7 +253,7 @@ fn path_is_git_repo(path: &str) -> bool {
 
 /// Best-effort current branch via `git rev-parse --abbrev-ref HEAD`.
 fn current_branch(path: &str) -> Option<String> {
-    let out = StdCommand::new("git")
+    let out = crate::platform::std_command("git")
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
         .current_dir(path)
         .output()
@@ -397,7 +396,7 @@ pub fn is_git_repo(path: String) -> Result<bool, String> {
 /// Initialize a git repository at `path` (`git init`).
 #[tauri::command]
 pub fn git_init(path: String) -> Result<(), String> {
-    let out = StdCommand::new("git")
+    let out = crate::platform::std_command("git")
         .arg("init")
         .current_dir(&path)
         .output()

@@ -15,6 +15,9 @@
 //!   - neither ⇒ the gauntlet trivially passes (nothing to run).
 
 use std::path::Path;
+// Only the test module spawns directly now; production steps route through
+// `crate::platform::std_command`.
+#[cfg(test)]
 use std::process::Command;
 
 use serde::Serialize;
@@ -171,7 +174,7 @@ fn detect_cargo_steps(dir: &Path) -> Vec<PlannedStep> {
 /// Whether `cargo clippy` is available (the component is installed). Probed with
 /// `cargo clippy --version` so we never plan a step that can't run.
 fn clippy_available(dir: &Path) -> bool {
-    Command::new("cargo")
+    crate::platform::std_command("cargo")
         .args(["clippy", "--version"])
         .current_dir(dir)
         .output()
@@ -205,9 +208,7 @@ pub fn run(dir: &Path) -> GauntletResult {
         // Route the bare program name (`bun`/`npm`/`cargo`) through the platform
         // resolver so it launches through Windows npm shims like the sidecar spawn
         // does — `Command::new("bun")` is unspawnable when only `bun.cmd` is on PATH.
-        let prog = crate::platform::resolve_program(&step.program);
-        let output = Command::new(&prog.program)
-            .args(&prog.prefix_args)
+        let output = crate::platform::std_command(&step.program)
             .args(&step.args)
             .current_dir(dir)
             .output();

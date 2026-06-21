@@ -20,6 +20,9 @@
 //! by tests that build a real temp repo when `git` is available.
 
 use std::path::{Path, PathBuf};
+// Only the test module spawns `git` directly now; the production helpers route
+// through `crate::platform::std_command`.
+#[cfg(test)]
 use std::process::Command;
 
 /// The branch name for a task's run: `nc/<taskId>`.
@@ -49,7 +52,7 @@ pub fn is_under(base: &Path, candidate: &Path) -> bool {
 /// Run a git subcommand in `repo`, returning trimmed stdout on success or the
 /// trimmed stderr as the error.
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let out = Command::new("git")
+    let out = crate::platform::std_command("git")
         .args(args)
         .current_dir(repo)
         .output()
@@ -211,7 +214,7 @@ pub fn delete_branch(project_path: &Path, task_id: &str) -> Result<(), String> {
 /// Run a git subcommand purely for its exit status (no output capture). Returns
 /// true on success. Used for predicate-style git calls (`diff --quiet`, `merge`).
 fn git_status_success(repo: &Path, args: &[&str]) -> bool {
-    Command::new("git")
+    crate::platform::std_command("git")
         .args(args)
         .current_dir(repo)
         .output()
