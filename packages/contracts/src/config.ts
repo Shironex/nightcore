@@ -43,6 +43,18 @@ export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max'
 export type EffortLevel = z.infer<typeof EffortLevelSchema>;
 
 /**
+ * Which on-disk settings the SDK loads (`Options.settingSources`). Drives where
+ * skills, slash commands, agents, and CLAUDE.md come from:
+ *  - `user`    — `~/.claude` (global Claude Code env)
+ *  - `project` — `./.claude` (per-project)
+ *  - `local`   — project-local untracked settings
+ * Default is all three, so a user's existing Claude Code skills/commands "just
+ * work" in Nightcore. Set to `[]` for strict isolation.
+ */
+export const SettingSourceSchema = z.enum(['user', 'project', 'local']);
+export type SettingSource = z.infer<typeof SettingSourceSchema>;
+
+/**
  * Permission policy: how the harness should resolve tool-use requests before
  * falling back to interactive approval. Maps onto the SDK's allow/deny lists
  * plus the active permission mode.
@@ -93,6 +105,13 @@ export const ConfigSchema = z.object({
   effort: EffortLevelSchema.optional(),
   /** Permission policy applied to new sessions. */
   permissions: PermissionPolicySchema.prefault({}),
+  /** On-disk settings sources the SDK loads (skills/commands/agents/CLAUDE.md).
+   *  Defaults to all so existing Claude Code config works; `[]` = strict. */
+  settingSources: z
+    .array(SettingSourceSchema)
+    .default(['user', 'project', 'local']),
+  /** Enable the SDK's task/todo tracking (powers the live task panel). */
+  todoFeatureEnabled: z.boolean().default(true),
   /** Resolved filesystem paths. */
   paths: ConfigPathsSchema,
   /** Log verbosity. */
@@ -121,6 +140,8 @@ export const ConfigFileSchema = z.object({
       mode: PermissionModeSchema.optional(),
     })
     .optional(),
+  settingSources: z.array(SettingSourceSchema).optional(),
+  todoFeatureEnabled: z.boolean().optional(),
   logLevel: LogLevelSchema.optional(),
 });
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;

@@ -17,6 +17,8 @@ describe('NightcoreEventSchema round-trips', () => {
       sdkSessionId: 'uuid-abc',
       model: 'claude-opus-4-8',
       tools: ['Read', 'Bash'],
+      slashCommands: [],
+      skills: [],
     },
     { type: 'assistant-delta', sessionId: 2, text: 'partial', partial: true },
     {
@@ -34,11 +36,20 @@ describe('NightcoreEventSchema round-trips', () => {
       input: { path: '/tmp/x' },
     },
     {
+      type: 'task-updated',
+      sessionId: 5,
+      taskId: 'task_1',
+      status: 'running',
+      description: 'exploring the codebase',
+      ambient: false,
+    },
+    {
       type: 'session-completed',
       sessionId: 5,
       result: 'ok',
       costUsd: 0.1,
       numTurns: 3,
+      durationMs: 1200,
     },
     {
       type: 'session-failed',

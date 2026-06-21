@@ -26,13 +26,50 @@ export const SessionStartedEvent = z.object({
   permissionMode: PermissionModeSchema,
 });
 
-/** The SDK emitted its `init` system message; carries the real SDK session id. */
+/** The SDK emitted its `init` system message; carries the real SDK session id
+ *  plus the session's available slash commands and skills (from settingSources),
+ *  which the surface folds into its command palette. */
 export const SessionReadyEvent = z.object({
   ...base,
   type: z.literal('session-ready'),
   sdkSessionId: z.string(),
   model: z.string(),
   tools: z.array(z.string()),
+  /** SDK-native slash command names (from `.claude/commands`, plugins, builtins). */
+  slashCommands: z.array(z.string()).default([]),
+  /** Skill names discovered for this session (from `.claude/skills`). */
+  skills: z.array(z.string()).default([]),
+});
+
+/** Status of an SDK task/subagent step, mirroring the SDK's `task_updated`
+ *  patch status superset. */
+export const TaskStatusSchema = z.enum([
+  'pending',
+  'running',
+  'completed',
+  'failed',
+  'killed',
+  'paused',
+]);
+export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+
+/** A task/subagent step started or changed. The surface merges these by
+ *  `taskId` into a live task panel. Folded from the SDK's `task_started` /
+ *  `task_updated` / `task_progress` / `task_notification` system messages. */
+export const TaskUpdatedEvent = z.object({
+  ...base,
+  type: z.literal('task-updated'),
+  taskId: z.string(),
+  status: TaskStatusSchema.optional(),
+  /** Human description of what the task is doing. */
+  description: z.string().optional(),
+  /** Short progress/result summary, when the SDK provides one. */
+  summary: z.string().optional(),
+  /** Subagent type for Task-tool subagents (e.g. `Explore`). */
+  subagentType: z.string().optional(),
+  /** True for ambient/housekeeping tasks the surface may hide from the inline
+   *  transcript (still fine to show in a dedicated panel). */
+  ambient: z.boolean().default(false),
 });
 
 /** A chunk of assistant text. For streamed deltas, `text` is the incremental
@@ -79,6 +116,15 @@ export const PermissionRequiredEvent = z.object({
   title: z.string().optional(),
 });
 
+/** Token usage for a completed session, distilled from the SDK result message. */
+export const TokenUsageSchema = z.object({
+  inputTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  cacheReadTokens: z.number().int().nonnegative().default(0),
+  cacheCreationTokens: z.number().int().nonnegative().default(0),
+});
+export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+
 /** Session reached a successful terminal state. */
 export const SessionCompletedEvent = z.object({
   ...base,
@@ -87,6 +133,10 @@ export const SessionCompletedEvent = z.object({
   result: z.string(),
   costUsd: z.number(),
   numTurns: z.number().int(),
+  /** Wall-clock duration of the session in ms (SDK `duration_ms`). */
+  durationMs: z.number().nonnegative().default(0),
+  /** Token usage, when the SDK result reported it. */
+  usage: TokenUsageSchema.optional(),
 });
 
 /** Session failed or the runner crashed. Degrade-not-throw: the manager always
@@ -120,6 +170,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   ToolUseRequestedEvent,
   ToolResultEvent,
   PermissionRequiredEvent,
+  TaskUpdatedEvent,
   SessionCompletedEvent,
   SessionFailedEvent,
   SessionStatusEvent,
