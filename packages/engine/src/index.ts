@@ -15,6 +15,8 @@ export type {
 export { HookBus } from './hook-bus.js';
 export { SessionRunner } from './session-runner.js';
 export type { SessionRunnerConfig } from './session-runner.js';
+export { resolveKindPreset, WRITE_TOOLS } from './kind-presets.js';
+export type { KindPreset } from './kind-presets.js';
 
 // The message-translation boundary is exported for testing only — surfaces
 // should not need it.

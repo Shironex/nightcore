@@ -17,6 +17,9 @@ type Script =
 
 let scripts: Script[] = [];
 const interruptCalls: number[] = [];
+/** Every `Options` object the engine handed to `query()`, in call order, so a
+ *  test can assert the kind preset threaded the right tool/prompt restrictions. */
+const queryOptions: Record<string, unknown>[] = [];
 
 function makeFakeQuery() {
   const script = scripts.shift() ?? { kind: 'messages', messages: [] };
@@ -56,7 +59,10 @@ function makeFakeQuery() {
 const realSdk = await import('@anthropic-ai/claude-agent-sdk');
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   ...realSdk,
-  query: () => makeFakeQuery(),
+  query: (args: { options?: Record<string, unknown> }) => {
+    if (args?.options) queryOptions.push(args.options);
+    return makeFakeQuery();
+  },
 }));
 
 // Imported AFTER the mock is registered so the runner picks up the stub.
@@ -123,6 +129,7 @@ beforeEach(() => {
   tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'nightcore-sm-'));
   scripts = [];
   interruptCalls.length = 0;
+  queryOptions.length = 0;
 });
 
 afterEach(() => {
@@ -252,5 +259,63 @@ describe('SessionManager late-event dropping', () => {
 
     expect(startedIds).toEqual([1, 2]);
     expect(manager.activeCount).toBe(0);
+  });
+});
+
+describe('SessionManager task kinds (M4)', () => {
+  test('a kind-less start-session runs unchanged with no tool restrictions', async () => {
+    scripts = [{ kind: 'messages', messages: [initMessage(), successMessage()] }];
+    const manager = new SessionManager(makeConfig());
+    const { done } = collect(manager, (e) => e.type === 'session-completed');
+
+    await manager.dispatch({ type: 'start-session', prompt: 'build it' });
+    await done;
+
+    const options = queryOptions.at(-1)!;
+    // The build preset adds no append and no tool restriction: byte-identical to
+    // pre-M4. permissionMode falls back to the session default.
+    expect(options.appendSystemPrompt).toBeUndefined();
+    expect(options.allowedTools).toBeUndefined();
+    expect(options.disallowedTools).toBeUndefined();
+    expect(options.permissionMode).toBe('default');
+  });
+
+  test("kind:'review' denies the write tools and runs non-prompting", async () => {
+    scripts = [{ kind: 'messages', messages: [initMessage(), successMessage()] }];
+    const manager = new SessionManager(makeConfig());
+    const { done } = collect(manager, (e) => e.type === 'session-completed');
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'review the diff',
+      kind: 'review',
+    });
+    await done;
+
+    const options = queryOptions.at(-1)!;
+    const denied = options.disallowedTools as string[];
+    for (const tool of ['Edit', 'Write', 'NotebookEdit', 'MultiEdit']) {
+      expect(denied).toContain(tool);
+    }
+    expect(options.appendSystemPrompt).toBeDefined();
+    // Verification is unattended: a review never prompts.
+    expect(options.permissionMode).toBe('dontAsk');
+  });
+
+  test('an explicit command.permissionMode overrides the kind default', async () => {
+    scripts = [{ kind: 'messages', messages: [initMessage(), successMessage()] }];
+    const manager = new SessionManager(makeConfig());
+    const { done } = collect(manager, (e) => e.type === 'session-completed');
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'review the diff',
+      kind: 'review',
+      permissionMode: 'plan',
+    });
+    await done;
+
+    // The review preset defaults to `dontAsk`, but an explicit command mode wins.
+    expect(queryOptions.at(-1)!.permissionMode).toBe('plan');
   });
 });
