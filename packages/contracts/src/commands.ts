@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { PermissionModeSchema } from './config.js';
+import { EffortLevelSchema, PermissionModeSchema } from './config.js';
 import { PermissionDecisionSchema } from './tools.js';
 
 /**
@@ -18,6 +18,10 @@ export const StartSessionCommand = z.object({
   prompt: z.string(),
   /** Override the default model for this session. */
   model: z.string().optional(),
+  /** Reasoning effort for this session. Effort has no live setter in the SDK, so
+   *  it is fixed at session start (a surface's `/model` effort choice applies to
+   *  the next session). */
+  effort: EffortLevelSchema.optional(),
   /** Override the default permission mode for this session. */
   permissionMode: PermissionModeSchema.optional(),
   /** Working directory; defaults to the process cwd. */

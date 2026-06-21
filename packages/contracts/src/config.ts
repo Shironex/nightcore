@@ -32,6 +32,17 @@ export const KnownModelSchema = z.enum([
 export type KnownModel = z.infer<typeof KnownModelSchema>;
 
 /**
+ * Reasoning effort levels, mirroring the Claude Agent SDK's `EffortLevel`. Which
+ * levels a given model actually supports is dynamic — query it at runtime via
+ * the engine's `listModels()` (`ModelDescriptor.supportedEffortLevels`). This
+ * enum is the full superset; the SDK silently downgrades unsupported levels.
+ *
+ * Keep in sync with `@anthropic-ai/claude-agent-sdk` `EffortLevel`.
+ */
+export const EffortLevelSchema = z.enum(['low', 'medium', 'high', 'xhigh', 'max']);
+export type EffortLevel = z.infer<typeof EffortLevelSchema>;
+
+/**
  * Permission policy: how the harness should resolve tool-use requests before
  * falling back to interactive approval. Maps onto the SDK's allow/deny lists
  * plus the active permission mode.
@@ -77,6 +88,9 @@ export type LogLevel = z.infer<typeof LogLevelSchema>;
 export const ConfigSchema = z.object({
   /** Default model for new sessions. Free string to allow any SDK-supported id. */
   model: z.string().default('claude-opus-4-8'),
+  /** Default reasoning effort for new sessions. Omitted = let the model decide
+   *  (adaptive). The SDK downgrades silently if the model can't honor it. */
+  effort: EffortLevelSchema.optional(),
   /** Permission policy applied to new sessions. */
   permissions: PermissionPolicySchema.prefault({}),
   /** Resolved filesystem paths. */
@@ -99,6 +113,7 @@ export type Config = z.infer<typeof ConfigSchema>;
  */
 export const ConfigFileSchema = z.object({
   model: z.string().optional(),
+  effort: EffortLevelSchema.optional(),
   permissions: z
     .object({
       allow: z.array(z.string()).optional(),

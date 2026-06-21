@@ -1,6 +1,17 @@
 import { z } from 'zod';
 
 /**
+ * How risky a tool is, which drives how tightly the PermissionLayer gates it:
+ *  - `safe`      — read-only; may be auto-allowed.
+ *  - `mutating`  — writes/edits state; gated by mode + allow/deny.
+ *  - `dangerous` — arbitrary effect (shell exec, network); ALWAYS requires
+ *                  interactive approval unless explicitly allow-listed, even
+ *                  under an auto-accepting mode.
+ */
+export const ToolRiskSchema = z.enum(['safe', 'mutating', 'dangerous']);
+export type ToolRisk = z.infer<typeof ToolRiskSchema>;
+
+/**
  * Describes a tool the harness can surface to a session. This is Nightcore's own
  * descriptor — the actual executable definition (a zod shape + handler) lives in
  * `@nightcore/tools` and is assembled into an in-process SDK MCP server by the
@@ -13,7 +24,11 @@ export const ToolDescriptorSchema = z.object({
   description: z.string(),
   /** Source: a built-in SDK tool, or one Nightcore registered in-process. */
   source: z.enum(['builtin', 'nightcore', 'external-mcp']),
-  /** When true, the tool can mutate state (write/exec) and is gated more tightly. */
+  /** Risk class — drives permission gating. When omitted, the PermissionLayer
+   *  treats the tool as the most cautious class (`dangerous`). */
+  risk: ToolRiskSchema.optional(),
+  /** Deprecated: superseded by `risk`. `mutating` ≈ `risk !== 'safe'`. Kept so
+   *  existing descriptors/readers don't break; prefer `risk`. */
   mutating: z.boolean().default(false),
 });
 export type ToolDescriptor = z.infer<typeof ToolDescriptorSchema>;

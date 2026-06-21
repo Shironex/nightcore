@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { PermissionModeSchema } from './config.js';
 import { SessionStatusSchema } from './session.js';
+import { ToolRiskSchema } from './tools.js';
 
 /**
  * `NightcoreEvent` — the typed stream flowing engine → surface.
@@ -71,6 +72,9 @@ export const PermissionRequiredEvent = z.object({
   requestId: z.string(),
   toolName: z.string(),
   input: z.record(z.string(), z.unknown()),
+  /** Risk class of the requested tool, so the surface can badge dangerous calls
+   *  (e.g. shell exec). Absent when the tool has no Nightcore descriptor. */
+  risk: ToolRiskSchema.optional(),
   /** Pre-rendered prompt sentence from the SDK, when available. */
   title: z.string().optional(),
 });
