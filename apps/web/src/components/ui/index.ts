@@ -1,7 +1,10 @@
 export { Badge } from './Badge';
+export { BrandMark } from './BrandMark';
 export { Button } from './Button';
 export { Card } from './Card';
 export { EmptyState } from './EmptyState';
 export { IconButton } from './IconButton';
+export { IconTile } from './IconTile';
 export { Kbd } from './Kbd';
 export { StatusDot } from './StatusDot';
+export * from './icons';

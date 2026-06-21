@@ -1,4 +1,16 @@
-import { IconButton, Kbd, StatusDot } from '@/components/ui';
+import {
+  BrandMark,
+  ChevronDownIcon,
+  ChevronLeftIcon,
+  ChevronRightIcon,
+  FolderIcon,
+  GithubIcon,
+  IconButton,
+  IconTile,
+  Kbd,
+  PlusIcon,
+  StatusDot,
+} from '@/components/ui';
 import type { SidebarProps } from './Sidebar.types';
 
 const NAV_BASE =
@@ -28,15 +40,17 @@ export function Sidebar({
       style={{ width: collapsed ? 66 : 244, flex: 'none' }}
     >
       {/* brand */}
-      <div className="flex items-center gap-2.5 px-4 py-3.5">
-        <span className="text-base font-semibold text-primary">◆</span>
+      <div
+        className={`flex items-center gap-2.5 px-4 py-3.5 ${collapsed ? 'flex-col' : ''}`}
+      >
+        <BrandMark size={30} />
         {!collapsed && (
           <span className="flex-1 text-lg font-semibold tracking-tight">
             nightcore<span className="text-primary">.</span>
           </span>
         )}
         <IconButton label="Toggle sidebar" onClick={onToggleCollapsed}>
-          {collapsed ? '»' : '«'}
+          {collapsed ? <ChevronRightIcon size={16} /> : <ChevronLeftIcon size={16} />}
         </IconButton>
       </div>
 
@@ -48,9 +62,9 @@ export function Sidebar({
           title={active?.name ?? 'No project'}
           className={`flex w-full items-center gap-2.5 rounded-[9px] border border-border bg-white/[0.02] px-2.5 py-2.5 text-left ${collapsed ? 'justify-center' : ''}`}
         >
-          <span className="flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-primary/[0.14] text-primary">
-            📁
-          </span>
+          <IconTile size="sm" className="h-[22px] w-[22px] rounded-md">
+            <FolderIcon size={14} />
+          </IconTile>
           {!collapsed && (
             <>
               <span className="min-w-0 flex-1">
@@ -61,7 +75,7 @@ export function Sidebar({
                   {active?.path ?? 'Select a project'}
                 </span>
               </span>
-              <span className="shrink-0 text-muted-foreground">⌄</span>
+              <ChevronDownIcon size={15} className="shrink-0 text-muted-foreground" />
             </>
           )}
         </button>
@@ -100,7 +114,8 @@ export function Sidebar({
               onClick={onNewProject}
               className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-[12.5px] font-semibold text-primary hover:bg-white/[0.04]"
             >
-              + New project
+              <PlusIcon size={14} />
+              New project
             </button>
           </div>
         )}
@@ -153,6 +168,16 @@ export function Sidebar({
             <span className="font-mono text-[11px] text-muted-foreground">{version}</span>
           )
         )}
+        <a
+          href="https://github.com"
+          target="_blank"
+          rel="noreferrer"
+          aria-label="View on GitHub"
+          title="View on GitHub"
+          className={`flex items-center justify-center rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-white/[0.08] hover:text-foreground ${collapsed ? '' : 'ml-auto'}`}
+        >
+          <GithubIcon size={16} />
+        </a>
       </div>
     </aside>
   );

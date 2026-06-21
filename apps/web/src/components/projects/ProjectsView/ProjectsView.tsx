@@ -1,4 +1,4 @@
-import { Button, EmptyState } from '@/components/ui';
+import { Button, EmptyState, FolderIcon, PlusIcon } from '@/components/ui';
 import { ProjectCard } from '../ProjectCard';
 import { useProjectSummaries } from './ProjectsView.hooks';
 import type { ProjectsViewProps } from './ProjectsView.types';
@@ -31,13 +31,14 @@ export function ProjectsView({
           </p>
         </div>
         <Button className="ml-auto" onClick={onNewProject}>
-          + New project
+          <PlusIcon size={14} />
+          New project
         </Button>
       </div>
 
       {summaries.length === 0 ? (
         <EmptyState
-          icon="📁"
+          icon={<FolderIcon size={32} />}
           title="No projects yet"
           description="Point Nightcore at a git repo to begin. Each project gets its own board, tasks, and settings."
           action={<Button onClick={onNewProject}>Add your first project</Button>}

@@ -20,7 +20,7 @@ test('lists projects and opens new project from the switcher', async () => {
   );
   await screen.getByText('automaker (legacy)').click();
   expect(onPickProject).toHaveBeenCalledWith('automaker');
-  await screen.getByText('+ New project').click();
+  await screen.getByRole('button', { name: /new project/i }).click();
   expect(onNewProject).toHaveBeenCalled();
 });
 

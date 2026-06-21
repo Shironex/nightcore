@@ -1,4 +1,13 @@
-import { Badge, Card, IconButton, StatusDot } from '@/components/ui';
+import {
+  Badge,
+  Card,
+  ClockIcon,
+  DotsIcon,
+  FolderIcon,
+  IconButton,
+  IconTile,
+  StatusDot,
+} from '@/components/ui';
 import type { ProjectCardProps, ProjectSummary } from './ProjectCard.types';
 
 const STAT_TONE: Record<ProjectSummary['stats'][number]['tone'], string> = {
@@ -20,9 +29,9 @@ export function ProjectCard({ project, onOpen, onMenu }: ProjectCardProps) {
           onClick={() => onOpen(project.id)}
           className="flex min-w-0 flex-1 items-start gap-3 text-left"
         >
-          <span className="flex h-[38px] w-[38px] shrink-0 items-center justify-center rounded-[10px] bg-primary/[0.14] text-primary">
-            📁
-          </span>
+          <IconTile size="sm" className="h-[38px] w-[38px] rounded-[10px]">
+            <FolderIcon size={18} />
+          </IconTile>
           <span className="min-w-0 flex-1">
             <span className="flex items-center gap-2">
               <span className="truncate text-[15.5px] font-semibold">
@@ -42,7 +51,7 @@ export function ProjectCard({ project, onOpen, onMenu }: ProjectCardProps) {
         </button>
         {onMenu !== undefined && (
           <IconButton label="Project menu" onClick={() => onMenu(project.id)}>
-            ⋯
+            <DotsIcon size={16} />
           </IconButton>
         )}
       </div>
@@ -64,7 +73,8 @@ export function ProjectCard({ project, onOpen, onMenu }: ProjectCardProps) {
         ))}
       </div>
       <div className="mt-3.5 flex items-center gap-1.5 text-[11.5px] text-muted-foreground">
-        🕑 <span>{project.activity}</span>
+        <ClockIcon size={12} />
+        <span>{project.activity}</span>
       </div>
     </Card>
   );

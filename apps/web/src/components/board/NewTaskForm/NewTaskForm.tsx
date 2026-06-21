@@ -1,4 +1,4 @@
-import { Button, IconButton, Kbd } from '@/components/ui';
+import { Button, CloseIcon, IconButton, Kbd } from '@/components/ui';
 import { useNewTaskForm } from './NewTaskForm.hooks';
 import type { NewTaskFormProps } from './NewTaskForm.types';
 
@@ -35,7 +35,7 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
           <h2 className="flex-1 text-base font-semibold text-foreground">New task</h2>
           <IconButton label="Close dialog" onClick={onClose}>
-            ✕
+            <CloseIcon size={16} />
           </IconButton>
         </div>
         <div className="flex flex-col gap-3 p-5">

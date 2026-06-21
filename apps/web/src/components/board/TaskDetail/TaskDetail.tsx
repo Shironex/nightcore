@@ -1,4 +1,4 @@
-import { Button, IconButton } from '@/components/ui';
+import { Button, CloseIcon, IconButton, TerminalIcon } from '@/components/ui';
 import { formatCost, STATUS_LABEL, STATUS_TEXT } from '../status';
 import { TaskStatusDot } from '../TaskStatusDot';
 import { deriveTaskDetailView } from './TaskDetail.hooks';
@@ -38,7 +38,7 @@ export function TaskDetail({
           </h2>
         </div>
         <IconButton label="Close detail panel" onClick={onClose}>
-          ✕
+          <CloseIcon size={16} />
         </IconButton>
       </header>
 
@@ -61,8 +61,12 @@ export function TaskDetail({
             </h3>
             <ul className="space-y-1">
               {tools.map((tool) => (
-                <li key={tool.id} className="font-mono text-xs text-primary/80">
-                  ⚙ {tool.toolName}
+                <li
+                  key={tool.id}
+                  className="flex items-center gap-1.5 font-mono text-xs text-primary/80"
+                >
+                  <TerminalIcon size={12} />
+                  {tool.toolName}
                 </li>
               ))}
             </ul>

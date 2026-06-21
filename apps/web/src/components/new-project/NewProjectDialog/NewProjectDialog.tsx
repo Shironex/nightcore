@@ -1,4 +1,11 @@
-import { Badge, Button, IconButton } from '@/components/ui';
+import {
+  Badge,
+  Button,
+  CloseIcon,
+  FolderIcon,
+  IconButton,
+  IconTile,
+} from '@/components/ui';
 import { useNewProjectDialog } from './NewProjectDialog.hooks';
 import type { NewProjectDialogProps } from './NewProjectDialog.types';
 
@@ -46,9 +53,9 @@ export function NewProjectDialog({
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
-          <div className="flex h-[34px] w-[34px] items-center justify-center rounded-[9px] bg-primary/[0.14] text-primary">
-            📁
-          </div>
+          <IconTile size="sm">
+            <FolderIcon size={16} />
+          </IconTile>
           <div className="flex-1">
             <div className="text-base font-semibold">New project</div>
             <div className="text-xs text-muted-foreground">
@@ -56,7 +63,7 @@ export function NewProjectDialog({
             </div>
           </div>
           <IconButton label="Close dialog" onClick={onClose}>
-            ✕
+            <CloseIcon size={16} />
           </IconButton>
         </div>
 
@@ -68,7 +75,7 @@ export function NewProjectDialog({
               onClick={() => void onChooseFolder()}
               className={`flex w-full items-center gap-2.5 rounded-[10px] border border-dashed bg-white/[0.02] px-3 py-2.5 text-left ${folder !== null ? 'border-border' : 'border-primary/50'}`}
             >
-              <span className="text-muted-foreground">📁</span>
+              <FolderIcon size={16} className="text-muted-foreground" />
               <span
                 className={`flex-1 truncate font-mono text-[13px] ${folder !== null ? 'text-foreground' : 'text-muted-foreground'}`}
               >

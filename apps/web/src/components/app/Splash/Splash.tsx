@@ -1,3 +1,4 @@
+import { BrandMark } from '@/components/ui';
 import type { SplashProps } from './Splash.types';
 
 /** The boot splash shown on first mount — brand mark, animated loader bar, and a
@@ -16,6 +17,7 @@ export function Splash({
         className="relative flex flex-col items-center gap-7"
         style={{ animation: 'nc-rise .7s cubic-bezier(.22,1,.36,1)' }}
       >
+        <BrandMark size={96} />
         <div className="flex flex-col items-center gap-2.5">
           <div className="flex items-baseline text-[34px] font-semibold tracking-tight">
             nightcore<span className="text-primary">.</span>
