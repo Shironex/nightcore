@@ -126,6 +126,21 @@ export interface ProjectEnvelope {
   projects: Project[];
 }
 
+/** The autonomous loop's run state. Mirrors the Rust `nc:loop` payload. */
+export type LoopState = 'running' | 'drained' | 'paused';
+
+/** `nc:loop` payload: the current state of the autonomous backend loop. */
+export interface LoopEnvelope {
+  state: LoopState;
+  /** Set when `state === 'paused'` (e.g. a circuit-breaker reason). */
+  reason?: string;
+  maxConcurrency: number;
+  /** How many slots are currently leased to running agents. */
+  leased: number;
+  /** Consecutive-failure count that trips the circuit breaker. */
+  failureThreshold: number;
+}
+
 // --- Commands -------------------------------------------------------------
 
 /** Load all persisted tasks. Returns `[]` outside Tauri (browser preview). */
@@ -160,6 +175,34 @@ export async function runTask(id: string): Promise<void> {
 /** Best-effort interrupt of the current run. */
 export async function cancelTask(id: string): Promise<void> {
   await invoke('cancel_task', { id });
+}
+
+// --- Autonomous loop (M2) -------------------------------------------------
+
+/** Start the autonomous loop: ready tasks are leased and run up to the live
+ *  concurrency. No-ops outside Tauri (browser preview). */
+export async function startAutoLoop(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('start_auto_loop');
+}
+
+/** Stop the autonomous loop. In-flight runs finish; no new tasks are leased. */
+export async function stopAutoLoop(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('stop_auto_loop');
+}
+
+/** Resume the loop after a circuit-breaker pause, clearing the failure count. */
+export async function resumeAutoLoop(): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('resume_auto_loop');
+}
+
+/** Resize the live agent pool. The same value the Settings concurrency control
+ *  writes; reading it back from `nc:loop` keeps both controls in sync. */
+export async function setMaxConcurrency(n: number): Promise<void> {
+  if (!isTauri()) return;
+  await invoke('set_max_concurrency', { n });
 }
 
 // --- Projects -------------------------------------------------------------
@@ -302,5 +345,26 @@ export async function onProjectEvent(
   if (!isTauri()) return () => {};
   return listen<unknown>('nc:project', (event) => {
     if (isProjectEnvelope(event.payload)) handler(event.payload);
+  });
+}
+
+/** Narrow an unknown payload to a `LoopEnvelope` defensively. */
+function isLoopEnvelope(value: unknown): value is LoopEnvelope {
+  if (typeof value !== 'object' || value === null) return false;
+  const v = value as Record<string, unknown>;
+  return (
+    (v.state === 'running' || v.state === 'drained' || v.state === 'paused') &&
+    typeof v.maxConcurrency === 'number'
+  );
+}
+
+/** Subscribe to `nc:loop` autonomous-loop state changes. Returns an unlisten
+ *  function (a no-op outside Tauri). */
+export async function onLoopEvent(
+  handler: (envelope: LoopEnvelope) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<unknown>('nc:loop', (event) => {
+    if (isLoopEnvelope(event.payload)) handler(event.payload);
   });
 }
