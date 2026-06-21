@@ -123,6 +123,94 @@ pub fn remove(project_path: &Path, task_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+/// Stage everything in a task's worktree and commit it with `message`. Confined to
+/// the task's worktree (never the project's main checkout). Returns:
+///   - `Ok(true)`  — a commit was created.
+///   - `Ok(false)` — nothing to commit (clean tree); the caller surfaces that.
+///   - `Err`       — the worktree is missing or git failed.
+pub fn commit(project_path: &Path, task_id: &str, message: &str) -> Result<bool, String> {
+    let dir = worktree_path(project_path, task_id);
+    if !dir.exists() {
+        return Err(format!(
+            "no worktree for task {task_id} — run it before committing"
+        ));
+    }
+    git(&dir, &["add", "-A"])?;
+    // `diff --cached --quiet` exits non-zero when there is something staged.
+    let nothing_staged = git_status_success(&dir, &["diff", "--cached", "--quiet"]);
+    if nothing_staged {
+        return Ok(false); // nothing to commit
+    }
+    git(&dir, &["commit", "-m", message])?;
+    Ok(true)
+}
+
+/// Merge a task's `nc/<taskId>` branch into the project's base branch. Operates on
+/// the project's main checkout but ONLY via `git merge` (never `--force`, never a
+/// reset). On a merge conflict the merge is aborted and `Ok(MergeOutcome::Conflict)`
+/// is returned so the UI surfaces it — the working tree is left clean, not forced.
+/// `base_branch` is the branch the merge targets (resolved by the caller).
+pub fn merge(
+    project_path: &Path,
+    task_id: &str,
+    base_branch: &str,
+) -> Result<MergeOutcome, String> {
+    let branch = branch_name(task_id);
+    // The base branch must be checked out to receive the merge. Refuse if the main
+    // tree is dirty so we never merge over uncommitted work.
+    if !is_worktree_clean(project_path)? {
+        return Err("base working tree is dirty; commit or stash before merging".to_string());
+    }
+    git(project_path, &["checkout", base_branch])?;
+
+    if git_status_success(project_path, &["merge", "--no-edit", &branch]) {
+        return Ok(MergeOutcome::Merged);
+    }
+    // Conflict (or any merge failure): abort so the tree is left clean, never forced.
+    let _ = git(project_path, &["merge", "--abort"]);
+    Ok(MergeOutcome::Conflict)
+}
+
+/// The result of a [`merge`] attempt.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MergeOutcome {
+    /// The branch integrated cleanly into the base.
+    Merged,
+    /// A conflict was detected; the merge was aborted (not forced).
+    Conflict,
+}
+
+/// The project's base branch: whatever `HEAD` points at in the main checkout
+/// (`git rev-parse --abbrev-ref HEAD`). Falls back to `main` when it can't be
+/// resolved (e.g. detached HEAD).
+pub fn base_branch(project_path: &Path) -> String {
+    git(project_path, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .filter(|b| !b.is_empty() && b != "HEAD")
+        .unwrap_or_else(|| "main".to_string())
+}
+
+/// Delete a task's `nc/<taskId>` branch (used after a successful merge when policy
+/// removes the worktree). Best-effort: a missing branch is not an error.
+pub fn delete_branch(project_path: &Path, task_id: &str) -> Result<(), String> {
+    let branch = branch_name(task_id);
+    if git_status_success(project_path, &["rev-parse", "--verify", "--quiet", &branch]) {
+        git(project_path, &["branch", "-D", &branch])?;
+    }
+    Ok(())
+}
+
+/// Run a git subcommand purely for its exit status (no output capture). Returns
+/// true on success. Used for predicate-style git calls (`diff --quiet`, `merge`).
+fn git_status_success(repo: &Path, args: &[&str]) -> bool {
+    Command::new("git")
+        .args(args)
+        .current_dir(repo)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 /// List the task ids that currently have a Nightcore worktree on disk under the
 /// base. Reads the directory rather than parsing `git worktree list` so it stays
 /// robust to git admin-file drift; `git worktree prune` (in [`reconcile`]) cleans
@@ -213,6 +301,9 @@ mod tests {
         }
         run(&["config", "user.email", "t@t.t"]);
         run(&["config", "user.name", "t"]);
+        // Mirror production: the worktrees base is gitignored, so an allocated
+        // worktree never dirties the main checkout.
+        std::fs::write(path.join(".gitignore"), ".nightcore/\n").ok()?;
         std::fs::write(path.join("README.md"), "hi").ok()?;
         run(&["add", "."]);
         if !run(&["commit", "-q", "-m", "init"]) {
@@ -265,6 +356,102 @@ mod tests {
             !is_worktree_clean(&repo).expect("status"),
             "an uncommitted edit makes the tree dirty"
         );
+    }
+
+    /// Run a git command in a worktree for tests, returning success.
+    fn run_in(dir: &Path, args: &[&str]) -> bool {
+        Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    #[test]
+    fn commit_creates_a_commit_on_the_branch_and_reports_nothing_to_commit() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        let dir = allocate(&repo, "task-1").expect("allocate");
+
+        // A clean worktree commits nothing.
+        assert_eq!(commit(&repo, "task-1", "first").expect("commit"), false);
+
+        // Add a change in the worktree; commit now creates a commit on nc/task-1.
+        std::fs::write(dir.join("file.txt"), "hello").expect("write");
+        assert_eq!(commit(&repo, "task-1", "add file").expect("commit"), true);
+
+        // The commit landed on the task branch with our message.
+        let log = Command::new("git")
+            .args(["log", "-1", "--pretty=%s", &branch_name("task-1")])
+            .current_dir(&repo)
+            .output()
+            .expect("git log");
+        assert_eq!(String::from_utf8_lossy(&log.stdout).trim(), "add file");
+
+        // A second commit with no further change reports nothing to commit.
+        assert_eq!(commit(&repo, "task-1", "again").expect("commit"), false);
+    }
+
+    #[test]
+    fn merge_integrates_the_branch_into_base() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        let base = base_branch(&repo);
+        let dir = allocate(&repo, "task-1").expect("allocate");
+        std::fs::write(dir.join("feature.txt"), "feature").expect("write");
+        commit(&repo, "task-1", "add feature").expect("commit");
+
+        assert_eq!(
+            merge(&repo, "task-1", &base).expect("merge"),
+            MergeOutcome::Merged
+        );
+        // The base branch now contains the feature file.
+        assert!(repo.join("feature.txt").exists(), "merge brought the file into base");
+    }
+
+    #[test]
+    fn merge_reports_conflict_and_does_not_force() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        let base = base_branch(&repo);
+        // Diverge: the task branch edits README, then base edits the same line.
+        let dir = allocate(&repo, "task-1").expect("allocate");
+        std::fs::write(dir.join("README.md"), "from-branch").expect("write");
+        commit(&repo, "task-1", "branch edit").expect("commit");
+
+        run_in(&repo, &["checkout", &base]);
+        std::fs::write(repo.join("README.md"), "from-base").expect("write");
+        run_in(&repo, &["commit", "-am", "base edit"]);
+
+        assert_eq!(
+            merge(&repo, "task-1", &base).expect("merge"),
+            MergeOutcome::Conflict
+        );
+        // The merge was aborted, not forced: the base content is intact and the tree
+        // is clean (no conflict markers left staged).
+        assert_eq!(
+            std::fs::read_to_string(repo.join("README.md")).unwrap(),
+            "from-base"
+        );
+        assert!(is_worktree_clean(&repo).expect("status"), "aborted merge leaves a clean tree");
+    }
+
+    #[test]
+    fn delete_branch_is_best_effort() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        allocate(&repo, "task-1").expect("allocate");
+        // The branch is checked out in the worktree; removing the worktree first
+        // frees it for deletion (mirrors the merge cleanup order).
+        remove(&repo, "task-1").expect("remove");
+        delete_branch(&repo, "task-1").expect("delete");
+        // Deleting a now-missing branch is a no-op.
+        delete_branch(&repo, "task-1").expect("idempotent delete");
     }
 
     #[test]
