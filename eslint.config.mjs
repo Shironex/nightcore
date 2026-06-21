@@ -1,16 +1,28 @@
 // @ts-check
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
+import nightcore from '@nightcore/eslint-plugin';
 import { layerRules } from './tools/lint-meta/index.mjs';
+
+// The folder-per-component convention (Tier C) is enforced on every component
+// dir under components/<feature>/. components/ui keeps the lighter shadcn
+// convention and is excluded by the rules' own ignorePaths.
+const COMPONENTS_GLOB = 'apps/web/src/components/**';
+// Feature-root shared modules (data/util .ts like status.ts, session-stream.ts,
+// _fixtures.ts, and the feature barrel index.ts) are not components — the Tier-C
+// arch rules target component contracts, not domain models.
+const FEATURE_ROOT_FILES = 'apps/web/src/components/*/*.ts';
 
 /**
  * Flat config. The `no-restricted-imports` blocks encode the layer-dependency
  * rules from the architecture doc (§3 table): surfaces and capability packages
  * must never reach for the SDK or the engine directly.
  *
- * The fine-grained frontend layer enforcement (feature-folder boundaries, the
- * single Tauri seam, shared/ purity) lives in `tools/lint-meta` and is spread
- * in as `layerRules` at the end. See tools/lint-meta/README.md.
+ * The component-architecture rules (folder-per-component, decoupled features,
+ * thin component shells) come from @nightcore/eslint-plugin, scoped to
+ * components/** below. The remaining frontend layer enforcement (single Tauri
+ * seam, components/ui purity) lives in `tools/lint-meta` and is spread in as
+ * `layerRules`.
  */
 export default tseslint.config(
   {
@@ -23,6 +35,9 @@ export default tseslint.config(
       '**/storybook-static/**',
       '**/*.woff2',
       'design/**',
+      // The eslint-plugin's own RuleTester fixtures intentionally omit sibling
+      // files (they are inputs to component-folder-structure's failing case).
+      'packages/eslint-plugin/tests/fixtures/**',
     ],
   },
   eslint.configs.recommended,
@@ -67,6 +82,23 @@ export default tseslint.config(
       ],
     },
   },
-  // Frontend layer boundaries (feature isolation, Tauri seam, shared/ purity).
+  // Component-architecture rules (Tier C), scoped to the component folders.
+  // Stories and tests are exercised by Storybook/Vitest, not gated as component
+  // shells; feature-root data/util .ts files are domain modules, not components.
+  {
+    files: [`${COMPONENTS_GLOB}/*.{ts,tsx}`],
+    ignores: [`${COMPONENTS_GLOB}/*.{stories,test}.{ts,tsx}`, FEATURE_ROOT_FILES],
+    plugins: {
+      nightcore,
+    },
+    rules: {
+      'nightcore/component-folder-structure': 'error',
+      'nightcore/no-state-in-component-body': 'error',
+      // ui = shadcn primitives (the cross-feature escape hatch, skipped dir).
+      'nightcore/no-cross-feature-imports': ['error', { sharedFeatures: ['ui'] }],
+      'nightcore/max-hooks-per-file': 'error',
+    },
+  },
+  // Frontend layer boundaries (single Tauri seam, components/ui purity).
   ...layerRules,
 );
