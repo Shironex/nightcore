@@ -15,6 +15,7 @@ const meta = {
     onRun: fn(),
     onCancel: fn(),
     onDelete: fn(),
+    onMoveTask: fn(),
     onClear: fn(),
   },
   decorators: [

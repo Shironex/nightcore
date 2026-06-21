@@ -48,15 +48,14 @@ export interface BoardViewState {
   search: string;
   setSearch: (value: string) => void;
   columns: BoardColumn[];
-  blockedIds: Set<string>;
 }
 
-/** Board view state: the search query plus the derived filtered/grouped columns
- *  and blocked-task set. */
+/** Board view state: the search query plus the derived filtered/grouped columns.
+ *  The blocked-task set is computed by the backend and passed in as a prop (it
+ *  depends on the full registry + run state, not just the visible cards). */
 export function useBoardView(tasks: Task[]): BoardViewState {
   const [search, setSearch] = useState('');
 
-  const blockedIds = useMemo(() => computeBlockedIds(tasks), [tasks]);
   const columns = useMemo(() => {
     const visible = tasks.filter((task) => matchesQuery(task, search));
     return groupTasksByColumn(visible);
@@ -66,7 +65,6 @@ export function useBoardView(tasks: Task[]): BoardViewState {
     search,
     setSearch: useCallback((value: string) => setSearch(value), []),
     columns,
-    blockedIds,
   };
 }
 

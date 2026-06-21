@@ -15,11 +15,13 @@ const meta = {
     breaker: null,
     selectedId: null,
     logCounts: { 't-running': 7 },
+    blockedIds: new Set<string>(),
     onSelect: fn(),
     onNewTask: fn(),
     onRun: fn(),
     onCancel: fn(),
     onDelete: fn(),
+    onMoveTask: fn(),
     onClearColumn: fn(),
     onToggleAutoMode: fn(),
     onConcurrencyChange: fn(),
@@ -116,5 +118,43 @@ export const ResumesFromBreaker: Story = {
     ).toBeInTheDocument();
     await userEvent.click(canvas.getByRole('button', { name: /resume/i }));
     await expect(args.onResume).toHaveBeenCalled();
+  },
+};
+
+/** The backend-computed blocked set drives the chip + locked Run: the blocked
+ *  backlog card shows a disabled "Blocked" action. */
+export const BlockedFromBackend: Story = {
+  args: { tasks: ALL_TASKS, blockedIds: new Set([BLOCKED_TASK.id]) },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const blockedBtn = canvas.getByRole('button', { name: /^blocked$/i });
+    await expect(blockedBtn).toBeDisabled();
+  },
+};
+
+/** Play test: dropping a card on the Backlog column moves it there. The browser
+ *  runner can be flaky with full native drag, so we assert via a fired `drop`
+ *  event carrying the task id rather than a pointer-driven drag. */
+export const DragMovesCard: Story = {
+  args: { tasks: ALL_TASKS },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+    // The Verified card to move (the In Progress column rejects drops, so we
+    // drop a done card back onto Backlog).
+    const backlogHeading = canvas.getByRole('heading', { name: 'Backlog', level: 2 });
+    const backlogColumn = backlogHeading.closest('div[aria-dropeffect="move"]');
+    const dropZone = backlogColumn?.querySelector('div.overflow-auto');
+    await expect(dropZone).not.toBeNull();
+
+    // A real DataTransfer carries the dragged task id from dragStart → drop,
+    // exactly as a native HTML5 drag would. We assert via the fired drop event
+    // rather than a pointer-driven native drag, which is flaky in the runner.
+    const dataTransfer = new DataTransfer();
+    dataTransfer.setData('application/x-nc-task-id', 't-done');
+    (dropZone as Element).dispatchEvent(
+      new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer }),
+    );
+
+    await expect(args.onMoveTask).toHaveBeenCalledWith('t-done', 'backlog');
   },
 };

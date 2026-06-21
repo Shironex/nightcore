@@ -54,6 +54,8 @@ export function TaskCard({
   selected,
   blocked = false,
   logCount = 0,
+  draggable = false,
+  onDragStart,
   onSelect,
   onRun,
   onCancel,
@@ -61,7 +63,7 @@ export function TaskCard({
 }: TaskCardProps) {
   const running = task.status === 'in_progress';
   const elapsed = useElapsed(task.updatedAt, running);
-  const branch = task.summary;
+  const branch = task.branch;
   const showBranch =
     branch !== null &&
     (running || task.status === 'waiting_approval' || task.status === 'done' || task.status === 'failed');
@@ -69,7 +71,13 @@ export function TaskCard({
   const stop = (e: { stopPropagation: () => void }) => e.stopPropagation();
 
   return (
-    <div className={`${CARD_BASE} ${containerClass(task.status, running, selected)}`}>
+    <div
+      className={`${CARD_BASE} ${containerClass(task.status, running, selected)} ${
+        draggable ? 'cursor-grab active:cursor-grabbing' : ''
+      }`}
+      draggable={draggable}
+      onDragStart={onDragStart}
+    >
       <button
         type="button"
         onClick={() => onSelect(task.id)}

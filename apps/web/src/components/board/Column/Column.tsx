@@ -1,5 +1,6 @@
 import { TrashIcon } from '@/components/ui';
 import { TaskCard } from '../TaskCard';
+import { DRAG_TASK_ID, useColumnDrop } from './Column.hooks';
 import type { ColumnProps } from './Column.types';
 
 /** A board column: a colored status dot + label + count header (with an optional
@@ -15,18 +16,24 @@ export function Column({
   selectedId,
   blockedIds,
   logCounts,
+  dropStatus,
   emptyText = 'Nothing here yet',
   onSelect,
   onRun,
   onCancel,
   onDelete,
+  onMoveTask,
   onClear,
 }: ColumnProps) {
   const showClear = clearable === true && tasks.length > 0;
+  const drop = useColumnDrop(dropStatus, onMoveTask);
   return (
     <div
-      className="flex shrink-0 flex-col rounded-[13px] border border-border bg-white/[0.015]"
+      className={`flex shrink-0 flex-col rounded-[13px] border bg-white/[0.015] transition-colors ${
+        drop.isOver ? 'border-primary/60 bg-primary/[0.04]' : 'border-border'
+      }`}
       style={{ width: title === 'Failed' ? 248 : 296 }}
+      aria-dropeffect={drop.droppable ? 'move' : 'none'}
     >
       <div className="flex items-center gap-2 px-3.5 pb-3 pt-3.5">
         <span
@@ -54,7 +61,10 @@ export function Column({
           </button>
         )}
       </div>
-      <div className="flex flex-1 flex-col gap-2.5 overflow-auto px-3 pb-3">
+      <div
+        className="flex flex-1 flex-col gap-2.5 overflow-auto px-3 pb-3"
+        {...drop.dropProps}
+      >
         {tasks.length === 0 ? (
           <p className="rounded-[11px] border border-dashed border-border px-3.5 py-6 text-center text-xs text-muted-foreground">
             {emptyText}
@@ -67,6 +77,11 @@ export function Column({
               selected={task.id === selectedId}
               blocked={blockedIds.has(task.id)}
               logCount={logCounts[task.id] ?? 0}
+              draggable={onMoveTask !== undefined}
+              onDragStart={(e) => {
+                e.dataTransfer.setData(DRAG_TASK_ID, task.id);
+                e.dataTransfer.effectAllowed = 'move';
+              }}
               onSelect={onSelect}
               onRun={onRun}
               onCancel={onCancel}

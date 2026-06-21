@@ -34,17 +34,19 @@ export function Board({
   breaker,
   selectedId,
   logCounts,
+  blockedIds,
   onSelect,
   onNewTask,
   onRun,
   onCancel,
   onDelete,
+  onMoveTask,
   onClearColumn,
   onToggleAutoMode,
   onConcurrencyChange,
   onResume,
 }: BoardProps) {
-  const { search, setSearch, columns, blockedIds } = useBoardView(tasks);
+  const { search, setSearch, columns } = useBoardView(tasks);
   const banner = useBreakerBanner(breaker);
 
   return (
@@ -177,11 +179,13 @@ export function Board({
             selectedId={selectedId}
             blockedIds={blockedIds}
             logCounts={logCounts}
+            dropStatus={def.statuses[0]}
             emptyText={search.trim() !== '' ? 'No matches' : EMPTY_TEXT[def.key]}
             onSelect={onSelect}
             onRun={onRun}
             onCancel={onCancel}
             onDelete={onDelete}
+            onMoveTask={onMoveTask}
             onClear={() => onClearColumn(def.statuses)}
           />
         ))}

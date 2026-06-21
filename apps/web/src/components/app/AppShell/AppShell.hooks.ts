@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   activeProject,
+  blockedTaskIds,
   cancelTask,
   chooseFolder,
   createProject,
@@ -13,6 +14,7 @@ import {
   isTauri,
   listProjects,
   listTasks,
+  moveTask,
   onLoopEvent,
   onProjectEvent,
   onSessionEvent,
@@ -298,6 +300,29 @@ function useBoard() {
   return { tasks, setTasks, streams, setStreams, selectedId, setSelectedId };
 }
 
+/** The backend-computed blocked-task set (deps not yet satisfied, fail-closed).
+ *  Fetched on mount and refreshed on every `nc:task` — dependency satisfaction
+ *  changes as tasks complete, so a card unblocks the moment its last dep lands. */
+function useBlockedIds(): Set<string> {
+  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    let alive = true;
+    const refresh = () =>
+      void blockedTaskIds().then((ids) => {
+        if (alive) setBlockedIds(new Set(ids));
+      });
+    refresh();
+    const unlisten = onTaskEvent(() => refresh());
+    return () => {
+      alive = false;
+      void unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  return blockedIds;
+}
+
 export interface AppShellState {
   routing: ReturnType<typeof useRouting>;
   registry: ReturnType<typeof useProjectRegistry>;
@@ -308,11 +333,13 @@ export interface AppShellState {
     anyRunning: boolean;
     selected: Task | null;
     logCounts: Record<string, number>;
+    blockedIds: Set<string>;
     handleCreate: (title: string, description: string) => Promise<void>;
     handleRun: (id: string) => void;
     handleCancel: (id: string) => void;
     handleDelete: (id: string) => void;
     handleClearColumn: (statuses: TaskStatus[]) => void;
+    handleMoveTask: (id: string, status: TaskStatus) => void;
   };
   showSplash: boolean;
   isTauri: boolean;
@@ -335,6 +362,7 @@ export function useAppShell(): AppShellState {
   );
   const newProject = useNewProjectFlow(routing.closeNewProject);
   const board = useBoard();
+  const blockedIds = useBlockedIds();
   const { tasks, setTasks, streams, setStreams, selectedId, setSelectedId } = board;
 
   const anyRunning = useMemo(
@@ -407,6 +435,30 @@ export function useAppShell(): AppShellState {
     [tasks, setTasks, setStreams, setSelectedId],
   );
 
+  // Drag-move between columns: optimistically retag the card, then call the
+  // backend. The `nc:task` echo reconciles the authoritative status; on failure
+  // we roll back to the previous status so the board never lies.
+  const handleMoveTask = useCallback(
+    (id: string, status: TaskStatus) => {
+      let prevStatus: TaskStatus | undefined;
+      setTasks((prev) =>
+        prev.map((t) => {
+          if (t.id !== id) return t;
+          prevStatus = t.status;
+          return { ...t, status };
+        }),
+      );
+      void moveTask(id, status).catch((err) => {
+        console.error('move_task failed', err);
+        if (prevStatus === undefined) return;
+        setTasks((prev) =>
+          prev.map((t) => (t.id === id ? { ...t, status: prevStatus as TaskStatus } : t)),
+        );
+      });
+    },
+    [setTasks],
+  );
+
   return {
     routing,
     registry,
@@ -418,11 +470,13 @@ export function useAppShell(): AppShellState {
       anyRunning,
       selected,
       logCounts,
+      blockedIds,
       handleCreate,
       handleRun,
       handleCancel,
       handleDelete,
       handleClearColumn,
+      handleMoveTask,
     },
     showSplash,
     isTauri: isTauri(),

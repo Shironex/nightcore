@@ -14,10 +14,15 @@ export interface ColumnProps {
   blockedIds: Set<string>;
   /** Streamed log-line counts per task id (for the running card's Logs badge). */
   logCounts: Record<string, number>;
+  /** The status a card dropped on this column moves to. `in_progress` (the In
+   *  Progress column) is a non-droppable target — dropping there is rejected. */
+  dropStatus?: Task['status'];
   emptyText?: string;
   onSelect: (id: string) => void;
   onRun?: (id: string) => void;
   onCancel?: (id: string) => void;
   onDelete?: (id: string) => void;
+  /** Move a dropped card to this column's status. Absent in presentational use. */
+  onMoveTask?: (id: string, status: Task['status']) => void;
   onClear?: () => void;
 }

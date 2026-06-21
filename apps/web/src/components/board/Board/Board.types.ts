@@ -21,11 +21,16 @@ export interface BoardProps {
   selectedId: string | null;
   /** Streamed log-line counts per task id (running card Logs badge). */
   logCounts: Record<string, number>;
+  /** Backend-computed blocked-task ids (deps unsatisfied). Drives the blocked
+   *  chip + locked Run; owned by the shell so it refreshes on `nc:task`. */
+  blockedIds: Set<string>;
   onSelect: (id: string) => void;
   onNewTask: () => void;
   onRun: (id: string) => void;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
+  /** Drag a card to another column → set its status (rejected into In Progress). */
+  onMoveTask: (id: string, status: Task['status']) => void;
   /** Clear all tasks in a column (Verified/Failed). */
   onClearColumn: (statuses: Task['status'][]) => void;
   /** Start/stop the autonomous loop (the header Auto Mode toggle). */

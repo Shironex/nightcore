@@ -36,3 +36,8 @@ test('calls onCancel from the running card', async () => {
   await screen.getByRole('button', { name: /cancel run/i }).click();
   expect(onCancel).toHaveBeenCalledWith('t-running');
 });
+
+test('renders the branch chip from task.branch', async () => {
+  const screen = render(<Done />);
+  await expect.element(screen.getByText('nc/auth-guard')).toBeInTheDocument();
+});

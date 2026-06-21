@@ -94,11 +94,13 @@ export function AppShell() {
                   breaker={autoLoop.breaker}
                   selectedId={selectedId}
                   logCounts={board.logCounts}
+                  blockedIds={board.blockedIds}
                   onSelect={setSelectedId}
                   onNewTask={routing.openNewTask}
                   onRun={board.handleRun}
                   onCancel={board.handleCancel}
                   onDelete={board.handleDelete}
+                  onMoveTask={board.handleMoveTask}
                   onClearColumn={board.handleClearColumn}
                   onToggleAutoMode={autoLoop.toggleAutoMode}
                   onConcurrencyChange={autoLoop.changeConcurrency}
