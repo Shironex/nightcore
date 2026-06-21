@@ -1,8 +1,138 @@
 @import 'tailwindcss';
 
+/* ===========================================================================
+ * Nightcore design system.
+ *
+ * Seeded from the approved "cosmic + dark" mock (design/project/Nightcore.dc.html),
+ * which borrowed the ShiroAni DS bundle at design time. These values are now
+ * OURS — Nightcore ships no runtime dependency on window.ShiroAniDS or the
+ * borrowed _ds bundle. The palette is purple-forward (primary ≈ oklch(78% .22 290)),
+ * dark, glassy; UI text is DM Sans, mono/meta is JetBrains Mono.
+ * ======================================================================== */
+
+/* --- Fonts (variable, self-hosted) -------------------------------------- */
+
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 1000;
+  src: url('./assets/fonts/dm-sans-latin-wght-normal.woff2') format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'DM Sans';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 1000;
+  src: url('./assets/fonts/dm-sans-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('./assets/fonts/jetbrains-mono-latin-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193,
+    U+2212, U+2215, U+FEFF, U+FFFD;
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 800;
+  src: url('./assets/fonts/jetbrains-mono-latin-ext-wght-normal.woff2')
+    format('woff2-variations');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF,
+    U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020,
+    U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+
+/* --- Raw token values (cosmic + dark) ----------------------------------- *
+ * Kept as plain custom properties so they can also be read in inline styles
+ * (radial gradients, glows) where Tailwind utilities don't reach. @theme below
+ * binds them into Tailwind's utility namespace. */
 :root {
+  --nc-background: oklch(9% 0.035 280);
+  --nc-foreground: oklch(97% 0.015 290);
+  --nc-card: oklch(13% 0.04 280);
+  --nc-card-foreground: oklch(97% 0.015 290);
+  --nc-popover: oklch(7% 0.035 280);
+  --nc-popover-foreground: oklch(97% 0.015 290);
+  --nc-primary: oklch(78% 0.22 290);
+  --nc-primary-foreground: oklch(7% 0.035 280);
+  --nc-brand-600: oklch(from var(--nc-primary) calc(l - 0.1) c h);
+  --nc-secondary: oklch(13% 0.04 280);
+  --nc-secondary-foreground: oklch(97% 0.015 290);
+  --nc-muted: oklch(52% 0.025 283);
+  --nc-muted-foreground: oklch(73% 0.03 285);
+  --nc-accent: oklch(100% 0 0 / 0.07);
+  --nc-accent-foreground: oklch(97% 0.015 290);
+  --nc-border: oklch(100% 0 0 / 0.07);
+  --nc-input: oklch(100% 0 0 / 0.04);
+  --nc-ring: oklch(78% 0.22 290);
+  --nc-sidebar: oklch(7% 0.035 280);
+  --nc-sidebar-foreground: oklch(97% 0.015 290);
+  --nc-glow-1: oklch(78% 0.22 290 / 0.18);
+  --nc-glow-2: oklch(55% 0.18 270 / 0.16);
+
+  /* Semantic status colors — shared with the base DS, unchanged by cosmic. */
+  --nc-destructive: oklch(66% 0.2 22);
+  --nc-destructive-foreground: oklch(100% 0 0);
+  --nc-success: oklch(65% 0.2 140);
+  --nc-warning: oklch(80% 0.14 75);
+  --nc-info: oklch(65% 0.2 230);
+
+  --nc-radius: 0.625rem;
+
   color-scheme: dark;
 }
+
+/* --- Tailwind v4 theme binding ------------------------------------------ *
+ * Exposes the tokens as utilities: bg-background, text-foreground, text-primary,
+ * border-border, bg-card, text-muted-foreground, text-destructive, etc. */
+@theme {
+  --color-background: var(--nc-background);
+  --color-foreground: var(--nc-foreground);
+  --color-card: var(--nc-card);
+  --color-card-foreground: var(--nc-card-foreground);
+  --color-popover: var(--nc-popover);
+  --color-popover-foreground: var(--nc-popover-foreground);
+  --color-primary: var(--nc-primary);
+  --color-primary-foreground: var(--nc-primary-foreground);
+  --color-brand-600: var(--nc-brand-600);
+  --color-secondary: var(--nc-secondary);
+  --color-secondary-foreground: var(--nc-secondary-foreground);
+  --color-muted: var(--nc-muted);
+  --color-muted-foreground: var(--nc-muted-foreground);
+  --color-accent: var(--nc-accent);
+  --color-accent-foreground: var(--nc-accent-foreground);
+  --color-border: var(--nc-border);
+  --color-input: var(--nc-input);
+  --color-ring: var(--nc-ring);
+  --color-sidebar: var(--nc-sidebar);
+  --color-sidebar-foreground: var(--nc-sidebar-foreground);
+  --color-destructive: var(--nc-destructive);
+  --color-destructive-foreground: var(--nc-destructive-foreground);
+  --color-success: var(--nc-success);
+  --color-warning: var(--nc-warning);
+  --color-info: var(--nc-info);
+
+  --font-sans: 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  --radius-nc: var(--nc-radius);
+}
+
+/* --- Base reset ---------------------------------------------------------- */
 
 html,
 body,
@@ -12,8 +142,78 @@ body,
 }
 
 body {
-  background-color: #0c0c12;
-  color: #e4e4ea;
-  font-family:
-    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  background-color: var(--nc-background);
+  color: var(--nc-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: oklch(78% 0.22 290 / 0.3);
+}
+
+::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+::-webkit-scrollbar-thumb {
+  background: oklch(100% 0 0 / 0.08);
+  border-radius: 6px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(100% 0 0 / 0.15);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* --- Motion (lifted from the mock keyframes) ---------------------------- */
+
+@keyframes nc-pulse {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.45;
+    transform: scale(0.82);
+  }
+}
+@keyframes nc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes nc-bar {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(220%);
+  }
+}
+@keyframes nc-rise {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes nc-slide {
+  from {
+    transform: translateX(30px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.nc-drawer-enter {
+  animation: nc-slide 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
