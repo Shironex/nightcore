@@ -13,22 +13,44 @@
 //! the board and transitioning to `done`/`failed` on completion.
 
 mod m2;
+mod project;
+mod settings;
 mod sidecar;
 mod store;
 mod task;
 
+use project::ProjectStore;
+use settings::SettingsStore;
 use sidecar::Sidecar;
 use store::TaskStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
-            // Load the persisted task registry on startup and register the
-            // long-lived sidecar handle. Both live in managed state for the app
-            // lifetime; commands take them as `State<'_, _>`.
-            app.manage(TaskStore::load());
+
+            // The project registry + settings live in the app config dir (not in
+            // any single repo). Resolve it once and load both stores from it.
+            let config_dir = app
+                .path()
+                .app_config_dir()
+                .expect("app config dir unavailable");
+            let project_store = ProjectStore::load_from(config_dir.clone());
+
+            // Tasks are project-scoped: point the task store at the active
+            // project's tasks dir on startup (or an empty scratch dir when no
+            // project is active, so the board opens empty on the Projects view).
+            let task_store = TaskStore::load();
+            let tasks_dir = project_store
+                .active_tasks_dir()
+                .unwrap_or_else(|| config_dir.join("no-active-project/tasks"));
+            task_store.retarget(tasks_dir);
+
+            app.manage(task_store);
+            app.manage(project_store);
+            app.manage(SettingsStore::load_from(config_dir));
             app.manage(Sidecar::default());
             Ok(())
         })
@@ -39,6 +61,15 @@ pub fn run() {
             task::delete_task,
             sidecar::run_task,
             sidecar::cancel_task,
+            project::list_projects,
+            project::active_project,
+            project::create_project,
+            project::delete_project,
+            project::set_active_project,
+            project::is_git_repo,
+            project::git_init,
+            settings::get_settings,
+            settings::update_settings,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the Nightcore application");

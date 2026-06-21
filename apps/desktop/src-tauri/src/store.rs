@@ -20,10 +20,47 @@ pub fn workspace_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../..")
 }
 
+/// Load every `*.json` task file under `dir` into a map keyed by id, creating the
+/// directory if missing. Unparsable files are skipped with a log rather than
+/// aborting. Shared by [`TaskStore::load_from`] and [`TaskStore::retarget`].
+fn read_dir_into_map(dir: &PathBuf) -> HashMap<String, Task> {
+    if let Err(e) = std::fs::create_dir_all(dir) {
+        eprintln!("task store: failed to create {}: {e}", dir.display());
+    }
+
+    let mut tasks = HashMap::new();
+    match std::fs::read_dir(dir) {
+        Ok(entries) => {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                    continue;
+                }
+                match std::fs::read_to_string(&path) {
+                    Ok(raw) => match serde_json::from_str::<Task>(&raw) {
+                        Ok(task) => {
+                            tasks.insert(task.id.clone(), task);
+                        }
+                        Err(e) => eprintln!("task store: skipping {}: {e}", path.display()),
+                    },
+                    Err(e) => eprintln!("task store: cannot read {}: {e}", path.display()),
+                }
+            }
+        }
+        Err(e) => eprintln!("task store: cannot list {}: {e}", dir.display()),
+    }
+    tasks
+}
+
 /// In-memory task map plus the directory it persists to.
+///
+/// The target dir is interior-mutable: Phase 2 makes tasks **project-scoped**, so
+/// activating a project [`retarget`](TaskStore::retarget)s the store at that
+/// project's `.nightcore/tasks/` and reloads. With no active project the store is
+/// targeted at an empty dir and the board is empty.
 pub struct TaskStore {
     tasks: Mutex<HashMap<String, Task>>,
-    dir: PathBuf,
+    dir: Mutex<PathBuf>,
 }
 
 impl TaskStore {
@@ -38,41 +75,29 @@ impl TaskStore {
     /// missing. Factored out of [`load`](Self::load) so tests can point the store
     /// at a temp dir instead of the real workspace.
     pub fn load_from(dir: PathBuf) -> Self {
-        if let Err(e) = std::fs::create_dir_all(&dir) {
-            eprintln!("task store: failed to create {}: {e}", dir.display());
-        }
-
-        let mut tasks = HashMap::new();
-        match std::fs::read_dir(&dir) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.extension().and_then(|e| e.to_str()) != Some("json") {
-                        continue;
-                    }
-                    match std::fs::read_to_string(&path) {
-                        Ok(raw) => match serde_json::from_str::<Task>(&raw) {
-                            Ok(task) => {
-                                tasks.insert(task.id.clone(), task);
-                            }
-                            Err(e) => eprintln!("task store: skipping {}: {e}", path.display()),
-                        },
-                        Err(e) => eprintln!("task store: cannot read {}: {e}", path.display()),
-                    }
-                }
-            }
-            Err(e) => eprintln!("task store: cannot list {}: {e}", dir.display()),
-        }
-
+        let tasks = read_dir_into_map(&dir);
         Self {
             tasks: Mutex::new(tasks),
-            dir,
+            dir: Mutex::new(dir),
         }
     }
 
-    /// Path to a task's JSON file.
+    /// Re-point the store at `dir`, clearing the in-memory map and reloading from
+    /// the new directory. Called when a project is activated (or deactivated, with
+    /// no project, an empty scratch dir) so the board reflects the active project's
+    /// tasks. Existing files on disk are untouched.
+    pub fn retarget(&self, dir: PathBuf) {
+        let reloaded = read_dir_into_map(&dir);
+        *self.tasks.lock().expect("task store poisoned") = reloaded;
+        *self.dir.lock().expect("task store poisoned") = dir;
+    }
+
+    /// Path to a task's JSON file under the current target dir.
     fn path_for(&self, id: &str) -> PathBuf {
-        self.dir.join(format!("{id}.json"))
+        self.dir
+            .lock()
+            .expect("task store poisoned")
+            .join(format!("{id}.json"))
     }
 
     /// Snapshot of all tasks (unordered).
@@ -269,5 +294,53 @@ mod tests {
         let store = TaskStore::load_from(dir);
         assert_eq!(store.list().len(), 1, "only the valid task loads");
         assert!(store.get(&task.id).is_some());
+    }
+
+    #[test]
+    fn retarget_swaps_the_task_set() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let dir_a = tmp.path().join("a/tasks");
+        let dir_b = tmp.path().join("b/tasks");
+
+        // Two independent project task dirs, each with one task.
+        let store = TaskStore::load_from(dir_a.clone());
+        let task_a = Task::new("in-a".into(), String::new());
+        store.upsert(&task_a).expect("upsert a");
+        assert_eq!(store.list().len(), 1);
+
+        let store_b = TaskStore::load_from(dir_b.clone());
+        let task_b = Task::new("in-b".into(), String::new());
+        store_b.upsert(&task_b).expect("upsert b");
+
+        // Retargeting at dir_b drops a's tasks and loads b's, and new writes land
+        // in dir_b.
+        store.retarget(dir_b.clone());
+        assert_eq!(store.list().len(), 1, "only b's task is loaded");
+        assert!(store.get(&task_b.id).is_some());
+        assert!(store.get(&task_a.id).is_none(), "a's task is no longer in memory");
+
+        let task_c = Task::new("also-b".into(), String::new());
+        store.upsert(&task_c).expect("upsert c");
+        assert!(
+            dir_b.join(format!("{}.json", task_c.id)).exists(),
+            "writes go to the retargeted dir"
+        );
+
+        // a's file on disk is untouched by the retarget.
+        assert!(dir_a.join(format!("{}.json", task_a.id)).exists());
+    }
+
+    #[test]
+    fn retarget_to_empty_dir_clears_the_board() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let store = TaskStore::load_from(tmp.path().join("tasks"));
+        store
+            .upsert(&Task::new("t".into(), String::new()))
+            .expect("upsert");
+        assert_eq!(store.list().len(), 1);
+
+        // No active project → an empty scratch dir → an empty board.
+        store.retarget(tmp.path().join("empty"));
+        assert!(store.list().is_empty());
     }
 }
