@@ -5,6 +5,7 @@
  * surface (which drifts across versions) confined to one place.
  */
 import type {
+  AgentDefinition,
   ModelInfo,
   Options,
   PermissionMode,
@@ -15,7 +16,15 @@ import type {
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import type { NightcoreEvent } from '@nightcore/contracts';
 
-export type { ModelInfo, Options, PermissionMode, Query, SDKMessage, SDKUserMessage };
+export type {
+  AgentDefinition,
+  ModelInfo,
+  Options,
+  PermissionMode,
+  Query,
+  SDKMessage,
+  SDKUserMessage,
+};
 export { query };
 
 /** Map an `SDKAssistantMessageError` onto a stable Nightcore failure reason. */
@@ -109,6 +118,30 @@ export interface TranslateResult {
     | { kind: 'failed'; reason: NightcoreEventOfReason; message: string };
 }
 
+/** Normalize the SDK's task-status superset onto the Nightcore `TaskStatus`
+ *  set. The only divergence is `'stopped'` (used by `task_notification`), which
+ *  maps to `'killed'`; every other value already matches the contract enum. */
+function normalizeTaskStatus(
+  status: string | undefined,
+): TaskUpdatedEvent['status'] {
+  if (status === undefined) return undefined;
+  if (status === 'stopped') return 'killed';
+  if (
+    status === 'pending' ||
+    status === 'running' ||
+    status === 'completed' ||
+    status === 'failed' ||
+    status === 'killed' ||
+    status === 'paused' ||
+    status === 'in_progress'
+  ) {
+    return status === 'in_progress' ? 'running' : status;
+  }
+  return undefined;
+}
+
+type TaskUpdatedEvent = Extract<NightcoreEvent, { type: 'task-updated' }>;
+
 function translateSystem(
   sessionId: number,
   msg: Extract<SDKMessage, { type: 'system' }>,
@@ -122,12 +155,109 @@ function translateSystem(
           sdkSessionId: msg.session_id,
           model: msg.model,
           tools: msg.tools,
+          slashCommands: msg.slash_commands ?? [],
+          skills: msg.skills ?? [],
         },
       ],
       sdkSessionId: msg.session_id,
     };
   }
+
+  const task = translateTask(sessionId, msg);
+  if (task) return { events: [task] };
+
   return { events: [] };
+}
+
+/**
+ * Translate the SDK's task lifecycle system messages
+ * (`task_started` / `task_updated` / `task_progress` / `task_notification`)
+ * into a single `task-updated` event. Keys are read defensively because the SDK
+ * marks most of them optional. Returns `undefined` for any other subtype so the
+ * caller can fall through.
+ *
+ * These events are NOT terminal — they describe subagent/task progress, not the
+ * end of the session.
+ */
+function translateTask(
+  sessionId: number,
+  msg: Extract<SDKMessage, { type: 'system' }>,
+): TaskUpdatedEvent | undefined {
+  const m = msg as Record<string, unknown>;
+  const taskId = typeof m.task_id === 'string' ? m.task_id : undefined;
+  if (taskId === undefined) return undefined;
+
+  const subagentType =
+    typeof m.subagent_type === 'string' ? m.subagent_type : undefined;
+  const description =
+    typeof m.description === 'string' ? m.description : undefined;
+  const summary = typeof m.summary === 'string' ? m.summary : undefined;
+
+  switch (msg.subtype) {
+    case 'task_started': {
+      const ambient =
+        typeof m.skip_transcript === 'boolean' ? m.skip_transcript : false;
+      return {
+        type: 'task-updated',
+        sessionId,
+        taskId,
+        status: 'running',
+        ...(description !== undefined ? { description } : {}),
+        ...(subagentType !== undefined ? { subagentType } : {}),
+        ambient,
+      };
+    }
+    case 'task_updated': {
+      const patch =
+        typeof m.patch === 'object' && m.patch !== null
+          ? (m.patch as Record<string, unknown>)
+          : {};
+      const status = normalizeTaskStatus(
+        typeof patch.status === 'string' ? patch.status : undefined,
+      );
+      const patchDescription =
+        typeof patch.description === 'string' ? patch.description : undefined;
+      const patchError =
+        typeof patch.error === 'string' ? patch.error : undefined;
+      return {
+        type: 'task-updated',
+        sessionId,
+        taskId,
+        ...(status !== undefined ? { status } : {}),
+        ...(patchDescription !== undefined
+          ? { description: patchDescription }
+          : {}),
+        ...(patchError !== undefined ? { summary: patchError } : {}),
+        ambient: false,
+      };
+    }
+    case 'task_progress': {
+      return {
+        type: 'task-updated',
+        sessionId,
+        taskId,
+        ...(description !== undefined ? { description } : {}),
+        ...(summary !== undefined ? { summary } : {}),
+        ...(subagentType !== undefined ? { subagentType } : {}),
+        ambient: false,
+      };
+    }
+    case 'task_notification': {
+      const status = normalizeTaskStatus(
+        typeof m.status === 'string' ? m.status : undefined,
+      );
+      return {
+        type: 'task-updated',
+        sessionId,
+        taskId,
+        ...(status !== undefined ? { status } : {}),
+        ...(summary !== undefined ? { summary } : {}),
+        ambient: false,
+      };
+    }
+    default:
+      return undefined;
+  }
 }
 
 function translateAssistant(
@@ -198,6 +328,13 @@ function translateResult(
           result: msg.result,
           costUsd: msg.total_cost_usd,
           numTurns: msg.num_turns,
+          durationMs: msg.duration_ms,
+          usage: {
+            inputTokens: msg.usage.input_tokens ?? 0,
+            outputTokens: msg.usage.output_tokens ?? 0,
+            cacheReadTokens: msg.usage.cache_read_input_tokens ?? 0,
+            cacheCreationTokens: msg.usage.cache_creation_input_tokens ?? 0,
+          },
         },
       ],
       terminal: {

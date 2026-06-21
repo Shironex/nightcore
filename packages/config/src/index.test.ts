@@ -81,6 +81,32 @@ describe('resolveConfig precedence', () => {
     expect(config.effort).toBe('low');
   });
 
+  test('carries settingSources across layers (home sets it, project inherits)', () => {
+    writeHomeConfig(JSON.stringify({ settingSources: ['project'] }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.settingSources).toEqual(['project']);
+  });
+
+  test('a project layer overrides the inherited settingSources', () => {
+    writeHomeConfig(JSON.stringify({ settingSources: ['user', 'project'] }));
+    writeProjectConfig(project, JSON.stringify({ settingSources: [] }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.settingSources).toEqual([]);
+  });
+
+  test('carries todoFeatureEnabled across layers (home disables, project inherits)', () => {
+    writeHomeConfig(JSON.stringify({ todoFeatureEnabled: false }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.todoFeatureEnabled).toBe(false);
+  });
+
+  test('a project layer overrides the inherited todoFeatureEnabled', () => {
+    writeHomeConfig(JSON.stringify({ todoFeatureEnabled: false }));
+    writeProjectConfig(project, JSON.stringify({ todoFeatureEnabled: true }));
+    const config = resolveConfig({ home, cwd: project });
+    expect(config.todoFeatureEnabled).toBe(true);
+  });
+
   // A project layer overriding `mode` must inherit the home allow/deny lists.
   // Guaranteed by the default-free `ConfigFileSchema` + explicit nested merge in
   // `mergeLayers` (an absent key stays absent, so it can't clobber).

@@ -35,8 +35,31 @@ describe('translateMessage — system init', () => {
         sdkSessionId: 'sdk-uuid-1',
         model: 'claude-opus-4-8',
         tools: ['Read', 'Bash'],
+        slashCommands: [],
+        skills: [],
       },
     ]);
+  });
+
+  test('surfaces slash_commands and skills from the init message', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'init',
+        session_id: 'sdk-uuid-2',
+        model: 'claude-opus-4-8',
+        tools: ['Read'],
+        slash_commands: ['compact', 'context'],
+        skills: ['pdf'],
+      }),
+    );
+    const event = result.events[0] as Extract<
+      NightcoreEvent,
+      { type: 'session-ready' }
+    >;
+    expect(event.slashCommands).toEqual(['compact', 'context']);
+    expect(event.skills).toEqual(['pdf']);
   });
 
   test('ignores non-init system subtypes', () => {
@@ -46,6 +69,145 @@ describe('translateMessage — system init', () => {
     );
     expect(result.events).toEqual([]);
     expect(result.sdkSessionId).toBeUndefined();
+  });
+});
+
+describe('translateMessage — task lifecycle system messages', () => {
+  test('maps task_started to a running task-updated (ambient from skip_transcript)', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'task-1',
+        description: 'Investigating the auth flow',
+        subagent_type: 'Explore',
+        skip_transcript: true,
+      }),
+    );
+    expect(result.terminal).toBeUndefined();
+    expect(result.events).toEqual([
+      {
+        type: 'task-updated',
+        sessionId: SID,
+        taskId: 'task-1',
+        status: 'running',
+        description: 'Investigating the auth flow',
+        subagentType: 'Explore',
+        ambient: true,
+      },
+    ]);
+  });
+
+  test('defaults ambient to false when skip_transcript is absent', () => {
+    const result = translateMessage(
+      SID,
+      sdk({ type: 'system', subtype: 'task_started', task_id: 'task-2', description: 'go' }),
+    );
+    const event = result.events[0] as Extract<
+      NightcoreEvent,
+      { type: 'task-updated' }
+    >;
+    expect(event.ambient).toBe(false);
+    expect(event.subagentType).toBeUndefined();
+  });
+
+  test('maps task_updated patch (status + error → summary)', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'task_updated',
+        task_id: 'task-3',
+        patch: { status: 'failed', description: 'retrying', error: 'boom' },
+      }),
+    );
+    expect(result.events).toEqual([
+      {
+        type: 'task-updated',
+        sessionId: SID,
+        taskId: 'task-3',
+        status: 'failed',
+        description: 'retrying',
+        summary: 'boom',
+        ambient: false,
+      },
+    ]);
+  });
+
+  test('maps task_progress (description + summary + subagent, no status)', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'task_progress',
+        task_id: 'task-4',
+        description: 'still working',
+        summary: 'half done',
+        subagent_type: 'builder',
+      }),
+    );
+    const event = result.events[0] as Extract<
+      NightcoreEvent,
+      { type: 'task-updated' }
+    >;
+    expect(event.status).toBeUndefined();
+    expect(event).toMatchObject({
+      taskId: 'task-4',
+      description: 'still working',
+      summary: 'half done',
+      subagentType: 'builder',
+      ambient: false,
+    });
+  });
+
+  test('maps task_notification stopped → killed', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-5',
+        status: 'stopped',
+        summary: 'user cancelled',
+      }),
+    );
+    expect(result.events).toEqual([
+      {
+        type: 'task-updated',
+        sessionId: SID,
+        taskId: 'task-5',
+        status: 'killed',
+        summary: 'user cancelled',
+        ambient: false,
+      },
+    ]);
+  });
+
+  test('maps task_notification completed as-is', () => {
+    const result = translateMessage(
+      SID,
+      sdk({
+        type: 'system',
+        subtype: 'task_notification',
+        task_id: 'task-6',
+        status: 'completed',
+        summary: 'done',
+      }),
+    );
+    const event = result.events[0] as Extract<
+      NightcoreEvent,
+      { type: 'task-updated' }
+    >;
+    expect(event.status).toBe('completed');
+  });
+
+  test('ignores a task subtype with no task_id', () => {
+    const result = translateMessage(
+      SID,
+      sdk({ type: 'system', subtype: 'task_progress', description: 'orphan' }),
+    );
+    expect(result.events).toEqual([]);
   });
 });
 
@@ -181,6 +343,13 @@ describe('translateMessage — result (terminal)', () => {
         result: 'all done',
         total_cost_usd: 0.42,
         num_turns: 5,
+        duration_ms: 1234,
+        usage: {
+          input_tokens: 100,
+          output_tokens: 50,
+          cache_read_input_tokens: 10,
+          cache_creation_input_tokens: 5,
+        },
       }),
     );
     expect(result.events).toEqual([
@@ -190,6 +359,13 @@ describe('translateMessage — result (terminal)', () => {
         result: 'all done',
         costUsd: 0.42,
         numTurns: 5,
+        durationMs: 1234,
+        usage: {
+          inputTokens: 100,
+          outputTokens: 50,
+          cacheReadTokens: 10,
+          cacheCreationTokens: 5,
+        },
       },
     ]);
     expect(result.terminal).toEqual({

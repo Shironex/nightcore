@@ -11,18 +11,23 @@
  * and dependency-light.
  */
 
-/** A Nightcore skill preset. Structurally compatible with the SDK's
- *  `AgentDefinition`, re-declared here so this package stays SDK-free. */
+/**
+ * A Nightcore agent preset. The fields after `name` mirror the SDK's
+ * `AgentDefinition` (description, prompt, optional tools/model) structurally —
+ * re-declared here so this package stays SDK-free. The engine keys these by
+ * `name` into `Options.agents: Record<string, AgentDefinition>`.
+ */
 export interface SkillDefinition {
-  /** Skill name, invoked as a subagent. */
+  /** Agent name, used as the `Options.agents` record key and invoked via the
+   *  SDK `Agent` tool. */
   name: string;
-  /** One-line description shown to the orchestrator model. */
+  /** Natural-language description of when to use this agent. */
   description: string;
-  /** System prompt for the skill. */
+  /** The agent's system prompt. */
   prompt: string;
-  /** Optional tool allowlist for the skill. */
+  /** Optional tool allowlist; omitted = inherit all tools from the parent. */
   tools?: string[];
-  /** Optional model override. */
+  /** Optional model alias/id override; omitted = inherit the main model. */
   model?: string;
 }
 

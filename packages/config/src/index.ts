@@ -48,6 +48,10 @@ function mergeLayers(...layers: ConfigFile[]): ConfigFile {
   for (const layer of layers) {
     if (layer.model !== undefined) out.model = layer.model;
     if (layer.effort !== undefined) out.effort = layer.effort;
+    if (layer.settingSources !== undefined)
+      out.settingSources = layer.settingSources;
+    if (layer.todoFeatureEnabled !== undefined)
+      out.todoFeatureEnabled = layer.todoFeatureEnabled;
     if (layer.logLevel !== undefined) out.logLevel = layer.logLevel;
     if (layer.permissions !== undefined) {
       const p = layer.permissions;

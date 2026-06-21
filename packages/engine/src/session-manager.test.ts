@@ -69,6 +69,8 @@ function makeConfig(): Config {
   return {
     model: 'claude-opus-4-8',
     permissions: { allow: [], deny: [], mode: 'default' },
+    settingSources: ['user', 'project', 'local'],
+    todoFeatureEnabled: true,
     paths: { home, sessions: path.join(home, 'sessions') },
     logLevel: 'silent',
   };
@@ -82,6 +84,13 @@ function successMessage(): unknown {
     result: 'done',
     total_cost_usd: 0.01,
     num_turns: 1,
+    duration_ms: 10,
+    usage: {
+      input_tokens: 1,
+      output_tokens: 1,
+      cache_read_input_tokens: 0,
+      cache_creation_input_tokens: 0,
+    },
   };
 }
 

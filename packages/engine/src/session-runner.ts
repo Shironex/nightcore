@@ -3,6 +3,7 @@ import type {
   NightcoreEvent,
   PermissionMode,
   PermissionPolicy,
+  SettingSource,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 import {
@@ -17,6 +18,7 @@ import { PermissionLayer, type ApprovalDecision } from './permission-layer.js';
 import { ToolRegistry } from './tool-registry.js';
 import { HookBus } from './hook-bus.js';
 import { resolveClaudeBinary } from './resolve-claude-binary.js';
+import { nightcoreAgents } from './agent-presets.js';
 
 /**
  * A streaming input that yields NO user message and parks until `signal` aborts.
@@ -52,6 +54,12 @@ export interface SessionRunnerConfig {
    *  otherwise flows entirely through the local Claude CLI credentials — the
    *  runner passes NO apiKey itself (see README auth section). */
   apiKeyFallback: boolean;
+  /** On-disk settings sources the SDK loads (skills/commands/agents/CLAUDE.md).
+   *  Empty = strict isolation (no skills loaded, no `Skill` option set). */
+  settingSources: SettingSource[];
+  /** Enable the SDK's task/todo tracking. REQUIRED for the `task_*` system
+   *  messages (→ `task-updated` events) to be emitted. */
+  todoFeatureEnabled: boolean;
 }
 
 /**
@@ -199,10 +207,28 @@ export class SessionRunner {
    *  unset so the SDK's normal in-repo node_modules default applies. */
   private baseOptions(): Options {
     const claudePath = resolveClaudeBinary();
+    const hasSettingSources = this.cfg.settingSources.length > 0;
     return {
       cwd: this.cfg.cwd,
       executable: 'bun',
       stderr: (data) => this.logger?.debug('[sdk stderr]', data),
+      settingSources: this.cfg.settingSources,
+      agents: nightcoreAgents,
+      // The task/todo feature has no run-`Options` key in the pinned SDK; it is
+      // toggled via the `CLAUDE_CODE_ENABLE_TASKS` env var the bundled CLI reads.
+      // `Options.env` REPLACES the subprocess environment wholesale, so spread
+      // `process.env` first to preserve PATH/HOME/ANTHROPIC_API_KEY. When enabled
+      // we also turn on AI progress summaries so `task_progress.summary` is
+      // populated for the live panel.
+      env: {
+        ...process.env,
+        CLAUDE_CODE_ENABLE_TASKS: this.cfg.todoFeatureEnabled ? '1' : '0',
+      },
+      ...(this.cfg.todoFeatureEnabled ? { agentProgressSummaries: true } : {}),
+      // Skills are filesystem-discovered via settingSources; only enable the
+      // skills filter (which auto-adds the `Skill` tool) when at least one
+      // source is loaded — with strict isolation there is nothing to enable.
+      ...(hasSettingSources ? { skills: 'all' as const } : {}),
       ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
     };
   }
