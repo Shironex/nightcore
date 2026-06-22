@@ -19,8 +19,13 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::Notify;
+// `ts-rs` is a dev-dependency; the codegen derive is gated to `cfg(test)`. The
+// struct keeps its runtime `Serialize` derive (it IS the `nc:loop` payload).
+#[cfg(test)]
+use ts_rs::TS;
 
 use crate::m2::breaker::CircuitBreaker;
 use crate::m2::deps::eligible_tasks;
@@ -33,8 +38,39 @@ use crate::store::TaskStore;
 use crate::task::{TaskStatus, TASK_EVENT};
 
 /// The Tauri event reflecting auto-loop state. Payload:
-/// `{ state, reason?, maxConcurrency, leased }`.
+/// `{ state, reason?, maxConcurrency, leased, failureThreshold }`.
 pub const LOOP_EVENT: &str = "nc:loop";
+
+/// The `nc:loop` payload (M2): the autonomous loop's snapshot. Typed so the web's
+/// `LoopEnvelope` is generated from this struct (Rust→TS codegen) rather than
+/// hand-mirrored — a field rename here can't silently drift the board. `state` is
+/// the web-local `LoopState` union (`running`/`drained`/`paused`); `reason` is set
+/// only on a pause and OMITTED otherwise (the board reads `loop.reason === undefined`
+/// to detect the no-reason case), so it carries `skip_serializing_if` + `default`.
+#[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[serde(rename_all = "camelCase")]
+// Exported to TS as `LoopEnvelope` (the board's name for the `nc:loop` payload) so
+// the generated binding drops in for the prior hand-mirror unchanged.
+#[cfg_attr(
+    test,
+    ts(export, rename = "LoopEnvelope", export_to = "LoopEnvelope.ts")
+)]
+pub struct LoopSnapshot {
+    /// The loop run state (`running` | `drained` | `paused`).
+    pub state: String,
+    /// Set only when `state == "paused"` (e.g. the circuit-breaker reason);
+    /// omitted otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub reason: Option<String>,
+    /// The live concurrency cap (the slot pool's `max`).
+    pub max_concurrency: u64,
+    /// How many slots are currently leased to running agents.
+    pub leased: u64,
+    /// The consecutive-failure count that trips the circuit breaker.
+    pub failure_threshold: u64,
+}
 
 /// The interval between coordinator ticks. A periodic scan is the simplest correct
 /// scanner for time-relative dependency/breaker windows; terminal events also kick
@@ -184,17 +220,19 @@ impl Orchestrator {
         }
     }
 
-    /// Emit `nc:loop` with the current loop snapshot.
+    /// Emit `nc:loop` with the current loop snapshot. Serializes the typed
+    /// [`LoopSnapshot`] (the source of the web's generated `LoopEnvelope`) so the
+    /// payload keys can't drift from the contract.
     pub fn emit_state(&self, app: &AppHandle, state: &str, reason: Option<&str>) {
         let _ = app.emit(
             LOOP_EVENT,
-            serde_json::json!({
-                "state": state,
-                "reason": reason,
-                "maxConcurrency": self.slots.max(),
-                "leased": self.slots.leased_count(),
-                "failureThreshold": self.breaker.threshold(),
-            }),
+            LoopSnapshot {
+                state: state.to_string(),
+                reason: reason.map(str::to_string),
+                max_concurrency: self.slots.max() as u64,
+                leased: self.slots.leased_count() as u64,
+                failure_threshold: self.breaker.threshold() as u64,
+            },
         );
     }
 }

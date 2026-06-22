@@ -5,14 +5,56 @@ import { NightcoreEventSchema, type NightcoreEvent } from '@nightcore/contracts'
 
 export type { SessionStatus } from '@nightcore/contracts';
 
-/** The kind preset a task runs under (M4). Re-exported from the contract spine
- *  (`TaskKindSchema`) — snake_case on the wire, matching the Rust `TaskKind` serde
- *  mapping — so the board can't drift from the authoritative enum. `build`
- *  (default) writes code in its own worktree and is verified after;
- *  `research`/`review`/`decompose` are reserved variants the picker surfaces but
- *  the engine only fully drives `build`/`research` this milestone
- *  (`review`/`decompose` render as "coming soon"). */
-export type { TaskKind } from '@nightcore/contracts';
+// --- Generated IPC types (Rust→TS codegen) --------------------------------
+//
+// These types are GENERATED from the Rust serde structs by `ts-rs` (run via
+// `cargo test` in `apps/desktop/src-tauri`; output under `./generated/`). They
+// replace the hand-mirrored interfaces that used to live here, so a Rust field
+// rename can no longer silently break the board — `cargo test` regenerates the
+// bindings and the CI drift guard (`git diff` over `generated/`) fails on any
+// mismatch. The runtime invoke/listen wrappers + zod re-validation below are
+// UNCHANGED; only the type DECLARATIONS now come from the generated bindings.
+export type { Task } from './generated/Task';
+export type { TaskPatch } from './generated/TaskPatch';
+export type { TaskStatus } from './generated/TaskStatus';
+export type { RunMode } from './generated/RunMode';
+export type { Project } from './generated/Project';
+export type { Settings } from './generated/Settings';
+export type { SettingsOverride } from './generated/SettingsOverride';
+export type { SettingsPatch } from './generated/SettingsPatch';
+export type { AppInfo } from './generated/AppInfo';
+export type { WorktreeInfo } from './generated/WorktreeInfo';
+export type { GauntletResult } from './generated/GauntletResult';
+export type { GauntletStep } from './generated/GauntletStep';
+export type { LoopEnvelope } from './generated/LoopEnvelope';
+
+/** The kind preset a task runs under (M4) and the four UI permission modes are
+ *  now generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
+ *  `store/task.rs`) rather than re-declared, so the board's pickers can't drift
+ *  from the authoritative serde mapping. The generated `TaskKind` is byte-identical
+ *  to the contracts `TaskKindSchema` enum (same snake_case wire union); the
+ *  generated `PermissionMode` is the studio's per-task UI vocabulary
+ *  (`bypass`/`auto-accept`/`ask`/`plan`), distinct from the contracts SDK
+ *  `PermissionMode` — it always lived here, never in contracts. */
+export type { TaskKind } from './generated/TaskKind';
+export type { PermissionMode } from './generated/PermissionMode';
+
+// Locally-aliased imports of the generated types the command wrappers below
+// reference by value position (return types, fallbacks). Type-only, so they erase
+// at build under `verbatimModuleSyntax`.
+import type { Task } from './generated/Task';
+import type { TaskPatch } from './generated/TaskPatch';
+import type { TaskStatus } from './generated/TaskStatus';
+import type { RunMode } from './generated/RunMode';
+import type { Project } from './generated/Project';
+import type { Settings } from './generated/Settings';
+import type { SettingsPatch } from './generated/SettingsPatch';
+import type { AppInfo } from './generated/AppInfo';
+import type { WorktreeInfo } from './generated/WorktreeInfo';
+import type { GauntletResult } from './generated/GauntletResult';
+import type { LoopEnvelope } from './generated/LoopEnvelope';
+import type { PermissionMode } from './generated/PermissionMode';
+import type { TaskKind } from './generated/TaskKind';
 
 /** True when running inside the Tauri webview (vs. a plain browser preview). */
 export function isTauri(): boolean {
@@ -29,154 +71,6 @@ function tauriInvoke<T>(
 ): Promise<T> {
   if (!isTauri()) return Promise.resolve(fallback);
   return invoke<T>(command, args);
-}
-
-/** Lifecycle status of a task. Mirrors the Rust `TaskStatus` enum exactly.
- *  `verifying` (M4) is the post-build reviewer phase: a reviewer session reads
- *  the worktree diff between `in_progress` and a terminal state. */
-export type TaskStatus =
-  | 'backlog'
-  | 'ready'
-  | 'in_progress'
-  | 'verifying'
-  | 'waiting_approval'
-  | 'done'
-  | 'failed';
-
-/** Where a task's run executes (M4.6). Mirrors the Rust `RunMode` enum
- *  (snake_case on the wire). `main` (default) edits the project directory in
- *  place — no worktree, no branch, and `merge_task` refuses it (nothing to
- *  merge). `worktree` isolates the task on its own `nc/<id>` branch as before. */
-export type RunMode = 'main' | 'worktree';
-
-/** A per-task permission mode override (M4.7 §F). Mirrors the Rust UI modes:
- *  `bypass` (no prompts — the studio default), `auto-accept` (acceptEdits),
- *  `ask` (prompt on risky tools), `plan` (plan-only). `null` = inherit the
- *  resolved project/global default. Settable at create + editable pre-run. */
-export type PermissionMode = 'bypass' | 'auto-accept' | 'ask' | 'plan';
-
-/** The shared task shape. Mirrors the Rust serde struct (camelCase) exactly. */
-export interface Task {
-  id: string;
-  title: string;
-  description: string;
-  status: TaskStatus;
-  dependencies: string[];
-  model: string | null;
-  /** Per-task reasoning-effort override (M4.7 §E): one of the SDK effort levels
-   *  (`low`|`medium`|`high`|`none`). `null` = inherit the resolved default. */
-  effort: string | null;
-  /** Per-task permission-mode override (M4.7 §F). `null` = inherit the resolved
-   *  project/global default (which defaults to `bypass`). */
-  permissionMode: PermissionMode | null;
-  /** The worktree branch (`nc/<id>`) once the coordinator allocates one; else null. */
-  branch: string | null;
-  createdAt: number;
-  updatedAt: number;
-  sessionId: number | null;
-  /** The SDK's own session UUID, populated once the engine emits its `init`
-   *  message and the core stamps it on the task. `null` until then / for tasks
-   *  that never ran. Mirrors the Rust serde field. */
-  sdkSessionId: string | null;
-  summary: string | null;
-  error: string | null;
-  costUsd: number | null;
-  /** Plan text captured when a `plan`-mode run hits `ExitPlanMode` and the task
-   *  enters `waiting_approval`. Shown in the detail panel; null until produced. */
-  plan: string | null;
-  /** True once `commit_task` created a commit on the task's worktree branch. */
-  committed: boolean;
-  /** True once `merge_task` integrated the branch into the project base. */
-  merged: boolean;
-  /** True when `merge_task` hit a conflict it refused to force. */
-  conflict: boolean;
-  /** The kind preset this task runs under (M4). Defaults to `build`. */
-  kind: TaskKind;
-  /** Where this task runs (M4.6). Defaults to `main` (edits the project tree in
-   *  place); `worktree` allocates an isolated `nc/<id>` branch. Settable at
-   *  create + editable pre-run. Legacy tasks (no `run_mode`) load as `main`. */
-  runMode: RunMode;
-  /** True only after a reviewer PASS (or a user `accept_review` override). The
-   *  pre-merge gate (`merge_task`) refuses while this is false. Cleared on a
-   *  fresh run. */
-  verified: boolean;
-  /** The reviewer's full verdict text (rationale + the machine-readable
-   *  `VERDICT:` line). `null` until a review runs; cleared on a fresh run. */
-  review: string | null;
-  /** How many bounded auto-fix attempts the verification loop has spent
-   *  (`MAX_FIX_ATTEMPTS = 2`). Reset to 0 on a fresh run. */
-  fixAttempts: number;
-  /** SDK guardrail: max conversation turns before the run stops (engine
-   *  `Options.maxTurns`). `null` = inherit the resolved default (Settings →
-   *  config default 200). Stamped at create from the Settings "Limits" knob. */
-  maxTurns: number | null;
-  /** SDK guardrail: hard cost ceiling in USD (engine `Options.maxBudgetUsd`).
-   *  `null` = uncapped at the task level (the config default applies). */
-  maxBudgetUsd: number | null;
-}
-
-/** Partial update sent to `update_task`. All fields optional. */
-export interface TaskPatch {
-  title?: string;
-  description?: string;
-  status?: TaskStatus;
-  dependencies?: string[];
-  model?: string | null;
-  /** The task's reasoning-effort override (M4.7 §E) — set from the model/effort
-   *  picker. `null` clears it back to inherit. */
-  effort?: string | null;
-  /** The task's permission-mode override (M4.7 §F) — set from the permission-mode
-   *  picker. `null` clears it back to inherit. */
-  permissionMode?: PermissionMode | null;
-  /** The task's kind preset (M4) — set from the create/edit picker. */
-  kind?: TaskKind;
-  /** The task's run mode (M4.6) — editable pre-run from the create/edit form. */
-  runMode?: RunMode;
-  /** The task's max-turns ceiling (SDK guardrail) — editable pre-run. `null`
-   *  clears it back to inherit (note: an explicit `null` and an absent field are
-   *  indistinguishable on the Rust side — both leave the value untouched). */
-  maxTurns?: number | null;
-  /** The task's max-budget-USD ceiling (SDK guardrail) — editable pre-run. */
-  maxBudgetUsd?: number | null;
-}
-
-/** One live worktree for the active project (M4.6, §C). Mirrors the Rust
- *  `list_worktrees` result struct (camelCase). Drives the worktree switcher's
- *  tabs + per-tab monitor indicators. Read-only git status, kept cheap. */
-export interface WorktreeInfo {
-  /** The worktree's branch (`nc/<taskId>` in the v1 one-worktree-per-task model). */
-  branch: string;
-  /** Absolute path of the worktree on disk. */
-  path: string;
-  /** Ids of the tasks grouped under this worktree's branch. */
-  taskIds: string[];
-  /** Whether the worktree has uncommitted changes (drives the dirty indicator). */
-  dirty: boolean;
-  /** Commits ahead of the project base (drives the "ahead" indicator). */
-  aheadOfBase: number;
-}
-
-/** One step of the pre-merge readiness gauntlet (M4, §C). The detector runs the
- *  project's real tooling (typecheck → lint → test), stopping at the first
- *  failure; later steps after a failure are `skipped`. */
-export interface GauntletStep {
-  /** The step's logical name (e.g. `typecheck`, `lint`, `test`). */
-  name: string;
-  /** The exact command run (e.g. `bun run test`), for the UI to surface. */
-  command: string;
-  status: 'passed' | 'failed' | 'skipped';
-  /** The process exit code, when the step actually ran. */
-  exitCode?: number;
-}
-
-/** The structured result of a readiness-gauntlet run (M4, §C). A project with no
- *  detectable tooling passes trivially (`steps` empty). `merge_task` is gated on
- *  `passed`; the Verified column surfaces the steps on demand via `run_gauntlet`. */
-export interface GauntletResult {
-  passed: boolean;
-  steps: GauntletStep[];
-  /** The name of the first failing step, when `passed` is false. */
-  failedStep?: string;
 }
 
 /** The full engine event union streamed inside the `nc:session` envelope. This is
@@ -210,74 +104,6 @@ export interface PermissionPrompt {
   suggestions?: unknown;
 }
 
-/** A known project. Mirrors the Rust `Project` serde struct (camelCase). */
-export interface Project {
-  id: string;
-  name: string;
-  path: string;
-  branch: string | null;
-  createdAt: string;
-  lastActiveAt: string | null;
-}
-
-/** Per-project setting overrides; absent fields fall back to the global value. */
-export interface SettingsOverride {
-  defaultModel?: string;
-  defaultEffort?: string;
-  maxConcurrency?: number;
-  permissionMode?: string;
-  /** Per-project default run mode (`'main'` | `'worktree'`). */
-  defaultRunMode?: RunMode;
-  /** Per-project default max-turns ceiling (SDK guardrail). */
-  maxTurns?: number;
-  /** Per-project default max-budget-USD ceiling (SDK guardrail). */
-  maxBudgetUsd?: number;
-}
-
-/** Global settings + per-project overrides. Mirrors the Rust `Settings` struct.
- *  `defaultModel` holds an SDK long id (e.g. `claude-opus-4-8`). */
-export interface Settings {
-  defaultModel: string;
-  defaultEffort: string;
-  maxConcurrency: number;
-  permissionMode: string;
-  cleanupWorktrees: boolean;
-  notifyOnComplete: boolean;
-  /** The default run mode new tasks inherit (`'main'` | `'worktree'`). */
-  defaultRunMode: RunMode;
-  /** SDK guardrail: the default max-turns ceiling new tasks inherit. `null` =
-   *  no Settings ceiling, so the engine's config default (200) applies. */
-  maxTurns: number | null;
-  /** SDK guardrail: the default max-budget-USD ceiling new tasks inherit.
-   *  `null` = uncapped at the Settings level. */
-  maxBudgetUsd: number | null;
-  projectOverrides: Record<string, SettingsOverride>;
-}
-
-/** Partial settings update. A `projectId` targets a per-project override; absent,
- *  the patch merges into the global block. All other fields optional. */
-export interface SettingsPatch {
-  projectId?: string;
-  defaultModel?: string;
-  defaultEffort?: string;
-  maxConcurrency?: number;
-  permissionMode?: string;
-  cleanupWorktrees?: boolean;
-  notifyOnComplete?: boolean;
-  defaultRunMode?: RunMode;
-  /** The default max-turns ceiling (SDK guardrail). With a `projectId` it lands
-   *  in that project's override; without one, the global default. */
-  maxTurns?: number;
-  /** The default max-budget-USD ceiling (SDK guardrail). */
-  maxBudgetUsd?: number;
-}
-
-/** Read-only application metadata for the About page. Mirrors the Rust `AppInfo`. */
-export interface AppInfo {
-  version: string;
-  repository: string;
-}
-
 /** `nc:project` payload: a registry change plus the full registry snapshot.
  *  `renamed` carries the updated project (name changed; active pointer unchanged). */
 export interface ProjectEnvelope {
@@ -286,20 +112,11 @@ export interface ProjectEnvelope {
   projects: Project[];
 }
 
-/** The autonomous loop's run state. Mirrors the Rust `nc:loop` payload. */
+/** The autonomous loop's run state (the `state` field of the generated
+ *  `LoopEnvelope`). Web-local union — the generated `LoopEnvelope.state` is a plain
+ *  `string` (the Rust payload carries it as a free string), so this narrows it for
+ *  the board's `loop.state === 'running'` checks. */
 export type LoopState = 'running' | 'drained' | 'paused';
-
-/** `nc:loop` payload: the current state of the autonomous backend loop. */
-export interface LoopEnvelope {
-  state: LoopState;
-  /** Set when `state === 'paused'` (e.g. a circuit-breaker reason). */
-  reason?: string;
-  maxConcurrency: number;
-  /** How many slots are currently leased to running agents. */
-  leased: number;
-  /** Consecutive-failure count that trips the circuit breaker. */
-  failureThreshold: number;
-}
 
 // --- Commands -------------------------------------------------------------
 

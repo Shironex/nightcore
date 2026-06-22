@@ -1,0 +1,14 @@
+# ts-rs (Rust→TS contract codegen) configuration, read by `#[derive(TS)]` during
+# `cargo test`. Kept in `.cargo/config.toml` so the bindings always land in the
+# same place regardless of who runs the test (the drift guard depends on a stable
+# output path). This is the inverse of the zod→Rust sidecar codegen.
+[env]
+# Export the generated `.ts` bindings straight into the web's source tree so the
+# bridge imports them directly (no build/copy step). Relative to this crate dir
+# (apps/desktop/src-tauri), so this resolves to apps/web/src/lib/generated/.
+TS_RS_EXPORT_DIR = { value = "../../web/src/lib/generated", relative = true }
+# The board reads `createdAt`/`updatedAt`/`sessionId` etc. as `number` (they are
+# `u64`/`i64` epoch-ms / ids on the Rust side). ts-rs defaults large ints to
+# `bigint`; map them to `number` so the generated types match the current bridge
+# interfaces and the wire (serde_json emits these as JSON numbers, not strings).
+TS_RS_LARGE_INT = "number"
