@@ -161,6 +161,10 @@ The suites are fast and offline (no live Claude session, no token use, no cost):
 - **Rust core** (`apps/desktop/src-tauri`): `bun run test:rust` (or `cargo test`
   there). Covers `TaskStatus` serde, `TaskStore` JSON round-trips on a temp dir,
   `TaskPatch` application, the sidecar serial-guard, and the M2 seams (`src/m2/`).
+  Any `cargo build` needs the compiled sidecar binary (Tauri `externalBin`); build
+  it first with `bun run --filter @nightcore/sidecar compile`. `bun run test:rust`
+  and `bun run test:all` run this compile step for you, so they work on a fresh
+  checkout where `binaries/` is still empty.
 - **Sidecar** (`apps/sidecar`): `bun test apps/sidecar` — NDJSON framing, command
   dispatch, event-per-line serialization, and permission relay. The
   `SessionManager` is stubbed, so the suite never spawns a model. (The engine's

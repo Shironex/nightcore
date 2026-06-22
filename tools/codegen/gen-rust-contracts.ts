@@ -32,10 +32,16 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+// Import the zod spine from SOURCE (not the `@nightcore/contracts` `exports` map,
+// which resolves to the compiled `dist/`). Reading source guarantees the emitter
+// and `--check` reflect the CURRENT schemas without depending on a prior `tsc -b`
+// of the package — a stale/missing `dist/` can no longer make `--check` falsely
+// pass. Bun runs the contract TS directly and resolves the internal `./*.js`
+// specifiers to their `.ts` sources, so the relative source entry works as-is.
 import {
   SurfaceCommandSchema,
   NightcoreEventSchema,
-} from '@nightcore/contracts';
+} from '../../packages/contracts/src/index.ts';
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(dirname, '../..');
