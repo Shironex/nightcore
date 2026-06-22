@@ -31,7 +31,22 @@ use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStdin, Command};
 use tokio::sync::Mutex as AsyncMutex;
 
+use crate::contracts::{
+    EffortLevel, PermissionDecision as WirePermissionDecision,
+    PermissionMode as WirePermissionMode, SurfaceCommand, TaskKind as WireTaskKind,
+};
 use crate::platform::resolve_bun_program;
+
+/// Parse a wire-string enum value into its generated contract enum, surfacing an
+/// invalid value as a typed error rather than letting it reach (and be rejected
+/// by) the sidecar's zod validation. The provider receives `effort`/`mode`/`kind`
+/// as free strings from upstream task records; routing them through the generated
+/// enums is the point of the codegen migration — the enum is the single source of
+/// truth for which values are valid on the wire.
+fn parse_wire_enum<T: serde::de::DeserializeOwned>(field: &str, value: &str) -> Result<T, String> {
+    serde_json::from_value(Value::String(value.to_string()))
+        .map_err(|e| format!("invalid {field} value {value:?} for the contract: {e}"))
+}
 
 /// A driveable agent backend. Today: the Bun Claude sidecar. Later: a Codex
 /// sidecar speaking the same protocol — selected by config, not by branching in
@@ -147,8 +162,15 @@ struct Correlation {
     started_at: HashMap<u64, std::time::Instant>,
 }
 
+/// The compiled sidecar binary's base name. Tauri's `externalBin` config copies
+/// `binaries/nightcore-sidecar-<target-triple>` next to the app executable under
+/// this name (no triple suffix at the install site). On Windows it carries `.exe`.
+const SIDECAR_BIN: &str = "nightcore-sidecar";
+
 impl SidecarProvider {
-    /// A provider that will spawn `bun run <entry>` in `cwd` on first use.
+    /// A provider that will spawn the sidecar in `cwd` on first use. In debug
+    /// builds (`tauri dev`) this is `bun run <entry>` against the TypeScript source;
+    /// in release builds it is the compiled binary bundled next to the app.
     pub fn new(entry: PathBuf, cwd: PathBuf) -> Self {
         Self {
             stdin: AsyncMutex::new(None),
@@ -163,6 +185,58 @@ impl SidecarProvider {
     #[allow(dead_code)]
     pub async fn is_running(&self) -> bool {
         self.stdin.lock().await.is_some()
+    }
+
+    /// Resolve the compiled sidecar binary that Tauri's `externalBin` places next
+    /// to the app executable, if it exists. Tauri copies the triple-suffixed
+    /// `binaries/nightcore-sidecar-<triple>` to a plain `nightcore-sidecar`
+    /// (`.exe` on Windows) in the executable's directory — on macOS that is
+    /// `Nightcore.app/Contents/MacOS/`, the same dir as the app binary. Returns
+    /// `None` if the current exe or the binary can't be resolved, so the caller can
+    /// fall back to `bun run` instead of dead-ending.
+    fn release_sidecar_path() -> Option<PathBuf> {
+        let exe = std::env::current_exe().ok()?;
+        let dir = exe.parent()?;
+        let name = if cfg!(windows) {
+            format!("{SIDECAR_BIN}.exe")
+        } else {
+            SIDECAR_BIN.to_string()
+        };
+        let path = dir.join(name);
+        path.exists().then_some(path)
+    }
+
+    /// Build the (unspawned) [`Command`] for the sidecar, with program, args, and
+    /// working directory set — but no stdio/spawn, which [`spawn`](Self::spawn)
+    /// owns. The dev/release split is the only thing that varies here:
+    ///
+    /// - **Debug build (`tauri dev`):** `bun run <entry>` against the TypeScript
+    ///   source — the hot path, unchanged from prior behavior.
+    /// - **Release build:** the compiled binary bundled next to the app executable.
+    ///   If that binary can't be resolved (missing/unbundled), fall back to
+    ///   `bun run <entry>` with a warning so the app degrades instead of failing to
+    ///   start — though a correctly bundled release should never take that branch.
+    fn spawn_command(&self) -> Command {
+        if !cfg!(debug_assertions) {
+            if let Some(bin) = Self::release_sidecar_path() {
+                let mut cmd = Command::new(bin);
+                cmd.current_dir(&self.cwd);
+                return cmd;
+            }
+            tracing::warn!(
+                target: "sidecar",
+                entry = %self.entry.display(),
+                "bundled sidecar binary not found next to the app executable; \
+                 falling back to `bun run` against the TypeScript entry"
+            );
+        }
+        let bun = resolve_bun_program();
+        let mut cmd = Command::new(&bun.program);
+        cmd.args(&bun.prefix_args)
+            .arg("run")
+            .arg(&self.entry)
+            .current_dir(&self.cwd);
+        cmd
     }
 
     /// Spawn the sidecar child, store its stdin writer, and return its stdout +
@@ -180,20 +254,18 @@ impl SidecarProvider {
         }
 
         let started = std::time::Instant::now();
-        let bun = resolve_bun_program();
-        let mut child = Command::new(&bun.program)
-            .args(&bun.prefix_args)
-            .arg("run")
-            .arg(&self.entry)
-            .current_dir(&self.cwd)
+        let mut child = self
+            .spawn_command()
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .spawn()
             .map_err(|e| {
                 format!(
-                    "failed to spawn sidecar (no launchable bun binary found — \
-                 on Windows, bun.exe must be on PATH or reachable via the npm shim): {e}"
+                    "failed to spawn sidecar (release: the bundled `nightcore-sidecar` \
+                 next to the app executable must be launchable; dev: a launchable bun \
+                 binary must be found — on Windows, bun.exe must be on PATH or reachable \
+                 via the npm shim): {e}"
                 )
             })?;
         // Sidecar process lifecycle (#4) + spawn latency (#5). The pid + duration are
@@ -382,24 +454,36 @@ impl Provider for SidecarProvider {
         guardrails: Guardrails,
     ) -> Result<(), String> {
         // M4.7 §E: `effort` is now forwarded; the engine already threads
-        // `command.effort` into the SDK `Options`. A `null` effort lets the model
+        // `command.effort` into the SDK `Options`. An absent effort lets the model
         // decide (the engine omits the option), preserving pre-M4.7 behavior.
         //
         // SDK-guardrails: `maxTurns`/`maxBudgetUsd`/`resumeSessionId` are forwarded
-        // additively. A `null` for any of them lets the engine inherit the
+        // additively. An absent value for any of them lets the engine inherit the
         // `@nightcore/config` default (and start cold), preserving prior behavior.
-        let command = serde_json::json!({
-            "type": "start-session",
-            "prompt": prompt,
-            "model": model,
-            "effort": effort,
-            "cwd": cwd.map(|p| p.to_string_lossy().to_string()),
-            "permissionMode": permission_mode,
-            "kind": kind,
-            "maxTurns": guardrails.max_turns,
-            "maxBudgetUsd": guardrails.max_budget_usd,
-            "resumeSessionId": guardrails.resume_session_id,
-        });
+        //
+        // The command is built as the generated `SurfaceCommand::StartSession`
+        // (mirrored from the zod `SurfaceCommandSchema`) and serialized via serde,
+        // so absent optionals are OMITTED — exactly what the sidecar's zod
+        // `.optional()` validation accepts. The wire keys are the contract's
+        // camelCase; the typed enums reject any out-of-contract value here.
+        let command = SurfaceCommand::StartSession {
+            prompt,
+            model,
+            effort: match effort {
+                Some(e) => Some(parse_wire_enum::<EffortLevel>("effort", &e)?),
+                None => None,
+            },
+            permission_mode: match permission_mode {
+                Some(m) => Some(parse_wire_enum::<WirePermissionMode>("permissionMode", &m)?),
+                None => None,
+            },
+            cwd: cwd.map(|p| p.to_string_lossy().to_string()),
+            kind: Some(parse_wire_enum::<WireTaskKind>("kind", kind)?),
+            max_turns: guardrails.max_turns.map(u64::from),
+            max_budget_usd: guardrails.max_budget_usd,
+            resume_session_id: guardrails.resume_session_id,
+        };
+        let command = serde_json::to_value(&command).map_err(|e| e.to_string())?;
 
         // Push the pending launch and write the line under the same lock so the
         // FIFO can't be reordered against the wire by a concurrent launch.
@@ -420,7 +504,8 @@ impl Provider for SidecarProvider {
     }
 
     async fn interrupt(&self, session_id: u64) -> Result<(), String> {
-        let command = serde_json::json!({ "type": "interrupt", "sessionId": session_id });
+        let command = serde_json::to_value(SurfaceCommand::Interrupt { session_id })
+            .map_err(|e| e.to_string())?;
         let mut guard = self.stdin.lock().await;
         if let Some(stdin) = guard.as_mut() {
             Self::write_line(stdin, &command).await?;
@@ -429,11 +514,11 @@ impl Provider for SidecarProvider {
     }
 
     async fn set_permission_mode(&self, session_id: u64, mode: &str) -> Result<(), String> {
-        let command = serde_json::json!({
-            "type": "set-permission-mode",
-            "sessionId": session_id,
-            "mode": mode,
-        });
+        let command = serde_json::to_value(SurfaceCommand::SetPermissionMode {
+            session_id,
+            mode: parse_wire_enum::<WirePermissionMode>("mode", mode)?,
+        })
+        .map_err(|e| e.to_string())?;
         let mut guard = self.stdin.lock().await;
         if let Some(stdin) = guard.as_mut() {
             Self::write_line(stdin, &command).await?;
@@ -447,27 +532,40 @@ impl Provider for SidecarProvider {
         request_id: &str,
         decision: PermissionDecision,
     ) -> Result<(), String> {
-        let decision = match decision {
-            // The engine echoes the parked input when `updatedInput` is omitted, so
-            // a bare allow is valid; include it only when the surface rewrote it.
+        // Map the core decision onto the generated wire `PermissionDecision`. The
+        // engine echoes the parked input when `updatedInput` is omitted, so a bare
+        // allow stays bare (serde omits the `None`); it is included only when the
+        // surface rewrote the input. The contract types `updatedInput` as a JSON
+        // object (`z.record`), so a non-object rewrite is a contract violation.
+        let wire_decision = match decision {
             PermissionDecision::Allow {
                 updated_input: None,
-            } => {
-                serde_json::json!({ "behavior": "allow" })
-            }
+            } => WirePermissionDecision::Allow {
+                updated_input: None,
+            },
             PermissionDecision::Allow {
                 updated_input: Some(input),
-            } => serde_json::json!({ "behavior": "allow", "updatedInput": input }),
-            PermissionDecision::Deny { message } => {
-                serde_json::json!({ "behavior": "deny", "message": message })
+            } => {
+                let map = match input {
+                    Value::Object(map) => map,
+                    other => {
+                        return Err(format!(
+                            "updatedInput must be a JSON object per the contract, got: {other}"
+                        ))
+                    }
+                };
+                WirePermissionDecision::Allow {
+                    updated_input: Some(map),
+                }
             }
+            PermissionDecision::Deny { message } => WirePermissionDecision::Deny { message },
         };
-        let command = serde_json::json!({
-            "type": "approve-permission",
-            "sessionId": session_id,
-            "requestId": request_id,
-            "decision": decision,
-        });
+        let command = serde_json::to_value(SurfaceCommand::ApprovePermission {
+            session_id,
+            request_id: request_id.to_string(),
+            decision: wire_decision,
+        })
+        .map_err(|e| e.to_string())?;
         let mut guard = self.stdin.lock().await;
         if let Some(stdin) = guard.as_mut() {
             Self::write_line(stdin, &command).await?;
@@ -580,6 +678,40 @@ mod tests {
             "a correlated launch is not evicted"
         );
         assert_eq!(p.task_for(7).as_deref(), Some("task-a"), "binding intact");
+    }
+
+    #[test]
+    fn dev_build_spawns_bun_run_against_the_entry() {
+        // The test harness is a debug build, so `spawn_command` must take the dev
+        // path: `bun run <entry>`, with the entry TS file in the args (not the
+        // compiled binary). This pins the release-packaging fix from regressing the
+        // hot dev path.
+        let p = provider();
+        let cmd = p.spawn_command();
+        let args: Vec<_> = cmd
+            .as_std()
+            .get_args()
+            .map(|a| a.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            args.iter().any(|a| a == "run"),
+            "dev spawn must invoke `bun run`: {args:?}"
+        );
+        assert!(
+            args.iter().any(|a| a == "/tmp/entry.ts"),
+            "dev spawn must target the TypeScript entry: {args:?}"
+        );
+    }
+
+    #[test]
+    fn release_sidecar_path_is_none_when_no_binary_is_bundled() {
+        // No `nightcore-sidecar` is bundled next to the test runner, so the release
+        // resolver must return None — which is what makes `spawn_command` fall back
+        // to `bun run` instead of dead-ending on a missing binary.
+        assert!(
+            SidecarProvider::release_sidecar_path().is_none(),
+            "no bundled sidecar exists next to the test binary"
+        );
     }
 
     #[test]
