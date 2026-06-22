@@ -147,7 +147,11 @@ impl Orchestrator {
             if let Some(task_id) = self.provider.task_for(sid) {
                 self.deny_parked_permissions(&task_id).await;
             }
-            let _ = self.provider.interrupt(sid).await;
+            if let Err(e) = self.provider.interrupt(sid).await {
+                // Best-effort: the session may already be tearing down. Log so a
+                // wedged interrupt is visible rather than silently swallowed (#8).
+                tracing::warn!(target: "nightcore", session_id = sid, error = %e, "interrupt of in-flight session failed");
+            }
         }
         self.slots.abort_all();
     }
@@ -339,18 +343,14 @@ async fn launch(app: &AppHandle, task_id: &str) {
     let resolved = match resolve_worktree(app, task_id) {
         Ok(cwd) => cwd,
         Err(e) => {
-            fail_task(app, task_id, &format!("worktree setup failed: {e}"));
-            orch.slots.release(task_id);
-            orch.breaker.record_failure();
+            fail_launch(app, task_id, &format!("worktree setup failed: {e}"));
             return;
         }
     };
 
     // Ensure the sidecar is up (the reader is installed by `sidecar::ensure_reader`).
     if let Err(e) = crate::sidecar::ensure_reader(app).await {
-        fail_task(app, task_id, &format!("sidecar start failed: {e}"));
-        orch.slots.release(task_id);
-        orch.breaker.record_failure();
+        fail_launch(app, task_id, &format!("sidecar start failed: {e}"));
         return;
     }
 
@@ -360,21 +360,8 @@ async fn launch(app: &AppHandle, task_id: &str) {
     let cwd = resolved.map(|r| r.path);
     let branch = is_worktree.then(|| worktree::branch_name(task_id));
 
-    // Mark in-progress + persist + emit before dispatch.
-    if let Ok(updated) = store.mutate(task_id, |t| {
-        t.status = TaskStatus::InProgress;
-        t.summary = None;
-        t.error = None;
-        // A fresh run clears the prior verification verdict (M4 §B).
-        t.verified = false;
-        t.review = None;
-        t.fix_attempts = 0;
-        // Worktree mode records the `nc/<taskId>` chip; main mode clears any stale
-        // branch from a prior worktree run (it now edits the current branch).
-        t.branch = branch.clone();
-    }) {
-        let _ = app.emit(TASK_EVENT, &updated);
-    }
+    // Mark in-progress + persist + emit before dispatch (shared with `run_task`).
+    let _ = mark_task_in_progress(app, task_id, branch.clone());
 
     tracing::info!(
         target: "nightcore",
@@ -408,9 +395,31 @@ async fn launch(app: &AppHandle, task_id: &str) {
         )
         .await
     {
-        fail_task(app, task_id, &format!("dispatch failed: {e}"));
-        orch.slots.release(task_id);
-        orch.breaker.record_failure();
+        fail_launch(app, task_id, &format!("dispatch failed: {e}"));
+    }
+}
+
+/// An auto-loop launch setup failed (worktree/sidecar/dispatch): mark the task
+/// Failed + emit, release its slot, and feed the circuit breaker — logging when
+/// THIS failure tripped it (observability #1). Shared by the three `launch` setup
+/// paths so a launch failure is recorded + observable identically. (The manual
+/// `run_task` path uses `fail_task` directly: it must NOT feed the loop breaker.)
+fn fail_launch(app: &AppHandle, task_id: &str, message: &str) {
+    let orch = app.state::<Orchestrator>();
+    fail_task(app, task_id, message);
+    orch.slots.release(task_id);
+    if orch.breaker.record_failure() {
+        tracing::warn!(
+            target: "nightcore",
+            task_id,
+            threshold = orch.breaker.threshold(),
+            "circuit breaker tripped on launch failure; pausing auto-loop"
+        );
+        orch.emit_state(app, "paused", Some("circuit-breaker"));
+        let app = app.clone();
+        tokio::spawn(async move {
+            app.state::<Orchestrator>().interrupt_all().await;
+        });
     }
 }
 
@@ -422,7 +431,7 @@ async fn launch(app: &AppHandle, task_id: &str) {
 /// worktree is allocated off a CLEAN base (you can't branch cleanly off a dirty
 /// index, so that guard stays here). The returned dir is paired with whether it is
 /// a worktree so the caller only records a branch chip in worktree mode.
-fn resolve_worktree(app: &AppHandle, task_id: &str) -> Result<Option<ResolvedCwd>, String> {
+pub(crate) fn resolve_worktree(app: &AppHandle, task_id: &str) -> Result<Option<ResolvedCwd>, String> {
     let projects = app.state::<ProjectStore>();
     let Some(project) = projects.active() else {
         return Ok(None);
@@ -470,8 +479,34 @@ impl ResolvedCwd {
     }
 }
 
-/// Mark a task failed with `message`, persist, and emit `nc:task`.
-fn fail_task(app: &AppHandle, task_id: &str, message: &str) {
+/// Mark a task `InProgress` for a fresh run: clear the prior summary/error and the
+/// verification verdict (M4 §B), and record the run's `branch` chip (worktree mode
+/// only; main mode clears any stale branch). Persists and emits `nc:task` on
+/// success. Shared by the auto-loop `launch` and the manual `run_task` so the two
+/// dispatch paths mark a run identically.
+pub(crate) fn mark_task_in_progress(
+    app: &AppHandle,
+    task_id: &str,
+    branch: Option<String>,
+) -> Result<crate::task::Task, String> {
+    let updated = app.state::<TaskStore>().mutate(task_id, |t| {
+        t.status = TaskStatus::InProgress;
+        t.summary = None;
+        t.error = None;
+        t.verified = false;
+        t.review = None;
+        t.fix_attempts = 0;
+        t.branch = branch.clone();
+    })?;
+    let _ = app.emit(TASK_EVENT, &updated);
+    Ok(updated)
+}
+
+/// Mark a task failed with `message`, persist, and emit `nc:task`. Shared by the
+/// auto-loop `launch` and the manual `run_task` setup paths so a launch failure is
+/// recorded identically; the breaker is fed by the auto-loop caller only (a manual
+/// run must not trip the loop's circuit breaker).
+pub(crate) fn fail_task(app: &AppHandle, task_id: &str, message: &str) {
     let store = app.state::<TaskStore>();
     tracing::error!(target: "nightcore", task_id, error = message, "task launch failed");
     if let Ok(updated) = store.mutate(task_id, |t| {

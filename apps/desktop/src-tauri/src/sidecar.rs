@@ -80,10 +80,12 @@ pub async fn ensure_reader(app: &AppHandle) -> Result<(), String> {
                 },
                 Ok(None) => {
                     tracing::warn!(target: "sidecar", "sidecar stdout closed (process exited)");
+                    handle_sidecar_crash(&reader_app).await;
                     break;
                 }
                 Err(e) => {
                     tracing::error!(target: "sidecar", error = %e, "error reading sidecar stdout");
+                    handle_sidecar_crash(&reader_app).await;
                     break;
                 }
             }
@@ -138,6 +140,42 @@ fn sidecar_level(line: &str) -> SidecarLevel {
         "DEBUG" => SidecarLevel::Debug,
         _ => SidecarLevel::Info,
     }
+}
+
+/// Recover from a sidecar process exit (#11): the reader saw stdout close, so the
+/// child is gone and every in-flight run is stranded (its terminal event will never
+/// arrive). Reset provider state (drop the dead stdin handle so a re-spawn happens,
+/// clear correlation) and, for each run that had a live session, drain its parked
+/// permissions, release its slot, and requeue it to `Ready` so the auto-loop
+/// re-dispatches it against a fresh sidecar instead of wedging on a dead session.
+async fn handle_sidecar_crash(app: &AppHandle) {
+    let orch = app.state::<Orchestrator>();
+    let store = app.state::<TaskStore>();
+    let orphaned = orch.provider.reset_after_crash().await;
+    if orphaned.is_empty() {
+        tracing::warn!(target: "nightcore", "sidecar exited with no in-flight runs to recover");
+        return;
+    }
+    tracing::warn!(target: "nightcore", count = orphaned.len(), "sidecar exited; recovering stranded runs");
+    for task_id in orphaned {
+        // Drain any parked permission registry entries (the engine is dead; nothing
+        // to deny on the wire) and free the slot the dead run held.
+        let _ = orch.permissions.drain_task(&task_id);
+        orch.slots.release(&task_id);
+        // Requeue to Ready (mirrors boot reconciliation) so the loop re-dispatches.
+        if let Ok(updated) = store.mutate(&task_id, |t| {
+            t.status = TaskStatus::Ready;
+            t.session_id = None;
+            t.error = Some(match t.error.take() {
+                Some(prev) if !prev.is_empty() => format!("{prev}\nSidecar exited mid-run — requeued."),
+                _ => "Sidecar exited mid-run — requeued.".to_string(),
+            });
+        }) {
+            let _ = app.emit(TASK_EVENT, &updated);
+        }
+    }
+    // Nudge the loop so it re-dispatches the requeued runs against a fresh sidecar.
+    orch.kick();
 }
 
 /// Process one parsed sidecar event: correlate it to its task, forward it as
@@ -210,6 +248,13 @@ async fn handle_event(app: &AppHandle, event: Value) {
             }
         }
         "session-completed" => {
+            // Observability #5: log the run's wall-clock duration before the terminal
+            // handlers `forget` the session (after which the timer is gone).
+            if let Some(sid) = session_id {
+                if let Some(duration_ms) = orch.provider.run_duration_ms(sid) {
+                    tracing::info!(target: "nightcore", task_id, session_id = sid, duration_ms, "session completed");
+                }
+            }
             let result = event
                 .get("result")
                 .and_then(Value::as_str)
@@ -230,6 +275,12 @@ async fn handle_event(app: &AppHandle, event: Value) {
             // not a "broken setup" signal, so it must NOT count toward the breaker
             // (otherwise cancelling a few tasks would trip it).
             let aborted = event.get("reason").and_then(Value::as_str) == Some("aborted");
+            // Observability #5: capture the run duration before the terminal forget.
+            if let Some(sid) = session_id {
+                if let Some(duration_ms) = orch.provider.run_duration_ms(sid) {
+                    tracing::info!(target: "nightcore", task_id, session_id = sid, duration_ms, aborted, "session ended (failed/aborted)");
+                }
+            }
             let message = event
                 .get("message")
                 .and_then(Value::as_str)
@@ -612,7 +663,7 @@ async fn dispatch_fix(
 fn reviewer_base_branch(app: &AppHandle) -> String {
     match app.state::<ProjectStore>().active() {
         Some(project) => worktree::base_branch(&PathBuf::from(&project.path)),
-        None => "main".to_string(),
+        None => worktree::DEFAULT_BASE_BRANCH.to_string(),
     }
 }
 
@@ -848,7 +899,9 @@ pub async fn run_task(
         return Err("no free slot (max concurrency reached)".to_string());
     }
 
-    let resolved = match resolve_worktree(&app, &id) {
+    // Resolve the run cwd off the active project + run mode (shared with the
+    // auto-loop `launch` so the manual and automatic paths run identically).
+    let resolved = match coordinator::resolve_worktree(&app, &id) {
         Ok(cwd) => cwd,
         Err(e) => {
             orch.slots.release(&id);
@@ -861,34 +914,16 @@ pub async fn run_task(
     let cwd = resolved.map(|r| r.path);
     let branch = is_worktree.then(|| worktree::branch_name(&id));
 
-    let updated = match store.mutate(&id, |task| {
-        task.status = TaskStatus::InProgress;
-        task.summary = None;
-        task.error = None;
-        // A fresh run clears the prior verification verdict (M4 §B).
-        task.verified = false;
-        task.review = None;
-        task.fix_attempts = 0;
-        // Worktree mode records the chip; main mode clears any stale prior branch.
-        task.branch = branch.clone();
-    }) {
-        Ok(task) => task,
-        Err(e) => {
-            orch.slots.release(&id);
-            return Err(e);
-        }
-    };
-    let _ = app.emit(TASK_EVENT, &updated);
+    // Mark in-progress + persist + emit before dispatch (shared with `launch`).
+    if let Err(e) = coordinator::mark_task_in_progress(&app, &id, branch.clone()) {
+        orch.slots.release(&id);
+        return Err(e);
+    }
 
     if let Err(e) = ensure_reader(&app).await {
-        tracing::error!(target: "nightcore", task_id = %id, error = %e, "sidecar spawn failed; task failed");
-        // Reset to Failed so the task doesn't strand in InProgress with no log.
-        if let Ok(task) = store.mutate(&id, |task| {
-            task.status = TaskStatus::Failed;
-            task.error = Some(e.clone());
-        }) {
-            let _ = app.emit(TASK_EVENT, &task);
-        }
+        // Reset to Failed so the task doesn't strand in InProgress with no log
+        // (shared `fail_task` marks + emits; a manual run does NOT feed the breaker).
+        coordinator::fail_task(&app, &id, &e);
         orch.slots.release(&id);
         return Err(e);
     }
@@ -1019,54 +1054,13 @@ pub async fn cancel_task(
         .or_else(|| store.get(&id).and_then(|t| t.session_id));
     if let Some(session_id) = session_id {
         orch.provider.interrupt(session_id).await?;
+    } else {
+        // No correlated session yet: the launch may be pending its first
+        // `session-started`. Evict that pending entry (concurrency #5) so a later,
+        // unrelated session can't mis-bind to this cancelled launch.
+        orch.provider.evict_pending(&id);
     }
     Ok(())
-}
-
-/// A resolved run cwd plus whether it is an isolated worktree (M4.6 §B). Mirrors
-/// `coordinator::ResolvedCwd` so the manual `run_task` and the auto-loop branch on
-/// run mode identically.
-struct ResolvedCwd {
-    path: PathBuf,
-    is_worktree: bool,
-}
-
-/// Resolve the run cwd for a manual run, branching on the task's `run_mode`,
-/// mirroring the coordinator's logic so `run_task` and the loop run identically.
-/// `Ok(None)` = run in the workspace root (no active project). `main` mode → the
-/// project ROOT with NO dirty-base refusal; `worktree` mode → allocate
-/// `nc/<taskId>` off a clean base (the clean-base guard stays in worktree mode).
-fn resolve_worktree(app: &AppHandle, task_id: &str) -> Result<Option<ResolvedCwd>, String> {
-    let projects = app.state::<ProjectStore>();
-    let Some(project) = projects.active() else {
-        return Ok(None);
-    };
-    let project_path = PathBuf::from(&project.path);
-
-    let run_mode = app
-        .state::<TaskStore>()
-        .get(task_id)
-        .map(|t| t.run_mode)
-        .unwrap_or_default();
-
-    if !run_mode.is_worktree() {
-        return Ok(Some(ResolvedCwd {
-            path: project_path,
-            is_worktree: false,
-        }));
-    }
-
-    if !worktree::is_worktree_clean(&project_path).unwrap_or(true) {
-        return Err(format!(
-            "base working tree at {} is dirty; commit or stash before running in worktree mode",
-            project_path.display()
-        ));
-    }
-    let dir = worktree::allocate(&project_path, task_id)?;
-    Ok(Some(ResolvedCwd {
-        path: dir,
-        is_worktree: true,
-    }))
 }
 
 #[cfg(test)]

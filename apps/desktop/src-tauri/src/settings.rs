@@ -317,6 +317,19 @@ impl SettingsStore {
         Ok(snapshot)
     }
 
+    /// Drop a project's override block and persist (data-integrity #4). Called when
+    /// a project is deleted so its `project_overrides[id]` entry can't orphan in the
+    /// settings file (and silently shape a future project that reuses the id). A
+    /// no-op when no override exists for the id.
+    pub fn drop_project_override(&self, project_id: &str) -> Result<(), String> {
+        let mut guard = self.settings.lock().expect("settings store poisoned");
+        if guard.project_overrides.remove(project_id).is_none() {
+            return Ok(()); // nothing to drop
+        }
+        let snapshot = guard.clone();
+        write_settings(&self.config_dir.join("settings.json"), &snapshot)
+    }
+
     /// Test-only seam: apply a patch to an in-memory store (used by other modules'
     /// tests — e.g. `task::build_new_task` — to set up Settings defaults without
     /// reaching into the private [`update`](Self::update)).
@@ -392,7 +405,10 @@ fn read_settings(path: &Path) -> Option<Settings> {
 
 fn write_settings(path: &Path, settings: &Settings) -> Result<(), String> {
     let json = serde_json::to_string_pretty(settings).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    // Atomic temp-file + rename (data-integrity #3): a crash/concurrent reader never
+    // sees a half-written settings file.
+    crate::store::write_atomic(path, json.as_bytes())
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 /// Read-only application metadata for the About page. Sourced from build-time
@@ -551,6 +567,31 @@ mod tests {
         let ov = merged.project_overrides.get("proj-1").expect("override exists");
         assert_eq!(ov.default_model.as_deref(), Some("haiku-4.5"));
         assert!(ov.default_effort.is_none(), "only the patched field is set");
+    }
+
+    #[test]
+    fn drop_project_override_removes_it_and_persists() {
+        // data-integrity #4: deleting a project drops its override so it can't orphan.
+        let (store, tmp) = temp_store();
+        store
+            .update(
+                serde_json::from_str(r#"{"projectId":"p1","defaultModel":"claude-sonnet-4-6"}"#)
+                    .unwrap(),
+            )
+            .expect("seed override");
+        assert!(store.get().project_overrides.contains_key("p1"));
+
+        store.drop_project_override("p1").expect("drop");
+        assert!(
+            !store.get().project_overrides.contains_key("p1"),
+            "override is gone from memory"
+        );
+        // Persisted: a reload no longer carries the orphaned override.
+        let reloaded = SettingsStore::load_from(tmp.path().join("config"));
+        assert!(!reloaded.get().project_overrides.contains_key("p1"));
+
+        // Dropping a non-existent override is a no-op (no error).
+        store.drop_project_override("ghost").expect("no-op drop");
     }
 
     #[test]

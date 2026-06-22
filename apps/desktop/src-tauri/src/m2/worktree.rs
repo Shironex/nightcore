@@ -25,6 +25,10 @@ use std::path::{Path, PathBuf};
 #[cfg(test)]
 use std::process::Command;
 
+/// The fallback base branch when `HEAD` can't be resolved to a named branch (e.g.
+/// detached HEAD). Used by [`base_branch`] and the reviewer's no-project fallback.
+pub const DEFAULT_BASE_BRANCH: &str = "main";
+
 /// The branch name for a task's run: `nc/<taskId>`.
 pub fn branch_name(task_id: &str) -> String {
     format!("nc/{task_id}")
@@ -100,8 +104,41 @@ pub fn allocate(project_path: &Path, task_id: &str) -> Result<PathBuf, String> {
     } else {
         vec!["worktree", "add", &dir_str, "-b", &branch]
     };
-    git(project_path, &args)?;
+    // Concurrency #3: two worktree-mode launches racing the auto-loop both pass the
+    // `is_worktree_clean` check, then both run `git worktree add`. They target
+    // DISJOINT dirs (`<base>/<task_id>`), so they never clobber, but git serializes
+    // worktree admin behind a `.git/worktrees` lock and the loser fails transiently
+    // ("File exists"/"is already locked"). Treat that as retryable with a short
+    // backoff so a concurrent allocate isn't a spurious launch failure.
+    git_worktree_add_retrying(project_path, &args)?;
     Ok(dir)
+}
+
+/// Run `git worktree add` with a small bounded retry on git's transient
+/// worktree-lock contention (concurrency #3). A non-lock error fails immediately
+/// (only lock contention is retried); the dir is disjoint per task, so a retry can
+/// only succeed once the other allocate releases the admin lock.
+fn git_worktree_add_retrying(project_path: &Path, args: &[&str]) -> Result<String, String> {
+    const MAX_ATTEMPTS: usize = 5;
+    let mut last_err = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match git(project_path, args) {
+            Ok(out) => return Ok(out),
+            Err(e) => {
+                let transient = e.contains("already locked")
+                    || e.contains("is already registered")
+                    || e.contains("cannot lock")
+                    || e.contains("File exists");
+                if !transient || attempt + 1 == MAX_ATTEMPTS {
+                    return Err(e);
+                }
+                tracing::warn!(target: "nightcore::worktree", attempt = attempt + 1, error = %e, "worktree add hit transient lock contention; retrying");
+                std::thread::sleep(std::time::Duration::from_millis(50 * (attempt as u64 + 1)));
+                last_err = e;
+            }
+        }
+    }
+    Err(last_err)
 }
 
 /// Remove a task's worktree (the `git worktree remove --force`). Refuses any path
@@ -198,7 +235,7 @@ pub fn base_branch(project_path: &Path) -> String {
     git(project_path, &["rev-parse", "--abbrev-ref", "HEAD"])
         .ok()
         .filter(|b| !b.is_empty() && b != "HEAD")
-        .unwrap_or_else(|| "main".to_string())
+        .unwrap_or_else(|| DEFAULT_BASE_BRANCH.to_string())
 }
 
 /// Delete a task's `nc/<taskId>` branch (used after a successful merge when policy
@@ -290,15 +327,29 @@ pub fn worktree_status(dir: &Path, task_id: &str, base: &str) -> WorktreeStatus 
 /// reported with safe defaults rather than dropped or erroring.
 pub fn list_worktree_statuses(project_path: &Path) -> Vec<WorktreeStatus> {
     let base = base_branch(project_path);
-    let mut out = Vec::new();
-    for task_id in list_worktree_task_ids(project_path) {
-        let dir = worktree_path(project_path, &task_id);
-        if !dir.exists() {
-            continue;
-        }
-        out.push(worktree_status(&dir, &task_id, &base));
-    }
-    out
+    let dirs: Vec<(String, PathBuf)> = list_worktree_task_ids(project_path)
+        .into_iter()
+        .map(|id| (id.clone(), worktree_path(project_path, &id)))
+        .filter(|(_, dir)| dir.exists())
+        .collect();
+
+    // Perf #5: each worktree status spawns two independent `git` processes; with N
+    // worktrees the sequential walk is O(N) round-trips. Read them CONCURRENTLY on
+    // scoped threads (one per worktree) and recombine in the original order. A
+    // scoped thread borrows `base`/`dirs` without `'static`/clone churn. The git
+    // reads are already tolerant (a failed read degrades to safe defaults), so one
+    // slow/locked worktree can't stall or break the others.
+    let base = base.as_str();
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = dirs
+            .iter()
+            .map(|(task_id, dir)| scope.spawn(move || worktree_status(dir, task_id, base)))
+            .collect();
+        handles
+            .into_iter()
+            .map(|h| h.join().expect("worktree status thread panicked"))
+            .collect()
+    })
 }
 
 /// Startup reconciliation: remove worktrees whose task id is no longer live, then
@@ -603,6 +654,33 @@ mod tests {
             "from-base"
         );
         assert!(is_worktree_clean(&repo).expect("status"), "aborted merge leaves a clean tree");
+    }
+
+    #[test]
+    fn task_delete_cleanup_removes_worktree_and_branch() {
+        // C8: deleting a worktree-mode task must leave no orphaned worktree dir or
+        // `nc/<id>` branch. This exercises the remove-then-delete-branch sequence
+        // `delete_task`'s cleanup runs (the AppHandle-gated wrapper is thin glue).
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        allocate(&repo, "task-1").expect("allocate");
+        std::fs::write(worktree_path(&repo, "task-1").join("f.txt"), "x").expect("write");
+        commit(&repo, "task-1", "work").expect("commit");
+        assert!(branch_exists(&repo, "task-1"), "the nc/ branch exists after a run");
+
+        // The cleanup order: remove the worktree (frees its checked-out branch),
+        // then delete the branch.
+        remove(&repo, "task-1").expect("remove worktree");
+        delete_branch(&repo, "task-1").expect("delete branch");
+
+        assert!(list_worktree_task_ids(&repo).is_empty(), "no orphaned worktree dir");
+        assert!(!branch_exists(&repo, "task-1"), "no orphaned nc/ branch");
+    }
+
+    /// Whether `nc/<task_id>` exists in the repo (test helper).
+    fn branch_exists(repo: &Path, task_id: &str) -> bool {
+        run_in(repo, &["rev-parse", "--verify", "--quiet", &branch_name(task_id)])
     }
 
     #[test]
