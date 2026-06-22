@@ -276,8 +276,16 @@ pub fn list_worktree_task_ids(project_path: &Path) -> Vec<String> {
 
 /// A live Nightcore worktree's status for the monitoring command (M4.6 §C). One
 /// per `nc/<taskId>` worktree on disk; the web groups these by `branch`.
+// Exported to TS as `WorktreeInfo` (the board's name for this read-only monitor
+// shape) so the generated binding drops in for the prior hand-mirror unchanged.
+// `ts-rs` is a dev-dependency, so the codegen derive + attrs are `cfg(test)`-gated.
 #[derive(Debug, Clone, serde::Serialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(ts_rs::TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(
+    test,
+    ts(export, rename = "WorktreeInfo", export_to = "WorktreeInfo.ts")
+)]
 pub struct WorktreeStatus {
     /// The worktree's branch (`nc/<taskId>`).
     pub branch: String,

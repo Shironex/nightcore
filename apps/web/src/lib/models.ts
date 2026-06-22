@@ -10,7 +10,7 @@
 // `listModels()` descriptors (§G) are deferred; until then the curated known set
 // is derived from the contract enum rather than re-listed here.
 
-import { EffortLevelSchema, KnownModelSchema, type EffortLevel, type KnownModel } from '@nightcore/contracts';
+import { KnownModelSchema, type EffortLevel, type KnownModel } from '@nightcore/contracts';
 
 /** A selectable model in the per-task picker / Settings default. */
 export interface ModelOption {

@@ -14,6 +14,9 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager, State};
+// `ts-rs` is a dev-dependency; the codegen derive is gated to `cfg(test)`.
+#[cfg(test)]
+use ts_rs::TS;
 
 use crate::store::TaskStore;
 
@@ -25,7 +28,9 @@ pub const PROJECT_EVENT: &str = "nc:project";
 /// A known project: a git repo Nightcore can drive. Field names mirror the
 /// Phase 2 contract and serialize camelCase for the TS bridge and on-disk JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "Project.ts"))]
 pub struct Project {
     pub id: String,
     pub name: String,

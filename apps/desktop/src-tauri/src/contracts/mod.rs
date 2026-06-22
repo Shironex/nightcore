@@ -22,6 +22,12 @@
 mod generated;
 pub use generated::*;
 
+// The inverse direction: Rust serde structs → the web's TS bindings (`ts-rs`).
+// Test-only — the `#[ts(export)]` codegen + its drift guard run under `cargo test`,
+// never in the shipped binary.
+#[cfg(test)]
+mod ts_bindings;
+
 #[cfg(test)]
 mod tests {
     use super::*;

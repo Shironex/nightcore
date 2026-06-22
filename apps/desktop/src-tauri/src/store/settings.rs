@@ -15,11 +15,19 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, State};
+// `ts-rs` is a dev-dependency; the codegen derive + the `RunMode` narrowing it
+// references are gated to `cfg(test)`.
+#[cfg(test)]
+use crate::task::RunMode;
+#[cfg(test)]
+use ts_rs::TS;
 
 /// Global settings + per-project overrides. Field names mirror the Phase 2
 /// contract and serialize camelCase for the TS bridge and on-disk JSON.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "Settings.ts"))]
 pub struct Settings {
     pub default_model: String,
     pub default_effort: String,
@@ -37,7 +45,11 @@ pub struct Settings {
     /// M4.6: the default run mode new tasks inherit — `"main"` (default) or
     /// `"worktree"`. Per-project overridable. A new task's `run_mode` is this value
     /// unless the create call passes an explicit one.
+    // Stored as a free string (fail-safe: an unknown value resolves to Main), but
+    // the wire values are exactly the [`RunMode`] vocabulary — narrow the generated
+    // TS to `RunMode` so the Settings form's run-mode control type-checks.
     #[serde(default = "default_run_mode_value")]
+    #[cfg_attr(test, ts(as = "RunMode"))]
     pub default_run_mode: String,
     /// SDK-guardrails: the default max conversation turns new tasks inherit when
     /// they don't carry an explicit per-task ceiling. `None` ⇒ fall through to the
@@ -86,21 +98,32 @@ impl Default for Settings {
 
 /// A per-project override: any subset of the run-shaping fields. Absent fields
 /// fall back to the global value.
+// A per-project override carries only the keys the project set, so every field is
+// an OPTIONAL TS key (`field?: T`), matching the prior hand-mirror (none nullable).
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "SettingsOverride.ts"))]
 pub struct SettingsOverride {
+    #[cfg_attr(test, ts(optional))]
     pub default_model: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub default_effort: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub max_concurrency: Option<u8>,
+    #[cfg_attr(test, ts(optional))]
     pub permission_mode: Option<String>,
     /// M4.6: per-project default run mode (`"main"` | `"worktree"`).
+    #[cfg_attr(test, ts(optional, as = "Option<RunMode>"))]
     pub default_run_mode: Option<String>,
     /// SDK-guardrails: per-project default max-turns ceiling (overrides the global
     /// `max_turns` for this project's new tasks).
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub max_turns: Option<u32>,
     /// SDK-guardrails: per-project default max-budget-USD ceiling.
     #[serde(default)]
+    #[cfg_attr(test, ts(optional))]
     pub max_budget_usd: Option<f64>,
 }
 
@@ -143,24 +166,39 @@ impl SettingsOverride {
 
 /// A partial update. A `projectId` targets a per-project override; otherwise the
 /// patch merges into the global block. Every field optional.
+// The web sends only the keys it changed, so every field is an OPTIONAL TS key
+// (`field?: T`), matching the prior hand-mirror (none nullable). Deserialize-only;
+// ts-rs derives `TS` without a `Serialize` impl.
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "SettingsPatch.ts"))]
 pub struct SettingsPatch {
+    #[cfg_attr(test, ts(optional))]
     pub project_id: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub default_model: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub default_effort: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub max_concurrency: Option<u8>,
+    #[cfg_attr(test, ts(optional))]
     pub permission_mode: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub cleanup_worktrees: Option<bool>,
+    #[cfg_attr(test, ts(optional))]
     pub notify_on_complete: Option<bool>,
     /// M4.6: default run mode (`"main"` | `"worktree"`). With a `projectId` it lands
     /// in that project's override; without one, the global default.
+    #[cfg_attr(test, ts(optional, as = "Option<RunMode>"))]
     pub default_run_mode: Option<String>,
     /// SDK-guardrails: default max-turns ceiling. With a `projectId` it lands in
     /// that project's override; without one, the global default.
+    #[cfg_attr(test, ts(optional))]
     pub max_turns: Option<u32>,
     /// SDK-guardrails: default max-budget-USD ceiling. With a `projectId` it lands
     /// in that project's override; without one, the global default.
+    #[cfg_attr(test, ts(optional))]
     pub max_budget_usd: Option<f64>,
 }
 
@@ -421,7 +459,9 @@ fn write_settings(path: &Path, settings: &Settings) -> Result<(), String> {
 /// constants (Cargo package version + a compiled-in repo URL) so the UI shows
 /// real values instead of hardcoded literals.
 #[derive(Debug, Clone, Serialize)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "AppInfo.ts"))]
 pub struct AppInfo {
     /// The app version (the `[package] version` in `Cargo.toml`).
     pub version: String,

@@ -37,3 +37,9 @@ which = "6"
 
 [dev-dependencies]
 tempfile = "3"
+# Rust→TS contract codegen: `#[derive(TS)]` exports the bindings under
+# `apps/web/src/lib/generated/` during `cargo test` (see `contracts/ts_bindings.rs`),
+# the inverse of the zod→Rust sidecar codegen. The CI drift guard is "regenerate +
+# assert no git diff". Default features include `serde-compat` so serde attrs
+# (rename_all/skip_serializing_if/default) shape the TS exactly like the wire.
+ts-rs = "12"

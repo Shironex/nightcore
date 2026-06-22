@@ -8,6 +8,11 @@
 
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
+// `ts-rs` is a DEV-dependency (the Rust→TS codegen runs only under `cargo test`),
+// so its derive + attributes are gated behind `cfg(test)` via `cfg_attr`. The
+// shipped binary never links it.
+#[cfg(test)]
+use ts_rs::TS;
 
 use tauri::{AppHandle, Emitter, State};
 
@@ -21,7 +26,9 @@ pub const TASK_EVENT: &str = "nc:task";
 /// reserved in M1 (defined, not yet produced): the auto-loop and interactive
 /// approval that drive them arrive in M2.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, ts(export, export_to = "TaskStatus.ts"))]
 pub enum TaskStatus {
     Backlog,
     Ready,
@@ -41,7 +48,9 @@ pub enum TaskStatus {
 /// pre-M4 behavior; `research`/`decompose` are reserved (defined, not yet
 /// produced — the M1 `Ready`/`WaitingApproval` pattern).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, ts(export, export_to = "TaskKind.ts"))]
 pub enum TaskKind {
     #[default]
     Build,
@@ -69,7 +78,9 @@ impl TaskKind {
 /// and runs the full gate → commit → merge flow. A legacy task with no `run_mode`
 /// loads as `Main` (serde default), so worktrees are opt-in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "snake_case")]
+#[cfg_attr(test, ts(export, export_to = "RunMode.ts"))]
 pub enum RunMode {
     #[default]
     Main,
@@ -84,10 +95,37 @@ impl RunMode {
     }
 }
 
+/// The four UI permission modes (M4.7 §A1) the surface offers per task and as the
+/// resolved project/global default. This is the STUDIO vocabulary — distinct from
+/// the engine's SDK `permissionMode` (`@nightcore/contracts` `PermissionMode`),
+/// which these map to via [`crate::settings::sdk_permission_mode`]. It exists
+/// purely to narrow the generated TS for the `permission_mode` fields (the Rust
+/// store keeps them as free `Option<String>` so a legacy/unknown value still
+/// loads); the wire strings are these kebab/word forms verbatim.
+///
+/// This type exists ONLY to drive the Rust→TS codegen (the `#[ts(as = "…")]`
+/// narrowing on the `permission_mode` fields), so it is `cfg(test)`-only — the
+/// shipped binary never constructs it (the store reads/writes the free string).
+#[cfg(test)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[ts(export, export_to = "PermissionMode.ts")]
+pub enum PermissionMode {
+    #[serde(rename = "bypass")]
+    Bypass,
+    #[serde(rename = "auto-accept")]
+    AutoAccept,
+    #[serde(rename = "ask")]
+    Ask,
+    #[serde(rename = "plan")]
+    Plan,
+}
+
 /// One unit of orchestrated work. Field names mirror the M1 contract exactly and
 /// serialize camelCase for the TS bridge and the on-disk JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "Task.ts"))]
 pub struct Task {
     pub id: String,
     pub title: String,
@@ -105,7 +143,11 @@ pub struct Task {
     /// M4.7 §A4: per-task permission-mode override (`bypass`/`auto-accept`/`ask`/
     /// `plan`). `None` ⇒ inherit the resolved default (project override → global).
     /// This is what lets a single task opt OUT of global bypass (e.g. `ask`/`plan`).
+    // Stored as a free string (a legacy/unknown value still loads), but the wire
+    // values are exactly the [`PermissionMode`] vocabulary — narrow the generated
+    // TS to `PermissionMode | null` so the board's picker + label map type-check.
     #[serde(default)]
+    #[cfg_attr(test, ts(as = "Option<PermissionMode>"))]
     pub permission_mode: Option<String>,
     /// The worktree branch (`nc/<taskId>`) for this task's run, set by the M2
     /// coordinator once a worktree is allocated. `None` until then.
@@ -237,25 +279,44 @@ impl Task {
 
 /// A partial update to a task — every field optional so the webview can patch
 /// just what changed. Absent fields are left untouched.
+// The web CONSTRUCTS this patch and only ever sends the keys it changed, so every
+// field is an OPTIONAL key in TS (`field?`), not a required `field: T | null`.
+// `#[ts(optional)]` ⇒ `field?: T`; `#[ts(optional = nullable)]` ⇒ `field?: T | null`
+// (matching the prior hand-mirror exactly, including the `model`/`effort` etc.
+// fields the bridge declared as nullable-optional). ts-rs derives `TS` without a
+// `Serialize` impl, so deserialize-only patch types still export.
 #[derive(Debug, Default, Deserialize)]
+#[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "TaskPatch.ts"))]
 pub struct TaskPatch {
+    #[cfg_attr(test, ts(optional))]
     pub title: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub description: Option<String>,
+    #[cfg_attr(test, ts(optional))]
     pub status: Option<TaskStatus>,
+    #[cfg_attr(test, ts(optional))]
     pub dependencies: Option<Vec<String>>,
+    #[cfg_attr(test, ts(optional = nullable))]
     pub model: Option<String>,
     /// M4.7 §E: per-task reasoning effort, set from the create/edit picker.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub effort: Option<String>,
     /// M4.7 §A4: per-task permission-mode override, set from the create/edit picker.
+    #[cfg_attr(test, ts(optional = nullable, as = "Option<PermissionMode>"))]
     pub permission_mode: Option<String>,
     /// M4: the task kind, set from the create/edit picker.
+    #[cfg_attr(test, ts(optional))]
     pub kind: Option<TaskKind>,
     /// M4.6: the run mode, editable pre-run from the create/edit picker.
+    #[cfg_attr(test, ts(optional))]
     pub run_mode: Option<RunMode>,
     /// SDK-guardrails: per-task max-turns override, editable pre-run.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub max_turns: Option<u32>,
     /// SDK-guardrails: per-task max-budget-USD override, editable pre-run.
+    #[cfg_attr(test, ts(optional = nullable))]
     pub max_budget_usd: Option<f64>,
 }
 
