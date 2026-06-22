@@ -13,7 +13,6 @@
   "types": "./dist/index.d.ts",
   "dependencies": {
     "@nightcore/contracts": "workspace:*",
-    "@nightcore/config": "workspace:*",
     "@nightcore/storage": "workspace:*",
     "@nightcore/shared": "workspace:*",
     "@nightcore/tools": "workspace:*",

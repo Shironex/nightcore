@@ -96,8 +96,3 @@ export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   ApprovePermissionCommand,
 ]);
 export type SurfaceCommand = z.infer<typeof SurfaceCommandSchema>;
-
-export type SurfaceCommandOf<T extends SurfaceCommand['type']> = Extract<
-  SurfaceCommand,
-  { type: T }
->;
