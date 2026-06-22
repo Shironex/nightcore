@@ -15,10 +15,3 @@ export function sessionsDir(home = nightcoreHome()): string {
 export function projectDir(projectRoot: string): string {
   return path.join(projectRoot, '.nightcore');
 }
-
-/** Expand a leading `~` to the user's home directory. */
-export function expandHome(p: string): string {
-  if (p === '~') return os.homedir();
-  if (p.startsWith('~/')) return path.join(os.homedir(), p.slice(2));
-  return p;
-}

@@ -73,6 +73,3 @@ export function createLogger(level: LogLevel = 'info', scope = 'nightcore'): Log
     child: (childScope) => createLogger(level, `${scope}:${childScope}`),
   };
 }
-
-/** Default logger instance; reconfigure per-app with {@link createLogger}. */
-export const logger = createLogger();

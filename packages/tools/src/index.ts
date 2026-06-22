@@ -16,7 +16,6 @@ export {
   gitDiffTool,
   parseGitStatus,
   describeStatus,
-  type GitStatusEntry,
 } from './git.js';
 export { runCommandTool } from './shell.js';
 
