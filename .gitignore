@@ -15,6 +15,9 @@ apps/desktop/src-tauri/gen/
 # Generated icons are reproducible from icons/source.png via `tauri icon`
 apps/desktop/src-tauri/icons/android/
 apps/desktop/src-tauri/icons/ios/
+# Compiled sidecar (Tauri externalBin) — a build artifact, reproduced by
+# `bun run --filter @nightcore/sidecar compile`
+apps/desktop/src-tauri/binaries/
 
 # Nightcore local state
 .nightcore/
