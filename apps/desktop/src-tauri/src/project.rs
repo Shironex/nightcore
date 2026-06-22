@@ -200,10 +200,13 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     }
 }
 
-/// Pretty-print a value to a JSON file (write-through persistence).
+/// Pretty-print a value to a JSON file (write-through persistence). Atomic
+/// temp-file + rename (data-integrity #3): a crash/concurrent reader never sees a
+/// half-written registry/active file.
 fn write_json<T: Serialize>(path: &Path, value: &T) -> Result<(), String> {
     let json = serde_json::to_string_pretty(value).map_err(|e| e.to_string())?;
-    std::fs::write(path, json).map_err(|e| format!("failed to write {}: {e}", path.display()))
+    crate::store::write_atomic(path, json.as_bytes())
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))
 }
 
 /// Current time as an ISO8601 / RFC3339 UTC string, without pulling in `chrono`:
@@ -341,6 +344,15 @@ pub fn delete_project(
     let was_active = store.active().map(|p| p.id) == Some(id.clone());
     if !store.remove(&id)? {
         return Err(format!("no project with id {id}"));
+    }
+    // Data-integrity #4: drop the deleted project's settings override so it can't
+    // orphan in settings.json (best-effort — a persist failure here must not undo
+    // the registry removal, so it's logged, not propagated).
+    if let Err(e) = app
+        .state::<crate::settings::SettingsStore>()
+        .drop_project_override(&id)
+    {
+        tracing::warn!(target: "nightcore::project", project_id = %id, error = %e, "failed to drop project settings override on delete");
     }
     // Deleting the active project clears the board.
     if was_active {

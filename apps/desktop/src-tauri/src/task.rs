@@ -415,6 +415,15 @@ pub fn create_task(
         },
     );
     store.upsert(&task)?;
+    // CRUD observability (#10): id + run-shaping metadata only — never the title or
+    // description (those can carry user content; the PII discipline stays clean).
+    tracing::info!(
+        target: "nightcore",
+        task_id = %task.id,
+        kind = task.kind.as_wire(),
+        run_mode = ?task.run_mode,
+        "task created"
+    );
     let _ = app.emit(TASK_EVENT, &task);
     Ok(task)
 }
@@ -429,18 +438,50 @@ pub fn update_task(
     patch: TaskPatch,
 ) -> Result<Task, String> {
     let task = store.mutate(&id, |task| patch.apply(task))?;
+    tracing::debug!(target: "nightcore", task_id = %id, "task updated");
     let _ = app.emit(TASK_EVENT, &task);
     Ok(task)
 }
 
 /// Delete a task and remove its JSON file. Also removes the task's transcript
-/// directory (M4.7 §C) so a deleted task leaves no orphaned transcript. No-op
-/// event; the webview drops the id on the command's success.
+/// directory (M4.7 §C) and, when the task ran in worktree mode, its `nc/<id>`
+/// worktree dir + branch (C8 — mirrors the `merge_task` cleanup) so a deleted task
+/// leaves no orphaned worktree/branch behind. No-op event; the webview drops the id
+/// on the command's success.
 #[tauri::command]
 pub fn delete_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> Result<(), String> {
+    // Capture the task before removing it so we know whether it had a worktree to
+    // clean up (a `branch` chip is only set for worktree-mode runs).
+    let task = store.get(&id);
     store.remove(&id)?;
     crate::transcript::remove_transcript(&app, &id);
+    cleanup_task_worktree(&app, &id, task.as_ref());
+    tracing::info!(target: "nightcore", task_id = %id, "task deleted");
     Ok(())
+}
+
+/// Best-effort cleanup of a deleted task's `nc/<id>` worktree + branch (C8). Only
+/// fires for a worktree-mode task with an active project; `main`-mode tasks have no
+/// worktree/branch. Mirrors the `merge_task` cleanup order (remove the worktree
+/// first so its checked-out branch is free to delete). Failures are logged, never
+/// surfaced — the task JSON is already gone, so delete must still succeed.
+fn cleanup_task_worktree(app: &AppHandle, id: &str, task: Option<&Task>) {
+    use tauri::Manager;
+    // Nothing to clean for a main-mode (or vanished) task — it never had a branch.
+    let Some(task) = task else { return };
+    if !task.run_mode.is_worktree() {
+        return;
+    }
+    let Some(project) = app.state::<crate::project::ProjectStore>().active() else {
+        return;
+    };
+    let project_path = std::path::PathBuf::from(&project.path);
+    if let Err(e) = crate::m2::worktree::remove(&project_path, id) {
+        tracing::warn!(target: "nightcore", task_id = id, error = %e, "delete: worktree remove failed");
+    }
+    if let Err(e) = crate::m2::worktree::delete_branch(&project_path, id) {
+        tracing::warn!(target: "nightcore", task_id = id, error = %e, "delete: branch delete failed");
+    }
 }
 
 /// Parse a wire status string (snake_case, as the bridge sends it) into a
@@ -481,6 +522,7 @@ pub fn move_task(
     status: String,
 ) -> Result<Task, String> {
     let task = move_task_inner(&store, &id, &status)?;
+    tracing::info!(target: "nightcore", task_id = %id, status = %status, "task moved");
     let _ = app.emit(TASK_EVENT, &task);
     Ok(task)
 }
@@ -492,7 +534,19 @@ fn move_task_inner(store: &TaskStore, id: &str, status: &str) -> Result<Task, St
     if status == TaskStatus::InProgress {
         return Err("cannot move a task into In Progress — run it instead".to_string());
     }
-    store.mutate(id, |task| task.status = status)
+    // Refuse to drag a live (in-flight / verifying) run between columns — that
+    // transition is owned by the coordinator, not a manual move. The check shares
+    // the write's lock acquisition so it can't race a concurrent transition.
+    store.mutate_if(
+        id,
+        |task| match task.status {
+            TaskStatus::InProgress | TaskStatus::Verifying => Err(
+                "cannot move a running task — cancel it first".to_string(),
+            ),
+            _ => Ok(()),
+        },
+        |task| task.status = status,
+    )
 }
 
 #[cfg(test)]
@@ -1006,6 +1060,19 @@ mod tests {
         assert!(err.contains("In Progress"), "error explains the guard");
         // The task is untouched.
         assert_eq!(store.get(&id).expect("get").status, TaskStatus::Ready);
+    }
+
+    #[test]
+    fn move_task_inner_rejects_moving_a_running_task() {
+        // A live run (in-flight / verifying) can't be dragged between columns — that
+        // transition belongs to the coordinator. The guard shares the write lock.
+        for status in [TaskStatus::InProgress, TaskStatus::Verifying] {
+            let (store, _tmp) = temp_store();
+            let id = seed(&store, status, &[]);
+            let err = move_task_inner(&store, &id, "backlog").expect_err("must reject");
+            assert!(err.contains("running"), "error explains the running-task guard: {err}");
+            assert_eq!(store.get(&id).expect("get").status, status, "task untouched");
+        }
     }
 
     #[test]

@@ -66,6 +66,7 @@ pub fn commit_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> R
     if !committed {
         return Err("nothing to commit".to_string());
     }
+    tracing::info!(target: "nightcore", task_id = %id, worktree = task.run_mode.is_worktree(), "committed task changes");
     let updated = store.mutate(&id, |t| {
         t.committed = true;
         t.conflict = false;
@@ -108,6 +109,7 @@ pub fn merge_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> Re
         }
     }
     let base = worktree::base_branch(&project_path);
+    tracing::info!(target: "nightcore", task_id = %id, base = %base, "merging task branch into base");
 
     match worktree::merge(&project_path, &id, &base)? {
         MergeOutcome::Merged => {
@@ -116,6 +118,7 @@ pub fn merge_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> Re
                 let _ = worktree::remove(&project_path, &id);
                 let _ = worktree::delete_branch(&project_path, &id);
             }
+            tracing::info!(target: "nightcore", task_id = %id, base = %base, cleaned_up = cleanup, "merge succeeded");
             let updated = store.mutate(&id, |t| {
                 t.merged = true;
                 t.conflict = false;
@@ -124,6 +127,7 @@ pub fn merge_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> Re
             Ok(())
         }
         MergeOutcome::Conflict => {
+            tracing::warn!(target: "nightcore", task_id = %id, base = %base, "merge hit a conflict; left clean (not forced)");
             let updated = store.mutate(&id, |t| {
                 t.conflict = true;
                 t.error = Some(format!(

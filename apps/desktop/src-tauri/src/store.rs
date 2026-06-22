@@ -14,6 +14,18 @@ use std::sync::Mutex;
 
 use crate::task::Task;
 
+/// Whether a task id is a safe filename component (defence in depth against path
+/// traversal at the `<id>.json` join). Ids are server-minted uuids, but the id
+/// also arrives from the wire on commands; an id carrying `.` / `/` / `\` (or any
+/// path separator) could escape the tasks dir, so reject anything that isn't a
+/// flat `[A-Za-z0-9_-]+` token. Empty is rejected too. Shared with `transcript.rs`.
+pub(crate) fn is_safe_task_id(id: &str) -> bool {
+    !id.is_empty()
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
 /// Workspace root (`apps/desktop/src-tauri` → up three), the same cwd resolution
 /// M0 used for the sidecar. M1 keeps tasks under this project's `.nightcore/`.
 pub fn workspace_root() -> PathBuf {
@@ -92,12 +104,18 @@ impl TaskStore {
         *self.dir.lock().expect("task store poisoned") = dir;
     }
 
-    /// Path to a task's JSON file under the current target dir.
-    fn path_for(&self, id: &str) -> PathBuf {
-        self.dir
+    /// Path to a task's JSON file under the current target dir. Rejects an id that
+    /// is not a safe flat filename component (path-traversal defence in depth) so a
+    /// crafted id can never join outside the tasks dir.
+    fn path_for(&self, id: &str) -> Result<PathBuf, String> {
+        if !is_safe_task_id(id) {
+            return Err(format!("invalid task id: {id}"));
+        }
+        Ok(self
+            .dir
             .lock()
             .expect("task store poisoned")
-            .join(format!("{id}.json"))
+            .join(format!("{id}.json")))
     }
 
     /// The current tasks directory (the active project's `.nightcore/tasks/`). Used
@@ -128,37 +146,64 @@ impl TaskStore {
 
     /// Insert or replace a task and write its file. Bumping `updated_at` is the
     /// caller's responsibility (see [`mutate`](Self::mutate)).
+    ///
+    /// Holds the `tasks` mutex across the whole write so that a concurrent
+    /// `mutate`/`upsert` on the same id can't interleave its read-modify-write
+    /// against this one (C7 / concurrency #2). The in-memory map is only updated
+    /// after the disk write succeeds, so a failed persist leaves the prior record
+    /// authoritative in memory rather than diverging from disk.
     pub fn upsert(&self, task: &Task) -> Result<(), String> {
+        let mut guard = self.tasks.lock().expect("task store poisoned");
         self.write_file(task)?;
-        self.tasks
-            .lock()
-            .expect("task store poisoned")
-            .insert(task.id.clone(), task.clone());
+        guard.insert(task.id.clone(), task.clone());
         Ok(())
     }
 
-    /// Apply `f` to a copy of the task, bump `updated_at`, then persist and store
-    /// it. Returns the updated task. Errors if the id is unknown.
+    /// Apply `f` to the current task, bump `updated_at`, then persist and store it
+    /// atomically. Returns the updated task. Errors if the id is unknown.
+    ///
+    /// The whole read-modify-write runs under one `tasks` lock acquisition (C7):
+    /// the read-clone, the mutation, the disk write, and the in-memory replace are
+    /// a single critical section, so the sidecar reader and a Tauri handler can no
+    /// longer each persist a full record and clobber the other's fields.
     pub fn mutate<F>(&self, id: &str, f: F) -> Result<Task, String>
     where
         F: FnOnce(&mut Task),
     {
-        let mut task = self
+        self.mutate_if(id, |_| Ok(()), f)
+    }
+
+    /// Like [`mutate`](Self::mutate) but gated on a precondition: `check` is run
+    /// against the current task under the same lock that performs the write, and a
+    /// `Err` short-circuits without mutating. This folds the common
+    /// check-then-act pattern (read status, decide, write) into ONE lock
+    /// acquisition (concurrency #2) so a status check and the write it guards can't
+    /// race a concurrent transition between them.
+    pub fn mutate_if<C, F>(&self, id: &str, check: C, f: F) -> Result<Task, String>
+    where
+        C: FnOnce(&Task) -> Result<(), String>,
+        F: FnOnce(&mut Task),
+    {
+        let mut guard = self.tasks.lock().expect("task store poisoned");
+        let mut task = guard
             .get(id)
+            .cloned()
             .ok_or_else(|| format!("no task with id {id}"))?;
+        check(&task)?;
         f(&mut task);
         task.updated_at = crate::task::now_ms();
-        self.upsert(&task)?;
+        self.write_file(&task)?;
+        guard.insert(task.id.clone(), task.clone());
         Ok(task)
     }
 
     /// Remove a task from memory and delete its file. Idempotent on a missing file.
+    /// Holds the `tasks` lock across the memory-remove + disk-delete so it can't
+    /// interleave with a concurrent `upsert`/`mutate` on the same id.
     pub fn remove(&self, id: &str) -> Result<(), String> {
-        self.tasks
-            .lock()
-            .expect("task store poisoned")
-            .remove(id);
-        let path = self.path_for(id);
+        let path = self.path_for(id)?;
+        let mut guard = self.tasks.lock().expect("task store poisoned");
+        guard.remove(id);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -166,12 +211,49 @@ impl TaskStore {
         }
     }
 
-    /// Write one task as pretty JSON to its file.
+    /// Write one task as pretty JSON to its file via a temp-file + atomic `rename`,
+    /// so a crash or concurrent reader never sees a half-written task file
+    /// (data-integrity #3). The temp file lives in the same dir as the target so the
+    /// rename stays on one filesystem (a cross-device rename would fail).
     fn write_file(&self, task: &Task) -> Result<(), String> {
+        let path = self.path_for(&task.id)?;
         let json = serde_json::to_string_pretty(task).map_err(|e| e.to_string())?;
-        std::fs::write(self.path_for(&task.id), json)
+        write_atomic(&path, json.as_bytes())
             .map_err(|e| format!("failed to persist task {}: {e}", task.id))
     }
+}
+
+/// Write `bytes` to `path` atomically: write to a sibling temp file, then `rename`
+/// it over the target. A reader either sees the old file or the new one, never a
+/// truncated write (data-integrity #3). The temp file is removed on a write/persist
+/// failure so a crash mid-write doesn't litter the dir.
+pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let dir = path.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("tmp");
+    // A unique-ish sibling temp name (pid + nanos) so two concurrent writers to
+    // different files in the same dir don't collide.
+    let nonce = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let tmp = dir.join(format!(".{file_name}.{}.{nonce}.tmp", std::process::id()));
+
+    let write_then_rename = || -> std::io::Result<()> {
+        let mut file = std::fs::File::create(&tmp)?;
+        file.write_all(bytes)?;
+        file.sync_all()?;
+        drop(file);
+        std::fs::rename(&tmp, path)
+    };
+    let result = write_then_rename();
+    if result.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    result
 }
 
 #[cfg(test)]
@@ -265,6 +347,123 @@ mod tests {
         let (store, _tmp) = temp_store();
         let err = store.mutate("nope", |_| {}).expect_err("must error");
         assert!(err.contains("nope"), "error should name the missing id");
+    }
+
+    #[test]
+    fn mutate_if_runs_check_and_write_under_one_lock() {
+        // The precondition variant gates the write on `check`; a failing check
+        // short-circuits without mutating, and a passing one applies `f` (C7 / #2).
+        let (store, _tmp) = temp_store();
+        let task = Task::new("t".into(), String::new());
+        let id = task.id.clone();
+        store.upsert(&task).expect("upsert");
+
+        // A failing precondition leaves the task untouched and surfaces the error.
+        let err = store
+            .mutate_if(
+                &id,
+                |t| {
+                    if t.status == TaskStatus::Backlog {
+                        Err("already backlog".to_string())
+                    } else {
+                        Ok(())
+                    }
+                },
+                |t| t.status = TaskStatus::Done,
+            )
+            .expect_err("precondition must fail");
+        assert_eq!(err, "already backlog");
+        assert_eq!(store.get(&id).unwrap().status, TaskStatus::Backlog, "no write on failed check");
+
+        // A passing precondition applies the mutation.
+        let updated = store
+            .mutate_if(&id, |_| Ok(()), |t| t.status = TaskStatus::InProgress)
+            .expect("mutate_if");
+        assert_eq!(updated.status, TaskStatus::InProgress);
+        assert_eq!(store.get(&id).unwrap().status, TaskStatus::InProgress);
+    }
+
+    #[test]
+    fn concurrent_mutations_do_not_clobber_each_others_fields() {
+        // C7: two threads each mutate a DIFFERENT field of the same task. Pre-fix
+        // (get-clone-drop-lock then re-lock upsert) the read-modify-write races and
+        // one thread's field is lost; the atomic mutate must preserve both.
+        let tmp = TempDir::new().expect("temp dir");
+        let store = std::sync::Arc::new(TaskStore::load_from(tmp.path().join("tasks")));
+        let task = Task::new("t".into(), String::new());
+        let id = task.id.clone();
+        store.upsert(&task).expect("upsert");
+
+        let iterations = 200;
+        let s1 = store.clone();
+        let id1 = id.clone();
+        let h1 = std::thread::spawn(move || {
+            for i in 0..iterations {
+                s1.mutate(&id1, |t| t.summary = Some(format!("s{i}"))).expect("mutate summary");
+            }
+        });
+        let s2 = store.clone();
+        let id2 = id.clone();
+        let h2 = std::thread::spawn(move || {
+            for i in 0..iterations {
+                s2.mutate(&id2, |t| t.cost_usd = Some(i as f64)).expect("mutate cost");
+            }
+        });
+        h1.join().expect("join 1");
+        h2.join().expect("join 2");
+
+        // Both fields landed: neither thread's last write was clobbered by a stale
+        // read-modify-write from the other.
+        let final_task = store.get(&id).expect("get");
+        assert!(final_task.summary.is_some(), "summary survived the interleave");
+        assert!(final_task.cost_usd.is_some(), "cost survived the interleave");
+    }
+
+    #[test]
+    fn write_is_atomic_via_temp_then_rename() {
+        // data-integrity #3: a persist either lands the new file or leaves the old
+        // one — never a truncated/half-written file. We can't easily induce a crash
+        // mid-write, so assert the post-conditions: the file is valid JSON and no
+        // `.tmp` litter remains in the dir.
+        let (store, tmp) = temp_store();
+        let mut task = Task::new("t".into(), String::new());
+        let id = task.id.clone();
+        store.upsert(&task).expect("upsert");
+        task.summary = Some("done".into());
+        store.upsert(&task).expect("re-upsert");
+
+        let dir = tmp.path().join("tasks");
+        let reloaded = TaskStore::load_from(dir.clone());
+        assert_eq!(reloaded.get(&id).unwrap().summary.as_deref(), Some("done"));
+        // No leftover temp files (the rename consumed it).
+        let leftover: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp"))
+            .collect();
+        assert!(leftover.is_empty(), "no .tmp litter remains after an atomic write");
+    }
+
+    #[test]
+    fn rejects_path_traversal_task_ids() {
+        // Security defence in depth: an id with a path separator / dot can't reach
+        // outside the tasks dir. `path_for` (via upsert/mutate/remove) rejects it.
+        let (store, _tmp) = temp_store();
+        let mut task = Task::new("t".into(), String::new());
+        for bad in ["../escape", "a/b", "a\\b", ".", "..", "with.dot", ""] {
+            task.id = bad.to_string();
+            assert!(
+                store.upsert(&task).is_err(),
+                "upsert must reject the unsafe id {bad:?}"
+            );
+            assert!(
+                store.remove(bad).is_err(),
+                "remove must reject the unsafe id {bad:?}"
+            );
+        }
+        // A normal uuid-shaped id is accepted.
+        assert!(is_safe_task_id("3f9a1c2e-0000-4abc-8def-1234567890ab"));
+        assert!(is_safe_task_id("task_1-2"));
     }
 
     #[test]

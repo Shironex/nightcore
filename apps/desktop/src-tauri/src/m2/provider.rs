@@ -137,11 +137,14 @@ pub struct SidecarProvider {
 }
 
 /// Session↔task correlation: the live `sessionId → taskId` map plus the
-/// pending-launch FIFO of task ids awaiting their first `session-started`.
+/// pending-launch FIFO of task ids awaiting their first `session-started`. Also
+/// records when each session was first correlated, so a terminal can log the run's
+/// wall-clock `duration_ms` (observability #5).
 #[derive(Default)]
 struct Correlation {
     by_session: HashMap<u64, String>,
     pending: VecDeque<String>,
+    started_at: HashMap<u64, std::time::Instant>,
 }
 
 impl SidecarProvider {
@@ -176,6 +179,7 @@ impl SidecarProvider {
             return Ok(None);
         }
 
+        let started = std::time::Instant::now();
         let bun = resolve_bun_program();
         let mut child = Command::new(&bun.program)
             .args(&bun.prefix_args)
@@ -190,6 +194,14 @@ impl SidecarProvider {
                 "failed to spawn sidecar (no launchable bun binary found — \
                  on Windows, bun.exe must be on PATH or reachable via the npm shim): {e}"
             ))?;
+        // Sidecar process lifecycle (#4) + spawn latency (#5). The pid + duration are
+        // operational facts — no prompt/env/secret is logged.
+        tracing::info!(
+            target: "sidecar",
+            pid = child.id(),
+            duration_ms = started.elapsed().as_millis() as u64,
+            "sidecar process spawned"
+        );
 
         let stdin = child.stdin.take().ok_or("sidecar stdin unavailable")?;
         let stdout = child.stdout.take().ok_or("sidecar stdout unavailable")?;
@@ -225,9 +237,50 @@ impl SidecarProvider {
         if let Some(existing) = c.by_session.get(&session_id) {
             return Some(existing.clone());
         }
-        let task_id = c.pending.pop_front()?;
+        let Some(task_id) = c.pending.pop_front() else {
+            // A session id with no pending launch to bind — the FIFO desynced (a
+            // launch was evicted, or the engine emitted an unexpected session).
+            // Logged so a correlation desync is visible rather than a silent drop.
+            tracing::warn!(target: "nightcore", session_id, "correlation desync: session id with no pending launch");
+            return None;
+        };
+        tracing::info!(target: "nightcore", task_id = %task_id, session_id, "bound session to task");
         c.by_session.insert(session_id, task_id.clone());
+        c.started_at.entry(session_id).or_insert_with(std::time::Instant::now);
         Some(task_id)
+    }
+
+    /// The wall-clock duration since a session first correlated, in milliseconds, if
+    /// it is still tracked. Read on a terminal event to log the run's `duration_ms`
+    /// (observability #5). `None` once the session has been forgotten.
+    pub fn run_duration_ms(&self, session_id: u64) -> Option<u64> {
+        self.correlation
+            .lock()
+            .expect("correlation poisoned")
+            .started_at
+            .get(&session_id)
+            .map(|t| t.elapsed().as_millis() as u64)
+    }
+
+    /// Evict the most-recently-pushed pending launch for `task_id` if it has not yet
+    /// correlated to a session id (concurrency #5). Called when a launch is torn
+    /// down (cancel/abort/circuit-break) before its `session-started` arrived, so a
+    /// later, unrelated `session-started` can't mis-bind to this dead launch and
+    /// poison the FIFO. A no-op once the launch has correlated (then `forget`
+    /// drops the binding instead). Returns whether an entry was removed.
+    pub fn evict_pending(&self, task_id: &str) -> bool {
+        let mut c = self.correlation.lock().expect("correlation poisoned");
+        // Already correlated ⇒ nothing pending to evict (forget handles the binding).
+        if c.by_session.values().any(|t| t == task_id) {
+            return false;
+        }
+        // Remove the last pending occurrence (the most recent launch for this task).
+        if let Some(idx) = c.pending.iter().rposition(|t| t == task_id) {
+            c.pending.remove(idx);
+            tracing::info!(target: "nightcore", task_id, "evicted uncorrelated pending launch");
+            return true;
+        }
+        false
     }
 
     /// The task id a session id is bound to, if already correlated. (Read-back
@@ -246,11 +299,9 @@ impl SidecarProvider {
     /// Forget a session↔task binding once the run reaches a terminal state, so the
     /// map doesn't grow unboundedly across a long session.
     pub fn forget(&self, session_id: u64) {
-        self.correlation
-            .lock()
-            .expect("correlation poisoned")
-            .by_session
-            .remove(&session_id);
+        let mut c = self.correlation.lock().expect("correlation poisoned");
+        c.by_session.remove(&session_id);
+        c.started_at.remove(&session_id);
     }
 
     /// The session id currently bound to `task_id`, if any. Used to interrupt a
@@ -273,6 +324,23 @@ impl SidecarProvider {
             .keys()
             .copied()
             .collect()
+    }
+
+    /// Tear down provider state after the sidecar child has exited (crash recovery,
+    /// #11): drop the dead stdin writer so the next [`spawn`](Self::spawn) re-spawns
+    /// a fresh child, and clear ALL correlation (live bindings, pending launches,
+    /// timers). Returns the task ids that had a live session bound, so the caller can
+    /// fail/release their leased runs. After this, `spawn` is no longer a no-op.
+    pub async fn reset_after_crash(&self) -> Vec<String> {
+        // Drop the stdin handle first: a write to a dead child would error anyway,
+        // and clearing it makes `spawn` re-spawn instead of returning Ok(None).
+        *self.stdin.lock().await = None;
+        let mut c = self.correlation.lock().expect("correlation poisoned");
+        let orphaned: Vec<String> = c.by_session.values().cloned().collect();
+        c.by_session.clear();
+        c.pending.clear();
+        c.started_at.clear();
+        orphaned
     }
 
     /// Write one `SurfaceCommand` as an NDJSON line to the child's stdin.
@@ -473,6 +541,33 @@ mod tests {
         assert_eq!(p.correlate(11).as_deref(), Some("b"));
         assert_eq!(p.correlate(12).as_deref(), Some("c"));
         assert_eq!(p.task_for(11).as_deref(), Some("b"));
+    }
+
+    #[test]
+    fn evict_pending_removes_an_uncorrelated_launch() {
+        // concurrency #5: a launch cancelled before its session-started must be
+        // evicted so the FIFO doesn't mis-bind a later session to the dead launch.
+        let p = provider();
+        p.push_pending("task-a");
+        p.push_pending("task-b");
+
+        // task-a is cancelled before any session arrives → evict its pending entry.
+        assert!(p.evict_pending("task-a"), "an uncorrelated launch is evicted");
+        // Now the FIFO head is task-b; the next session binds to it (not to task-a).
+        assert_eq!(p.correlate(0).as_deref(), Some("task-b"));
+        // A second evict of the same task is a no-op (nothing pending left).
+        assert!(!p.evict_pending("task-a"));
+    }
+
+    #[test]
+    fn evict_pending_is_a_noop_once_correlated() {
+        // Once a launch has correlated to a session, evict_pending must NOT touch it
+        // (the binding is dropped by `forget` on terminal, not by eviction).
+        let p = provider();
+        p.push_pending("task-a");
+        p.correlate(7);
+        assert!(!p.evict_pending("task-a"), "a correlated launch is not evicted");
+        assert_eq!(p.task_for(7).as_deref(), Some("task-a"), "binding intact");
     }
 
     #[test]
