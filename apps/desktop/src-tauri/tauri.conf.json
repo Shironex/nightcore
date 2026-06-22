@@ -6,8 +6,8 @@
   "build": {
     "frontendDist": "../../web/dist",
     "devUrl": "http://localhost:5173",
-    "beforeDevCommand": "bun run --filter @nightcore/web dev",
-    "beforeBuildCommand": "bun run --filter @nightcore/web build"
+    "beforeDevCommand": "bun run --filter @nightcore/sidecar compile && bun run --filter @nightcore/web dev",
+    "beforeBuildCommand": "bun run --filter @nightcore/web build && bun run --filter @nightcore/sidecar compile"
   },
   "app": {
     "windows": [
@@ -30,6 +30,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "externalBin": ["binaries/nightcore-sidecar"],
     "category": "DeveloperTool",
     "copyright": "© 2026 Shirone",
     "icon": [
