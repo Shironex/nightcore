@@ -303,9 +303,12 @@ export class SessionRunner {
   /** SDK options shared by the main run loop and the transient model probe. Auth:
    *  never pass an apiKey — the SDK's bundled CLI resolves the user's local Claude
    *  credentials (~/.claude); ANTHROPIC_API_KEY in the env is honored as a
-   *  fallback automatically. `pathToClaudeCodeExecutable` is set ONLY when the
-   *  resolver names a binary (compiled-distributable case); otherwise it stays
-   *  unset so the SDK's normal in-repo node_modules default applies. */
+   *  fallback automatically. `pathToClaudeCodeExecutable` is set whenever
+   *  `resolveClaudeBinary()` finds a real, on-disk, executable `claude` (the SDK's
+   *  own version-pinned binary preferred) — required for the `bun build --compile`
+   *  distributable, whose `$bunfs` bundling breaks the SDK's self-resolution; it
+   *  stays unset only when nothing verifiable resolves, leaving the SDK's default
+   *  resolution in place. */
   private baseOptions(): Options {
     const claudePath = resolveClaudeBinary();
     const hasSettingSources = this.cfg.settingSources.length > 0;
