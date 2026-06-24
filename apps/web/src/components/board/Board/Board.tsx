@@ -7,10 +7,12 @@ import {
   Kbd,
   PlusIcon,
   SearchIcon,
+  SlidersIcon,
 } from '@/components/ui';
 import { Column } from '../Column';
+import { ProviderConfigPanel } from '../ProviderConfigPanel';
 import { WorktreeSwitcher } from '../WorktreeSwitcher';
-import { useBoardView, useBreakerBanner } from './Board.hooks';
+import { useBoardView, useBreakerBanner, useInspector } from './Board.hooks';
 import type { BoardProps } from './Board.types';
 
 const EMPTY_TEXT: Record<string, string> = {
@@ -29,6 +31,7 @@ const EMPTY_TEXT: Record<string, string> = {
  *  and bridge actions are owned by the shell and passed down. */
 export function Board({
   tasks,
+  projectName,
   projectPath,
   projectBranch,
   worktrees,
@@ -58,6 +61,7 @@ export function Board({
 }: BoardProps) {
   const { search, setSearch, columns } = useBoardView(tasks, activeWorktree);
   const banner = useBreakerBanner(breaker);
+  const inspector = useInspector();
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -126,6 +130,15 @@ export function Board({
                   }`}
                 />
               </span>
+            </button>
+            <button
+              type="button"
+              onClick={inspector.show}
+              title="Inspect the provider configuration for this project"
+              className="flex items-center gap-2 rounded-[9px] border border-border bg-white/[0.02] px-3.5 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors hover:border-white/20"
+            >
+              <SlidersIcon size={14} className="text-muted-foreground" />
+              Provider
             </button>
             <button
               type="button"
@@ -212,6 +225,14 @@ export function Board({
           />
         ))}
       </div>
+
+      {inspector.open && (
+        <ProviderConfigPanel
+          projectName={projectName}
+          projectPath={projectPath}
+          onClose={inspector.hide}
+        />
+      )}
     </div>
   );
 }

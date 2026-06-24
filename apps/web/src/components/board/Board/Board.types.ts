@@ -10,7 +10,8 @@ export interface BreakerInfo {
 
 export interface BoardProps {
   tasks: Task[];
-  /** Active project path + branch for the header subtitle. */
+  /** Active project name + path + branch for the header (and the inspector). */
+  projectName: string;
   projectPath: string;
   projectBranch: string | null;
   /** Live worktrees for the switcher (M4.6); empty falls back to task branches. */

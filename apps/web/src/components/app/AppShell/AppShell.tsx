@@ -107,6 +107,7 @@ export function AppShell() {
               ) : (
                 <Board
                   tasks={tasks}
+                  projectName={active.name}
                   projectPath={active.path}
                   projectBranch={active.branch}
                   worktrees={board.worktrees}

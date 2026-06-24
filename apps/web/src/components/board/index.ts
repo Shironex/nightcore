@@ -16,6 +16,8 @@ export { ReviewPanel } from './ReviewPanel';
 export { GauntletResults } from './GauntletResults';
 export { SessionHistory } from './SessionHistory';
 export type { SessionHistoryProps, SessionHistoryData } from './SessionHistory';
+export { ProviderConfigPanel } from './ProviderConfigPanel';
+export type { ProviderConfigPanelProps, ProviderConfigData } from './ProviderConfigPanel';
 export {
   COLUMNS,
   STATUS_LABEL,
