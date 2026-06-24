@@ -3,6 +3,8 @@ import { describe, expect, test } from 'bun:test';
 import {
   ConfigFileSchema,
   ConfigSchema,
+  McpServerEntrySchema,
+  McpServerTransportSchema,
   PermissionPolicySchema,
 } from './config.js';
 
@@ -68,6 +70,83 @@ describe('ConfigFileSchema', () => {
 
   test('rejects an invalid logLevel', () => {
     const result = ConfigFileSchema.safeParse({ logLevel: 'loud' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('McpServerTransportSchema', () => {
+  test('parses a stdio transport, defaulting args/env', () => {
+    const parsed = McpServerTransportSchema.parse({
+      transport: 'stdio',
+      command: 'npx',
+    });
+    expect(parsed).toEqual({
+      transport: 'stdio',
+      command: 'npx',
+      args: [],
+      env: {},
+    });
+  });
+
+  test('parses an http transport, defaulting headers', () => {
+    const parsed = McpServerTransportSchema.parse({
+      transport: 'http',
+      url: 'https://example.com/mcp',
+    });
+    expect(parsed).toEqual({
+      transport: 'http',
+      url: 'https://example.com/mcp',
+      headers: {},
+    });
+  });
+
+  test('parses an sse transport, defaulting headers', () => {
+    const parsed = McpServerTransportSchema.parse({
+      transport: 'sse',
+      url: 'https://example.com/sse',
+    });
+    expect(parsed).toEqual({
+      transport: 'sse',
+      url: 'https://example.com/sse',
+      headers: {},
+    });
+  });
+
+  test('rejects an unknown transport tag', () => {
+    const result = McpServerTransportSchema.safeParse({
+      transport: 'websocket',
+      url: 'ws://x',
+    });
+    expect(result.success).toBe(false);
+  });
+
+  test('rejects a stdio transport missing its command', () => {
+    const result = McpServerTransportSchema.safeParse({ transport: 'stdio' });
+    expect(result.success).toBe(false);
+  });
+});
+
+describe('McpServerEntrySchema', () => {
+  test('defaults enabled to true and carries the nested transport', () => {
+    const parsed = McpServerEntrySchema.parse({
+      id: 'srv-1',
+      name: 'filesystem',
+      config: { transport: 'stdio', command: 'npx', args: ['-y', 'pkg'] },
+    });
+    expect(parsed).toEqual({
+      id: 'srv-1',
+      name: 'filesystem',
+      enabled: true,
+      config: { transport: 'stdio', command: 'npx', args: ['-y', 'pkg'], env: {} },
+    });
+  });
+
+  test('rejects an entry whose config has a bad transport', () => {
+    const result = McpServerEntrySchema.safeParse({
+      id: 'srv-1',
+      name: 'x',
+      config: { transport: 'nope' },
+    });
     expect(result.success).toBe(false);
   });
 });
