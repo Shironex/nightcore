@@ -58,6 +58,64 @@ describe('NightcoreEventSchema round-trips', () => {
       message: 'slow down',
     },
     { type: 'session-status', sessionId: 7, status: 'running' },
+    {
+      type: 'query-result',
+      requestId: 'q1',
+      ok: true,
+      kind: 'sessions',
+      sessions: [
+        {
+          sdkSessionId: 'uuid-1',
+          summary: 'Add the resume UX',
+          lastModified: 1718900000000,
+          gitBranch: 'nc/task-1',
+          cwd: '/proj/.nightcore/worktrees/task-1',
+          tag: 'keep',
+          createdAt: 1718800000000,
+        },
+      ],
+    },
+    {
+      type: 'query-result',
+      requestId: 'q2',
+      ok: true,
+      kind: 'session-info',
+      info: {
+        sdkSessionId: 'uuid-2',
+        summary: 'A run',
+        lastModified: 1718900000000,
+      },
+    },
+    {
+      type: 'query-result',
+      requestId: 'q3',
+      ok: true,
+      kind: 'session-info',
+      info: null,
+    },
+    {
+      type: 'query-result',
+      requestId: 'q4',
+      ok: true,
+      kind: 'messages',
+      messages: [
+        {
+          type: 'assistant',
+          uuid: 'm-1',
+          sessionId: 'uuid-3',
+          message: { role: 'assistant', content: 'hi' },
+          parentToolUseId: null,
+        },
+      ],
+    },
+    { type: 'query-result', requestId: 'q5', ok: true, kind: 'ack' },
+    {
+      type: 'query-result',
+      requestId: 'q6',
+      ok: false,
+      kind: 'sessions',
+      error: 'session store unavailable',
+    },
   ];
 
   for (const event of valid) {

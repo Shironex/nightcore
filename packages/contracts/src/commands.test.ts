@@ -1,6 +1,11 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { SurfaceCommandSchema, type SurfaceCommand } from './commands.js';
+import {
+  SurfaceCommandSchema,
+  SurfaceQuerySchema,
+  type SurfaceCommand,
+  type SurfaceQuery,
+} from './commands.js';
 
 describe('SurfaceCommandSchema round-trips', () => {
   const valid: SurfaceCommand[] = [
@@ -91,5 +96,88 @@ describe('SurfaceCommandSchema rejections', () => {
       decision: { behavior: 'deny' },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('SurfaceQuerySchema round-trips', () => {
+  const valid: SurfaceQuery[] = [
+    { type: 'list-sessions', requestId: 'q1' },
+    {
+      type: 'list-sessions',
+      requestId: 'q2',
+      dir: '/proj',
+      limit: 20,
+      offset: 0,
+      includeWorktrees: true,
+    },
+    { type: 'get-session-info', requestId: 'q3', sdkSessionId: 'uuid-a' },
+    {
+      type: 'get-session-info',
+      requestId: 'q4',
+      sdkSessionId: 'uuid-a',
+      dir: '/proj',
+    },
+    { type: 'get-session-messages', requestId: 'q5', sdkSessionId: 'uuid-b' },
+    {
+      type: 'get-session-messages',
+      requestId: 'q6',
+      sdkSessionId: 'uuid-b',
+      limit: 100,
+      offset: 10,
+      includeSystemMessages: true,
+    },
+    {
+      type: 'rename-session',
+      requestId: 'q7',
+      sdkSessionId: 'uuid-c',
+      title: 'Refactor pass',
+    },
+    {
+      type: 'tag-session',
+      requestId: 'q8',
+      sdkSessionId: 'uuid-d',
+      tag: 'keep',
+    },
+    {
+      type: 'tag-session',
+      requestId: 'q9',
+      sdkSessionId: 'uuid-d',
+      tag: null,
+    },
+  ];
+
+  for (const query of valid) {
+    test(`accepts and preserves a ${query.type} query`, () => {
+      const parsed = SurfaceQuerySchema.parse(query);
+      expect(parsed).toEqual(query);
+    });
+  }
+});
+
+describe('SurfaceQuerySchema rejections', () => {
+  test('rejects an unknown discriminant', () => {
+    expect(SurfaceQuerySchema.safeParse({ type: 'nope', requestId: 'x' }).success).toBe(
+      false,
+    );
+  });
+
+  test('rejects a query missing its requestId', () => {
+    expect(SurfaceQuerySchema.safeParse({ type: 'list-sessions' }).success).toBe(false);
+  });
+
+  test('rejects a get-session-info missing its sdkSessionId', () => {
+    expect(
+      SurfaceQuerySchema.safeParse({ type: 'get-session-info', requestId: 'x' }).success,
+    ).toBe(false);
+  });
+
+  test('rejects a rename-session missing its title', () => {
+    expect(
+      SurfaceQuerySchema.safeParse({
+        type: 'rename-session',
+        requestId: 'x',
+        sdkSessionId: 'u',
+      }).success,
+    ).toBe(false);
   });
 });
