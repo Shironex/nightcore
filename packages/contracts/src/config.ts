@@ -173,3 +173,50 @@ export const ConfigFileSchema = z.object({
   logLevel: LogLevelSchema.optional(),
 });
 export type ConfigFile = z.infer<typeof ConfigFileSchema>;
+
+/**
+ * Transport-tagged config for one external MCP server the user wires via the UI.
+ * Mirrors the Claude Agent SDK's `McpServerConfig` variants but tagged by
+ * `transport` (NOT the SDK's optional stdio `type`) so the contract codegen emits a
+ * clean, internally-tagged Rust enum and the tag can never collide with the SDK's
+ * `type?: 'stdio'`. The engine translates `transport` → the SDK `type` when building
+ * `Options.mcpServers` (omitting `type` for stdio, setting it for http/sse).
+ *
+ * `env`/`headers` use `z.record(z.string(), z.string())` (the codegen rejects
+ * `z.unknown()`); values may carry secrets (tokens) — they are persisted in
+ * plaintext in the Nightcore store, same trust model as the user's own
+ * `~/.claude.json`, and never logged at info/telemetry.
+ */
+export const McpServerTransportSchema = z.discriminatedUnion('transport', [
+  z.object({
+    transport: z.literal('stdio'),
+    command: z.string(),
+    args: z.array(z.string()).default([]),
+    env: z.record(z.string(), z.string()).default({}),
+  }),
+  z.object({
+    transport: z.literal('http'),
+    url: z.string(),
+    headers: z.record(z.string(), z.string()).default({}),
+  }),
+  z.object({
+    transport: z.literal('sse'),
+    url: z.string(),
+    headers: z.record(z.string(), z.string()).default({}),
+  }),
+]);
+export type McpServerTransport = z.infer<typeof McpServerTransportSchema>;
+
+/**
+ * One user-configured external MCP server entry. `id` is a stable UI key (a uuid);
+ * `name` is the SDK server key — it becomes the `mcpServers` record key and the
+ * `mcp__<name>__*` tool prefix, so the UI must enforce a unique, safe charset.
+ * `enabled` gates injection: only enabled entries reach `Options.mcpServers`.
+ */
+export const McpServerEntrySchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  enabled: z.boolean().default(true),
+  config: McpServerTransportSchema,
+});
+export type McpServerEntry = z.infer<typeof McpServerEntrySchema>;
