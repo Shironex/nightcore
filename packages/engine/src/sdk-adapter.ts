@@ -6,6 +6,9 @@
  */
 import type {
   AgentDefinition,
+  GetSessionInfoOptions,
+  GetSessionMessagesOptions,
+  ListSessionsOptions,
   ModelInfo,
   Options,
   PermissionMode,
@@ -13,13 +16,26 @@ import type {
   RewindFilesResult,
   SDKControlGetContextUsageResponse,
   SDKMessage,
+  SDKSessionInfo,
   SDKUserMessage,
+  SessionMessage,
+  SessionMutationOptions,
 } from '@anthropic-ai/claude-agent-sdk';
-import { query } from '@anthropic-ai/claude-agent-sdk';
+import {
+  getSessionInfo,
+  getSessionMessages,
+  listSessions,
+  query,
+  renameSession,
+  tagSession,
+} from '@anthropic-ai/claude-agent-sdk';
 import type { NightcoreEvent } from '@nightcore/contracts';
 
 export type {
   AgentDefinition,
+  GetSessionInfoOptions,
+  GetSessionMessagesOptions,
+  ListSessionsOptions,
   ModelInfo,
   Options,
   PermissionMode,
@@ -27,9 +43,19 @@ export type {
   RewindFilesResult,
   SDKControlGetContextUsageResponse,
   SDKMessage,
+  SDKSessionInfo,
   SDKUserMessage,
+  SessionMessage,
+  SessionMutationOptions,
 };
-export { query };
+export {
+  getSessionInfo,
+  getSessionMessages,
+  listSessions,
+  query,
+  renameSession,
+  tagSession,
+};
 
 /** Map an `SDKAssistantMessageError` onto a stable Nightcore failure reason. */
 export function mapAssistantError(
