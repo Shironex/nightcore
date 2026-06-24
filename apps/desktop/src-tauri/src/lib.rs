@@ -104,6 +104,7 @@ pub fn run() {
             sidecar::resume_session,
             sidecar::rename_session,
             sidecar::tag_session,
+            sidecar::get_provider_config,
             transcript::read_transcript,
             plan_approval::approve_task,
             plan_approval::reject_task,
