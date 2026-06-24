@@ -386,6 +386,12 @@ export class SessionManager {
         maxTurns,
         ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
         ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
+        // External MCP servers (enabled entries the Rust core resolved + injected on
+        // the command). Folded into `Options.mcpServers` by the runner, additively
+        // over the user's native config. Absent ⇒ none injected (pre-feature shape).
+        ...(command.mcpServers !== undefined
+          ? { mcpServers: command.mcpServers }
+          : {}),
         ...(preset.appendSystemPrompt !== undefined
           ? { appendSystemPrompt: preset.appendSystemPrompt }
           : {}),
