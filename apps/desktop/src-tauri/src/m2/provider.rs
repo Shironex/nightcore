@@ -24,18 +24,25 @@ use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Mutex;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::Value;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{ChildStdin, Command};
+use tokio::sync::oneshot;
 use tokio::sync::Mutex as AsyncMutex;
 
 use crate::contracts::{
     EffortLevel, PermissionDecision as WirePermissionDecision,
-    PermissionMode as WirePermissionMode, SurfaceCommand, TaskKind as WireTaskKind,
+    PermissionMode as WirePermissionMode, SurfaceCommand, SurfaceQuery, TaskKind as WireTaskKind,
 };
 use crate::platform::resolve_bun_program;
+
+/// How long a session query waits for its correlated `query-result` reply before
+/// giving up. These are local disk reads via the sidecar's SDK — fast — but the
+/// bound keeps a dropped/abandoned reply from leaking a pending entry forever.
+const QUERY_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Parse a wire-string enum value into its generated contract enum, surfacing an
 /// invalid value as a typed error rather than letting it reach (and be rejected
@@ -102,6 +109,19 @@ pub trait Provider: Send + Sync {
         request_id: &str,
         decision: PermissionDecision,
     ) -> Result<(), String>;
+
+    /// Issue a request/reply `SurfaceQuery` and await its correlated `query-result`
+    /// reply. The provider injects a fresh `requestId`, registers a pending
+    /// one-shot under it, writes the query line, then awaits the reply the reader
+    /// fulfills via [`Provider::correlate_reply`]. Returns the raw `query-result`
+    /// payload (a `Value`) for the caller to map. Unlike `start-session`, this is
+    /// a synchronous-feeling RPC over the otherwise one-way NDJSON protocol. The
+    /// `request_id` field of `query` is OVERWRITTEN with the generated id.
+    async fn query(&self, query: SurfaceQuery) -> Result<Value, String>;
+
+    /// Fulfill a pending query reply. Called by the reader on a `query-result`
+    /// event with the request id it carries; a no-op for an unknown/late id.
+    fn correlate_reply(&self, request_id: &str, reply: Value);
 }
 
 /// The SDK-guardrail fields threaded into a `start-session` payload alongside the
@@ -147,6 +167,10 @@ pub struct SidecarProvider {
     stdin: AsyncMutex<Option<ChildStdin>>,
     /// `Some(stdout)` exactly once, after `spawn`, handed to the reader installer.
     correlation: Mutex<Correlation>,
+    /// Pending session-query replies, keyed by the `requestId` written on the wire.
+    /// The query awaits its one-shot; the reader fulfills it from a `query-result`
+    /// event. Separate from `correlation` (sessions↔tasks) — a query has no session.
+    pending_replies: Mutex<HashMap<String, oneshot::Sender<Value>>>,
     entry: PathBuf,
     cwd: PathBuf,
 }
@@ -175,6 +199,7 @@ impl SidecarProvider {
         Self {
             stdin: AsyncMutex::new(None),
             correlation: Mutex::new(Correlation::default()),
+            pending_replies: Mutex::new(HashMap::new()),
             entry,
             cwd,
         }
@@ -411,6 +436,13 @@ impl SidecarProvider {
         // Drop the stdin handle first: a write to a dead child would error anyway,
         // and clearing it makes `spawn` re-spawn instead of returning Ok(None).
         *self.stdin.lock().await = None;
+        // Drop every pending query sender so any awaiting `query` returns an error
+        // (a `RecvError`) instead of hanging on a reply that will never arrive from
+        // the dead child.
+        self.pending_replies
+            .lock()
+            .expect("pending_replies poisoned")
+            .clear();
         let mut c = self.correlation.lock().expect("correlation poisoned");
         let orphaned: Vec<String> = c.by_session.values().cloned().collect();
         c.by_session.clear();
@@ -572,6 +604,80 @@ impl Provider for SidecarProvider {
         }
         Ok(())
     }
+
+    async fn query(&self, query: SurfaceQuery) -> Result<Value, String> {
+        // Serialize the query, then OVERWRITE its `requestId` with a fresh uuid so
+        // the caller can't collide two in-flight queries (and so the wire id is the
+        // one we register the pending reply under).
+        let mut payload = serde_json::to_value(&query).map_err(|e| e.to_string())?;
+        let request_id = uuid::Uuid::new_v4().to_string();
+        match payload.as_object_mut() {
+            Some(map) => {
+                map.insert("requestId".to_string(), Value::String(request_id.clone()));
+            }
+            None => return Err("query did not serialize to a JSON object".to_string()),
+        }
+
+        // Register the pending reply BEFORE writing, so a fast reply can't arrive
+        // before the sender exists.
+        let (tx, rx) = oneshot::channel::<Value>();
+        self.pending_replies
+            .lock()
+            .expect("pending_replies poisoned")
+            .insert(request_id.clone(), tx);
+
+        // Write the query line under the stdin lock. On a write failure, evict the
+        // pending entry we just registered so it can't leak.
+        let write_result = {
+            let mut guard = self.stdin.lock().await;
+            match guard.as_mut() {
+                Some(stdin) => Self::write_line(stdin, &payload).await,
+                None => Err("sidecar stdin unavailable".to_string()),
+            }
+        };
+        if let Err(e) = write_result {
+            self.pending_replies
+                .lock()
+                .expect("pending_replies poisoned")
+                .remove(&request_id);
+            return Err(e);
+        }
+
+        // Await the correlated reply with a bound. On timeout/cancel, evict the
+        // pending entry so it doesn't leak (the reader's later fulfill is a no-op).
+        match tokio::time::timeout(QUERY_TIMEOUT, rx).await {
+            Ok(Ok(reply)) => Ok(reply),
+            Ok(Err(_recv)) => {
+                // The sender was dropped (e.g. sidecar crash reset) — no reply coming.
+                Err("sidecar closed before the query reply arrived".to_string())
+            }
+            Err(_elapsed) => {
+                self.pending_replies
+                    .lock()
+                    .expect("pending_replies poisoned")
+                    .remove(&request_id);
+                Err("timed out waiting for the session query reply".to_string())
+            }
+        }
+    }
+
+    fn correlate_reply(&self, request_id: &str, reply: Value) {
+        let sender = self
+            .pending_replies
+            .lock()
+            .expect("pending_replies poisoned")
+            .remove(request_id);
+        match sender {
+            Some(tx) => {
+                // The receiver may have already timed out and dropped; a failed send
+                // is fine (the entry is gone either way).
+                let _ = tx.send(reply);
+            }
+            None => {
+                tracing::debug!(target: "nightcore", request_id, "query-result for an unknown/expired request id; dropping");
+            }
+        }
+    }
 }
 
 /// Read one NDJSON line into a `serde_json::Value`, skipping blanks. Shared by the
@@ -719,5 +825,32 @@ mod tests {
         assert!(parse_line("   ").is_none());
         assert!(parse_line(r#"{"type":"x"}"#).unwrap().is_ok());
         assert!(parse_line("{not json").unwrap().is_err());
+    }
+
+    #[tokio::test]
+    async fn correlate_reply_fulfills_a_pending_query() {
+        // A query registers a pending one-shot under its request id; the reader's
+        // `correlate_reply` delivers the matching reply to the awaiting receiver.
+        let p = provider();
+        let (tx, rx) = oneshot::channel::<Value>();
+        p.pending_replies
+            .lock()
+            .unwrap()
+            .insert("req-1".to_string(), tx);
+
+        p.correlate_reply("req-1", serde_json::json!({"ok": true}));
+        let reply = rx.await.expect("the pending sender delivered the reply");
+        assert_eq!(reply, serde_json::json!({"ok": true}));
+        // The entry is consumed, so a second correlate is a no-op.
+        assert!(p.pending_replies.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn correlate_reply_for_unknown_id_is_a_noop() {
+        // A `query-result` whose request id has no pending entry (timed out, or a
+        // stray reply) is dropped without panicking.
+        let p = provider();
+        p.correlate_reply("ghost", serde_json::json!({"ok": false}));
+        assert!(p.pending_replies.lock().unwrap().is_empty());
     }
 }

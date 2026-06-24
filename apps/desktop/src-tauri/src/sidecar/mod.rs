@@ -20,6 +20,7 @@
 mod commands;
 mod permission;
 mod reader;
+mod sessions;
 mod verification;
 
 // Module facade: preserve the historical `crate::sidecar::*` paths after the
@@ -27,6 +28,9 @@ mod verification;
 // re-export is a glob so the `#[tauri::command]` macro's generated siblings
 // (`__cmd__*`, `__tauri_command_name_*`) reach `sidecar::*` for `generate_handler!`.
 pub(crate) use commands::*;
+// The session-history/resume commands (glob so the macro siblings resolve through
+// `sidecar::*` for `generate_handler!`, like `commands::*`).
+pub(crate) use sessions::*;
 pub(crate) use verification::dispatch_reviewer_for;
 // Re-exported only to keep the `crate::sidecar::MAX_FIX_ATTEMPTS` intra-doc link
 // in `task.rs` resolving; no code outside `verification` reads it through here.

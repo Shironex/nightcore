@@ -37,6 +37,7 @@ fn export_all_bindings() {
     use crate::m2::worktree::WorktreeStatus;
     use crate::project::Project;
     use crate::settings::{AppInfo, Settings, SettingsOverride, SettingsPatch};
+    use crate::sidecar::{SessionInfoView, SessionMessageView};
     use crate::task::{PermissionMode, RunMode, Task, TaskKind, TaskPatch, TaskStatus};
 
     // `export_all` writes the type AND all of its `TS` dependencies, so exporting
@@ -68,6 +69,8 @@ fn export_all_bindings() {
         GauntletStep,
         StepStatus,
         LoopSnapshot,
+        SessionInfoView,
+        SessionMessageView,
     );
 }
 
@@ -110,6 +113,8 @@ mod tests {
             "GauntletStep.ts",
             "StepStatus.ts",
             "LoopEnvelope.ts",
+            "SessionInfo.ts",
+            "SessionMessage.ts",
         ] {
             assert!(
                 dir.join(file).exists(),
