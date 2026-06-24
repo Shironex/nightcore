@@ -27,6 +27,8 @@ export type { WorktreeInfo } from './generated/WorktreeInfo';
 export type { GauntletResult } from './generated/GauntletResult';
 export type { GauntletStep } from './generated/GauntletStep';
 export type { LoopEnvelope } from './generated/LoopEnvelope';
+export type { SessionInfo } from './generated/SessionInfo';
+export type { SessionMessage } from './generated/SessionMessage';
 
 /** The kind preset a task runs under (M4) and the four UI permission modes are
  *  now generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
@@ -55,6 +57,8 @@ import type { GauntletResult } from './generated/GauntletResult';
 import type { LoopEnvelope } from './generated/LoopEnvelope';
 import type { PermissionMode } from './generated/PermissionMode';
 import type { TaskKind } from './generated/TaskKind';
+import type { SessionInfo } from './generated/SessionInfo';
+import type { SessionMessage } from './generated/SessionMessage';
 
 /** True when running inside the Tauri webview (vs. a plain browser preview). */
 export function isTauri(): boolean {
@@ -214,6 +218,48 @@ export async function readTranscript(taskId: string): Promise<NcEvent[]> {
     if (parsed.success) events.push(parsed.data);
   }
   return events;
+}
+
+// --- Session history / resume (SDK session store) -------------------------
+
+/** List the SDK sessions discoverable for a task's project — past runs the user
+ *  can view or resume, each tagged `orphaned` (its worktree was pruned) Rust-side.
+ *  Lists by the project root with `includeWorktrees`, so a pruned-worktree session
+ *  won't appear here (read its transcript by UUID via `getTaskSessionMessages`).
+ *  Returns `[]` outside Tauri (browser preview). */
+export async function listTaskSessions(taskId: string): Promise<SessionInfo[]> {
+  return tauriInvoke<SessionInfo[]>('list_task_sessions', { taskId }, []);
+}
+
+/** Read a past session's transcript by its SDK session UUID. Resolves by UUID with
+ *  no dir (prune-safe), so an orphaned session's transcript is still readable.
+ *  Returns `[]` outside Tauri (browser preview) and tolerates a missing session. */
+export async function getTaskSessionMessages(
+  taskId: string,
+  sdkSessionId: string,
+): Promise<SessionMessage[]> {
+  return tauriInvoke<SessionMessage[]>(
+    'get_task_session_messages',
+    { taskId, sdkSessionId },
+    [],
+  );
+}
+
+/** Resume a chosen historical session: points the task at the UUID and relaunches
+ *  through the existing run path so the SDK reattaches with prior context. Refused
+ *  for an orphaned session (its worktree is gone — resume would start fresh). */
+export async function resumeSession(taskId: string, sdkSessionId: string): Promise<void> {
+  await invoke('resume_session', { taskId, sdkSessionId });
+}
+
+/** Rename a past session (sets its custom title in the session's JSONL). */
+export async function renameSession(sdkSessionId: string, title: string): Promise<void> {
+  await tauriInvoke<void>('rename_session', { sdkSessionId, title }, undefined);
+}
+
+/** Tag a past session, or clear its tag when `tag` is `null`. */
+export async function tagSession(sdkSessionId: string, tag: string | null): Promise<void> {
+  await tauriInvoke<void>('tag_session', { sdkSessionId, tag }, undefined);
 }
 
 // --- Interactive permissions (M3) -----------------------------------------
