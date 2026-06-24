@@ -18,6 +18,16 @@ export type { SessionRunnerConfig } from './session-runner.js';
 export { resolveKindPreset, WRITE_TOOLS } from './kind-presets.js';
 export type { KindPreset } from './kind-presets.js';
 
+// The SDK session store surface (list/read/rename/tag of past sessions), behind a
+// thin degrade-not-throw façade. The SDK itself stays confined to `sdk-adapter`.
+export { SessionApi } from './session-api.js';
+export type {
+  SDKSessionInfo,
+  SessionMessage,
+  ListTaskSessionsOptions,
+  GetTaskSessionMessagesOptions,
+} from './session-api.js';
+
 // The message-translation boundary is exported for testing only — surfaces
 // should not need it.
 export { translateMessage } from './sdk-adapter.js';
