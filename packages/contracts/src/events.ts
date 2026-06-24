@@ -164,6 +164,80 @@ export const SessionStatusEvent = z.object({
   status: SessionStatusSchema,
 });
 
+/**
+ * Metadata for one SDK session, mirroring the SDK's `SDKSessionInfo` field-for-
+ * field — these names/types are LOAD-BEARING (the Rust serde struct mirrors them
+ * for the `query-result` reply). The SDK's `sessionId` is renamed to `sdkSessionId`
+ * on the wire to stay consistent with `task.sdk_session_id` and avoid colliding
+ * with Nightcore's numeric session-id vocabulary. Powers the per-task history view.
+ */
+export const SessionInfoSchema = z.object({
+  /** SDK session UUID (the SDK's `sessionId`). */
+  sdkSessionId: z.string(),
+  /** Display title: custom title, auto-summary, or first prompt. */
+  summary: z.string(),
+  /** Last-modified time, ms since epoch. */
+  lastModified: z.number(),
+  /** File size in bytes (local JSONL only). */
+  fileSize: z.number().optional(),
+  /** User-set title via `/rename`. */
+  customTitle: z.string().optional(),
+  /** First meaningful user prompt. */
+  firstPrompt: z.string().optional(),
+  /** Git branch at the end of the session. */
+  gitBranch: z.string().optional(),
+  /** Working directory the session ran in (the cwd that keys its storage). */
+  cwd: z.string().optional(),
+  /** User-set session tag. */
+  tag: z.string().optional(),
+  /** Creation time, ms since epoch (from the first entry's timestamp). */
+  createdAt: z.number().optional(),
+});
+export type SessionInfo = z.infer<typeof SessionInfoSchema>;
+
+/**
+ * One message from a session transcript, mirroring the SDK's `SessionMessage`.
+ * `message` is the raw Anthropic message JSON — kept as an opaque object record
+ * (`z.record`, NOT `z.unknown()`, which the codegen emitter rejects). The SDK's
+ * snake_case `session_id`/`parent_tool_use_id` become camelCase on the wire.
+ */
+export const SessionMessageSchema = z.object({
+  type: z.enum(['user', 'assistant', 'system']),
+  uuid: z.string(),
+  /** The SDK session UUID this message belongs to (the SDK's `session_id`). */
+  sessionId: z.string(),
+  /** Raw Anthropic message JSON, forwarded opaquely. */
+  message: z.record(z.string(), z.unknown()),
+  /** Parent tool-use id for a tool-result message, or `null` (the SDK's
+   *  `parent_tool_use_id`). Present on the wire; `null` when there is no parent. */
+  parentToolUseId: z.string().nullable(),
+});
+export type SessionMessage = z.infer<typeof SessionMessageSchema>;
+
+/**
+ * The correlated reply to a `SurfaceQuery`, carrying its `requestId` so the Rust
+ * core can match it to the pending request. `ok` is the success flag; `kind`
+ * names which payload slot is populated. The reader INTERCEPTS this event (it is
+ * an RPC reply, not a stream event to forward to the board). `info` is `null`
+ * when a `get-session-info` found nothing.
+ */
+export const QueryResultEvent = z.object({
+  type: z.literal('query-result'),
+  /** Correlation id echoed from the originating `SurfaceQuery`. */
+  requestId: z.string(),
+  ok: z.boolean(),
+  /** Which payload slot the result populates. `ack` is a bare success (rename/tag). */
+  kind: z.enum(['sessions', 'session-info', 'messages', 'ack']),
+  /** Populated for `kind: 'sessions'`. */
+  sessions: z.array(SessionInfoSchema).optional(),
+  /** Populated for `kind: 'session-info'`; `null` when the session was not found. */
+  info: SessionInfoSchema.nullable().optional(),
+  /** Populated for `kind: 'messages'`. */
+  messages: z.array(SessionMessageSchema).optional(),
+  /** Set when `ok` is false: a short failure reason. */
+  error: z.string().optional(),
+});
+
 export const NightcoreEventSchema = z.discriminatedUnion('type', [
   SessionStartedEvent,
   SessionReadyEvent,
@@ -175,6 +249,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   SessionCompletedEvent,
   SessionFailedEvent,
   SessionStatusEvent,
+  QueryResultEvent,
 ]);
 export type NightcoreEvent = z.infer<typeof NightcoreEventSchema>;
 

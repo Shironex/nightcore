@@ -96,3 +96,78 @@ export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   ApprovePermissionCommand,
 ]);
 export type SurfaceCommand = z.infer<typeof SurfaceCommandSchema>;
+
+/**
+ * `SurfaceQuery` — the REQUEST/REPLY stream flowing surface → engine, parallel to
+ * the fire-and-forget `SurfaceCommand`. A query carries a `requestId` the engine
+ * echoes back on the matching `query-result` event, so the caller (the Rust core)
+ * can `await` a correlated reply over the otherwise one-way NDJSON protocol.
+ *
+ * These back the SDK session store (read-only history + the two mutations). They
+ * are pure disk reads/writes via the SDK — no session runner is involved.
+ *
+ * `dir` semantics mirror the SDK: OMIT it to search ALL project dirs by UUID (the
+ * prune-safe path that finds a session even after its worktree is gone); PASS a
+ * project root to discover sibling sessions that still have a live worktree.
+ */
+
+/** A correlation id every query carries; the matching `query-result` echoes it. */
+const requestTarget = {
+  requestId: z.string(),
+};
+
+/** List the SDK sessions for a project dir (omit `dir` ⇒ all project dirs). */
+export const ListSessionsQuery = z.object({
+  ...requestTarget,
+  type: z.literal('list-sessions'),
+  dir: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+  offset: z.number().int().nonnegative().optional(),
+  includeWorktrees: z.boolean().optional(),
+});
+
+/** Read one session's metadata by its SDK session UUID. */
+export const GetSessionInfoQuery = z.object({
+  ...requestTarget,
+  type: z.literal('get-session-info'),
+  sdkSessionId: z.string(),
+  dir: z.string().optional(),
+});
+
+/** Read one session's transcript messages by its SDK session UUID. */
+export const GetSessionMessagesQuery = z.object({
+  ...requestTarget,
+  type: z.literal('get-session-messages'),
+  sdkSessionId: z.string(),
+  dir: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+  offset: z.number().int().nonnegative().optional(),
+  includeSystemMessages: z.boolean().optional(),
+});
+
+/** Rename a session (sets its custom title). */
+export const RenameSessionQuery = z.object({
+  ...requestTarget,
+  type: z.literal('rename-session'),
+  sdkSessionId: z.string(),
+  title: z.string(),
+  dir: z.string().optional(),
+});
+
+/** Tag a session, or clear its tag when `tag` is `null`. */
+export const TagSessionQuery = z.object({
+  ...requestTarget,
+  type: z.literal('tag-session'),
+  sdkSessionId: z.string(),
+  tag: z.string().nullable(),
+  dir: z.string().optional(),
+});
+
+export const SurfaceQuerySchema = z.discriminatedUnion('type', [
+  ListSessionsQuery,
+  GetSessionInfoQuery,
+  GetSessionMessagesQuery,
+  RenameSessionQuery,
+  TagSessionQuery,
+]);
+export type SurfaceQuery = z.infer<typeof SurfaceQuerySchema>;
