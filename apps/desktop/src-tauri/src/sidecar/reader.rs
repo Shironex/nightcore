@@ -22,6 +22,27 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
     let store = app.state::<TaskStore>();
 
     let event_type = event.get("type").and_then(Value::as_str).unwrap_or("");
+
+    // A `query-result` is an RPC REPLY to a `SurfaceQuery`, not a session stream
+    // event: it carries a `requestId` (no `sessionId`) and must be routed back to
+    // the awaiting `Provider::query` call, NOT forwarded to the board or persisted.
+    if event_type == "query-result" {
+        use crate::m2::provider::Provider;
+        // Own the request id before moving `event` into the reply (a borrow can't
+        // outlive the move).
+        let request_id = event
+            .get("requestId")
+            .and_then(Value::as_str)
+            .map(|s| s.to_string());
+        match request_id {
+            Some(request_id) => orch.provider.correlate_reply(&request_id, event),
+            None => {
+                tracing::warn!(target: "sidecar", "query-result event missing its requestId; dropping")
+            }
+        }
+        return;
+    }
+
     let session_id = event.get("sessionId").and_then(Value::as_u64);
 
     // Correlate the event to its task. The first sighting of a session id binds it
