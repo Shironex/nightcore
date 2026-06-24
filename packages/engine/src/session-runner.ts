@@ -1,5 +1,6 @@
 import type {
   EffortLevel,
+  McpServerEntry,
   NightcoreEvent,
   PermissionMode,
   PermissionPolicy,
@@ -10,6 +11,7 @@ import {
   query,
   translateMessage,
   type AgentInfo,
+  type McpServerConfig,
   type McpServerStatus,
   type ModelInfo,
   type Options,
@@ -62,6 +64,52 @@ const CLAUDE_CLI_MISSING_MESSAGE =
   `\`${CLAUDE_INSTALL_COMMAND}\` ` +
   '(see https://code.claude.com/docs/en/setup), then retry.';
 
+/**
+ * Translate the user-configured external MCP server entries (the `transport`-tagged
+ * contract shape) into the SDK's `Options.mcpServers` map (`Record<name,
+ * McpServerConfig>`). Pure, so it is unit-testable without spinning a query.
+ *
+ * Three translations matter:
+ *  - filter to `enabled` entries (the Rust core already does this, but re-filtering
+ *    here keeps the helper correct on any caller);
+ *  - the entry `name` becomes the record KEY (the SDK keys on it, and it is the
+ *    `mcp__<name>__*` tool prefix) — a later duplicate name wins (last write);
+ *  - `transport` → the SDK's `type`: OMITTED for stdio (the SDK's `type?: 'stdio'`
+ *    defaults to stdio), SET to `'http'`/`'sse'` for the remote transports.
+ *
+ * Returns `undefined` when no enabled entry survives, so the caller can omit the
+ * `mcpServers` key entirely (byte-identical to the pre-feature options).
+ */
+export function toSdkMcpServers(
+  entries: McpServerEntry[] | undefined,
+): Record<string, McpServerConfig> | undefined {
+  if (entries === undefined || entries.length === 0) return undefined;
+  const servers: Record<string, McpServerConfig> = {};
+  for (const entry of entries) {
+    if (!entry.enabled) continue;
+    const { config } = entry;
+    if (config.transport === 'stdio') {
+      // stdio: OMIT `type` (the SDK defaults it). Only set `env` when non-empty so
+      // the options stay minimal.
+      servers[entry.name] = {
+        command: config.command,
+        args: config.args,
+        ...(Object.keys(config.env).length > 0 ? { env: config.env } : {}),
+      };
+    } else {
+      // http / sse: SET `type` to the transport; only set `headers` when non-empty.
+      servers[entry.name] = {
+        type: config.transport,
+        url: config.url,
+        ...(Object.keys(config.headers).length > 0
+          ? { headers: config.headers }
+          : {}),
+      };
+    }
+  }
+  return Object.keys(servers).length > 0 ? servers : undefined;
+}
+
 export interface SessionRunnerConfig {
   sessionId: number;
   prompt: string;
@@ -103,6 +151,14 @@ export interface SessionRunnerConfig {
    *  Set on the recovery path when a persisted `sdkSessionId` exists. Omitted ⇒
    *  a cold (fresh) session. */
   resumeSessionId?: string;
+  /** External MCP servers to inject for this session (`Options.mcpServers`,
+   *  `sdk.d.ts:1620`). Folded into the SDK options by `name`, ADDITIVELY over the
+   *  user's native `.mcp.json`/`~/.claude.json` (we never set `strictMcpConfig`).
+   *  The Rust core already filters to `enabled` entries, but `toSdkMcpServers`
+   *  re-filters defensively. Absent/empty ⇒ no `mcpServers` key is set (the
+   *  pre-feature shape). Values in `env`/`headers` may carry secrets — never logged
+   *  at info/telemetry. */
+  mcpServers?: McpServerEntry[];
   /** Enable SDK file checkpointing (`Options.enableFileCheckpointing`,
    *  `sdk.d.ts:1388`) so the session's file changes can be rewound via
    *  `rewindFiles()`. Off by default (legacy behavior). */
@@ -180,10 +236,13 @@ export class SessionRunner {
       canUseTool: this.permissions.canUseTool,
       // Native SDK tools only — the agent uses the SDK's native
       // Read/Write/Edit/Bash/Grep/Glob (the Claude-Code mental model); Nightcore
-      // ships no in-house custom tools and registers no in-process MCP server.
-      // The `ToolRegistry` is kept solely for risk metadata via `riskOf`, which
-      // classifies the native tools so the PermissionLayer auto-allows safe reads
-      // and still prompts on writes/shell.
+      // ships no in-house custom tools and registers no IN-PROCESS MCP server.
+      // (User-configured EXTERNAL MCP servers are a separate thing: they ride
+      // `Options.mcpServers`, folded in via `baseOptions`.) The `ToolRegistry` is
+      // kept solely for risk metadata via `riskOf`, which classifies the native
+      // tools so the PermissionLayer auto-allows safe reads and still prompts on
+      // writes/shell — and an unknown `mcp__*` tool from an external server is
+      // already classified `dangerous`, so it always prompts (in non-bypass mode).
       hooks: this.hooks.hooks(),
       abortController: this.abort,
       ...(this.cfg.effort !== undefined ? { effort: this.cfg.effort } : {}),
@@ -428,6 +487,12 @@ export class SessionRunner {
   private baseOptions(): Options {
     const claudePath = resolveClaudeBinary();
     const hasSettingSources = this.cfg.settingSources.length > 0;
+    // Inject the configured external MCP servers HERE (not only in `run()`) so the
+    // SAME merged set the run uses also reaches the transient probe that backs the
+    // provider-config inspector (`withProbe` → `baseOptions`). Additive over the
+    // user's native config (no `strictMcpConfig`); an empty/absent list leaves the
+    // key unset, byte-identical to the pre-feature options.
+    const mcpServers = toSdkMcpServers(this.cfg.mcpServers);
     return {
       cwd: this.cfg.cwd,
       executable: 'bun',
@@ -459,6 +524,9 @@ export class SessionRunner {
       // source is loaded — with strict isolation there is nothing to enable.
       ...(hasSettingSources ? { skills: 'all' as const } : {}),
       ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
+      // Configured external MCP servers, additive over the user's native config.
+      // Shared by the run and the inspector probe (both spread `baseOptions`).
+      ...(mcpServers !== undefined ? { mcpServers } : {}),
     };
   }
 
