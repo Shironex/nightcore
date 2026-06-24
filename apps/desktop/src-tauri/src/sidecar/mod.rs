@@ -19,6 +19,7 @@
 
 mod commands;
 mod permission;
+mod provider_config;
 mod reader;
 mod sessions;
 mod verification;
@@ -31,6 +32,9 @@ pub(crate) use commands::*;
 // The session-history/resume commands (glob so the macro siblings resolve through
 // `sidecar::*` for `generate_handler!`, like `commands::*`).
 pub(crate) use sessions::*;
+// The read-only provider-config inspector command (glob so the `#[tauri::command]`
+// macro siblings resolve through `sidecar::*` for `generate_handler!`).
+pub(crate) use provider_config::*;
 pub(crate) use verification::dispatch_reviewer_for;
 // Re-exported only to keep the `crate::sidecar::MAX_FIX_ATTEMPTS` intra-doc link
 // in `task.rs` resolving; no code outside `verification` reads it through here.

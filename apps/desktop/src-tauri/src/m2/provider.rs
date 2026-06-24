@@ -119,6 +119,24 @@ pub trait Provider: Send + Sync {
     /// `request_id` field of `query` is OVERWRITTEN with the generated id.
     async fn query(&self, query: SurfaceQuery) -> Result<Value, String>;
 
+    /// Read the provider's RESOLVED configuration for a project (the read-only
+    /// inspector): its MCP servers, skills, subagents, and scalar extras. Default-
+    /// implemented over [`Provider::query`] with a `get-provider-config`
+    /// `SurfaceQuery`, so the Bun sidecar inherits it unchanged. The provider seam
+    /// is the override point: a future Codex provider that can't report this
+    /// returns a snapshot whose sections are `unsupported`, or overrides this
+    /// method — WITHOUT a `match provider` branch in the inspector. `dir` is the
+    /// project root resolution keys off; `None` ⇒ the engine's cwd. Returns the raw
+    /// `query-result` payload (a `Value`) for the caller to map.
+    async fn provider_config(&self, dir: Option<String>) -> Result<Value, String> {
+        let query = SurfaceQuery::GetProviderConfig {
+            // `requestId` is overwritten by `query` with a fresh uuid.
+            request_id: String::new(),
+            dir,
+        };
+        self.query(query).await
+    }
+
     /// Fulfill a pending query reply. Called by the reader on a `query-result`
     /// event with the request id it carries; a no-op for an unknown/late id.
     fn correlate_reply(&self, request_id: &str, reply: Value);

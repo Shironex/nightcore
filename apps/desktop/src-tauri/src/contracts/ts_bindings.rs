@@ -37,7 +37,7 @@ fn export_all_bindings() {
     use crate::m2::worktree::WorktreeStatus;
     use crate::project::Project;
     use crate::settings::{AppInfo, Settings, SettingsOverride, SettingsPatch};
-    use crate::sidecar::{SessionInfoView, SessionMessageView};
+    use crate::sidecar::{ProviderConfigSnapshotView, SessionInfoView, SessionMessageView};
     use crate::task::{PermissionMode, RunMode, Task, TaskKind, TaskPatch, TaskStatus};
 
     // `export_all` writes the type AND all of its `TS` dependencies, so exporting
@@ -71,6 +71,8 @@ fn export_all_bindings() {
         LoopSnapshot,
         SessionInfoView,
         SessionMessageView,
+        // `export_all` writes the snapshot AND its nested section/summary views.
+        ProviderConfigSnapshotView,
     );
 }
 
@@ -115,6 +117,11 @@ mod tests {
             "LoopEnvelope.ts",
             "SessionInfo.ts",
             "SessionMessage.ts",
+            "ProviderConfigSnapshot.ts",
+            "ProviderConfigSection.ts",
+            "McpServerSummary.ts",
+            "SkillSummary.ts",
+            "SubagentSummary.ts",
         ] {
             assert!(
                 dir.join(file).exists(),
