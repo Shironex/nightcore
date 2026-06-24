@@ -9,6 +9,7 @@ const meta = {
   component: Board,
   parameters: { layout: 'fullscreen' },
   args: {
+    projectName: 'nightcore',
     projectPath: '~/dev/nightcore',
     projectBranch: 'main',
     worktrees: [],

@@ -29,6 +29,11 @@ export type { GauntletStep } from './generated/GauntletStep';
 export type { LoopEnvelope } from './generated/LoopEnvelope';
 export type { SessionInfo } from './generated/SessionInfo';
 export type { SessionMessage } from './generated/SessionMessage';
+export type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
+export type { ProviderConfigSection } from './generated/ProviderConfigSection';
+export type { McpServerSummary } from './generated/McpServerSummary';
+export type { SkillSummary } from './generated/SkillSummary';
+export type { SubagentSummary } from './generated/SubagentSummary';
 
 /** The kind preset a task runs under (M4) and the four UI permission modes are
  *  now generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
@@ -59,6 +64,7 @@ import type { PermissionMode } from './generated/PermissionMode';
 import type { TaskKind } from './generated/TaskKind';
 import type { SessionInfo } from './generated/SessionInfo';
 import type { SessionMessage } from './generated/SessionMessage';
+import type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
 
 /** True when running inside the Tauri webview (vs. a plain browser preview). */
 export function isTauri(): boolean {
@@ -260,6 +266,61 @@ export async function renameSession(sdkSessionId: string, title: string): Promis
 /** Tag a past session, or clear its tag when `tag` is `null`. */
 export async function tagSession(sdkSessionId: string, tag: string | null): Promise<void> {
   await tauriInvoke<void>('tag_session', { sdkSessionId, tag }, undefined);
+}
+
+// --- Provider configuration inspector (read-only) -------------------------
+
+/** A populated mock snapshot so the inspector renders outside Tauri (browser
+ *  preview / Storybook). Exercises all three per-section tri-states so the panel's
+ *  branches are visible without a live SDK probe. */
+const MOCK_PROVIDER_CONFIG: ProviderConfigSnapshot = {
+  providerId: 'claude',
+  providerLabel: 'Claude',
+  projectPath: '~/dev/nightcore',
+  mcp: {
+    status: 'supported',
+    mcpServers: [
+      {
+        name: 'github',
+        status: 'connected',
+        scope: 'project',
+        transport: 'http',
+        toolCount: 14,
+      },
+      { name: 'filesystem', status: 'pending', scope: 'user', transport: 'stdio' },
+    ],
+  },
+  skills: {
+    status: 'supported',
+    skills: [
+      { name: 'add-feature', description: 'Plan and ship a new feature' },
+      { name: 'fix-bug', description: 'Diagnose an integration that should work' },
+    ],
+  },
+  subagents: {
+    status: 'unavailable',
+    error: 'probe timed out',
+  },
+  model: 'claude-opus-4-8',
+  permissionMode: 'acceptEdits',
+  outputStyle: 'default',
+  extrasStatus: 'supported',
+};
+
+/** Read the active provider's RESOLVED configuration for a project — its MCP
+ *  servers, skills, subagents, and scalar extras — for the read-only inspector.
+ *  Omit `projectPath` to inspect the ACTIVE project (the board-header entry point);
+ *  pass one to inspect another root. Each section degrades independently
+ *  (supported / unsupported / unavailable), so the snapshot always resolves.
+ *  Returns a populated mock outside Tauri (browser preview). */
+export async function getProviderConfig(
+  projectPath?: string,
+): Promise<ProviderConfigSnapshot> {
+  return tauriInvoke<ProviderConfigSnapshot>(
+    'get_provider_config',
+    { dir: projectPath ?? null },
+    MOCK_PROVIDER_CONFIG,
+  );
 }
 
 // --- Interactive permissions (M3) -----------------------------------------

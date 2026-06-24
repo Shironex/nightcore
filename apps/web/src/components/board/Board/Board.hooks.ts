@@ -72,6 +72,21 @@ export function useBoardView(tasks: Task[], activeWorktree: ActiveWorktree): Boa
   };
 }
 
+/** Open/close state for the read-only provider-config inspector (the header
+ *  entry point owns its own toggle; the panel is a self-contained sheet). */
+export function useInspector(): {
+  open: boolean;
+  show: () => void;
+  hide: () => void;
+} {
+  const [open, setOpen] = useState(false);
+  return {
+    open,
+    show: useCallback(() => setOpen(true), []),
+    hide: useCallback(() => setOpen(false), []),
+  };
+}
+
 /** Whether to show the circuit-breaker banner: visible while a breaker is set
  *  and not locally dismissed, and re-shown when a fresh breaker arrives. */
 export function useBreakerBanner(breaker: BreakerInfo | null): {
