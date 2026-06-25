@@ -99,6 +99,22 @@ describe('PermissionLayer risk gating', () => {
     expect(result.behavior).toBe('deny');
     expect(prompts).toHaveLength(0);
   });
+
+  test('AskUserQuestion is auto-allowed and never prompts (its answer is a dialog)', async () => {
+    // Even on the deny list, AskUserQuestion must not surface as a generic
+    // allow/deny prompt — the user answers it over the onUserDialog channel.
+    const policy: PermissionPolicy = {
+      allow: [],
+      deny: ['AskUserQuestion'],
+      mode: 'default',
+    };
+    const { layer, prompts } = makeLayer(policy, () => undefined);
+
+    const result = await invoke(layer, 'AskUserQuestion');
+
+    expect(result.behavior).toBe('allow');
+    expect(prompts).toHaveLength(0);
+  });
 });
 
 describe('PermissionLayer interactive resolve', () => {
