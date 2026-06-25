@@ -29,7 +29,7 @@ import {
 } from '../status';
 import type { SessionGroup, SessionPhase, TimelineEntry } from '../session-stream';
 import { TaskStatusDot } from '../TaskStatusDot';
-import { PermissionPrompt } from '../PermissionPrompt';
+import { InteractionDock } from '../InteractionDock';
 import { KindPicker } from '../KindPicker';
 import { WorkModePicker } from '../WorkModePicker';
 import { PermissionModePicker } from '../PermissionModePicker';
@@ -626,6 +626,7 @@ export function TaskDetail({
   stream,
   anyRunning,
   prompts = [],
+  questions = [],
   gauntlet = null,
   gauntletRunning = false,
   onClose,
@@ -633,6 +634,7 @@ export function TaskDetail({
   onCancel,
   onDelete,
   onRespondPermission,
+  onAnswerQuestion,
   onApprove,
   onReject,
   onRefine,
@@ -667,9 +669,10 @@ export function TaskDetail({
   // Whether the Result band has anything to show (verdict and/or the Done-column
   // readiness gauntlet) — its label is suppressed otherwise so it never sits empty.
   const hasResult = task.review !== null || (isDoneColumn && onRunGauntlet !== undefined);
-  const hasAttention =
-    (prompts.length > 0 && onRespondPermission !== undefined) ||
-    (planParked && task.plan !== null);
+  // Interactive permission/question prompts moved to the pinned InteractionDock
+  // (so they're never lost above a long activity log); the attention band now
+  // only holds the plan-approval gate.
+  const hasAttention = planParked && task.plan !== null;
   const hasHistory =
     task.sdkSessionId !== null &&
     onResumeSession !== undefined &&
@@ -711,23 +714,10 @@ export function TaskDetail({
       </header>
 
       <div className="flex flex-1 flex-col gap-4 overflow-auto px-4 py-4">
-        {/* Needs attention — interactive items the user must act on. */}
+        {/* Needs attention — the plan-approval gate. Permission/question prompts
+            live in the pinned InteractionDock below, not here. */}
         {hasAttention && (
           <div className="space-y-3">
-            {prompts.length > 0 && onRespondPermission !== undefined && (
-              <div className="space-y-2">
-                {prompts.map((prompt) => (
-                  <PermissionPrompt
-                    key={prompt.requestId}
-                    prompt={prompt}
-                    onRespond={(requestId, decision) =>
-                      onRespondPermission(task.id, requestId, decision)
-                    }
-                  />
-                ))}
-              </div>
-            )}
-
             {planParked && task.plan !== null && (
               <section>
                 <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
@@ -809,6 +799,20 @@ export function TaskDetail({
           </div>
         )}
       </div>
+
+      {/* Pinned interaction dock — auto-surfaces parked permission/question prompts
+          so they're actionable without scrolling the activity log above. Gated on
+          the permission handler (always co-provided with the question handler in
+          the app); a missing question handler degrades to a no-op. */}
+      {onRespondPermission !== undefined && (
+        <InteractionDock
+          taskId={task.id}
+          permissionPrompts={prompts}
+          questionPrompts={questions}
+          onRespondPermission={onRespondPermission}
+          onAnswerQuestion={onAnswerQuestion ?? (() => {})}
+        />
+      )}
 
       <footer className="flex items-center gap-2 border-t border-border bg-card px-4 py-3">
         {planParked ? (

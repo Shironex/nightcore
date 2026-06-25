@@ -4,6 +4,8 @@ export { Column } from './Column';
 export { TaskCard } from './TaskCard';
 export { TaskDetail } from './TaskDetail';
 export { PermissionPrompt } from './PermissionPrompt';
+export { QuestionPrompt } from './QuestionPrompt';
+export { InteractionDock } from './InteractionDock';
 export { TaskStatusDot } from './TaskStatusDot';
 export { NewTaskForm } from './NewTaskForm';
 export { KindPicker } from './KindPicker';
