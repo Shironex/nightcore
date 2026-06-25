@@ -187,3 +187,124 @@ export function foldSession(prev: SessionStream, event: NcEvent): SessionStream 
       return prev;
   }
 }
+
+/** Best-effort role of a session within a task's lifecycle. A task's transcript
+ *  typically holds a `build` run, then a `verify` (reviewer) run, plus any
+ *  `plan`/replan or extra runs. Classification is a display hint only — derived
+ *  from the session prompt — and never affects folding. */
+export type SessionPhase = 'build' | 'verify' | 'plan' | 'session';
+
+/** One logical session inside a task's transcript: its metadata plus the
+ *  per-session folded stream. Reuses `SessionStream`/`foldSession` unchanged so a
+ *  single session folds exactly as before. */
+export interface SessionGroup {
+  /** 1-based ordinal of this session within the task. */
+  index: number;
+  /** SDK session UUID (from `session-ready`), or null until/if it arrives. */
+  sdkSessionId: string | null;
+  /** Model the session ran on (from `session-started`/`session-ready`). */
+  model: string | null;
+  /** The session's launch prompt (from `session-started`) — drives the phase
+   *  classification and a short preview in the UI. */
+  prompt: string | null;
+  /** Best-effort lifecycle role (build / verify / plan / generic). */
+  phase: SessionPhase;
+  /** The folded activity for this session alone. */
+  stream: SessionStream;
+}
+
+/** A task's full transcript, grouped by session. Replaces the single
+ *  `SessionStream` per task so a reseeded multi-session JSONL keeps every
+ *  session's activity instead of collapsing to the last one. */
+export interface TaskTranscript {
+  sessions: SessionGroup[];
+  /** Aggregate tool-line count across all sessions (drives the Logs badge). */
+  toolCount: number;
+}
+
+export const EMPTY_TRANSCRIPT: TaskTranscript = { sessions: [], toolCount: 0 };
+
+/** Classify a session's role from its prompt. Pure, heuristic, never throws. */
+function classifyPhase(prompt: string | null, priorCount: number): SessionPhase {
+  const p = (prompt ?? '').toLowerCase();
+  if (/review|verif/.test(p)) return 'verify';
+  if (/\bplan\b/.test(p)) return 'plan';
+  if (priorCount === 0) return 'build';
+  return 'session';
+}
+
+function aggregateToolCount(sessions: SessionGroup[]): number {
+  let n = 0;
+  for (const s of sessions) n += s.stream.toolCount;
+  return n;
+}
+
+function newGroup(
+  priorCount: number,
+  fields: Partial<Omit<SessionGroup, 'index' | 'stream' | 'phase'>> & {
+    phase?: SessionPhase;
+  },
+): SessionGroup {
+  return {
+    index: priorCount + 1,
+    sdkSessionId: fields.sdkSessionId ?? null,
+    model: fields.model ?? null,
+    prompt: fields.prompt ?? null,
+    phase: fields.phase ?? classifyPhase(fields.prompt ?? null, priorCount),
+    stream: { ...EMPTY_STREAM },
+  };
+}
+
+/** Fold one engine event into the grouped transcript. Session boundaries
+ *  (`session-started`/`session-ready`) START a new group instead of wiping the
+ *  stream; every other event delegates to `foldSession` on the latest group. This
+ *  is what keeps the in-progress build run visible alongside the later
+ *  verification run. Replaying a recorded transcript reproduces the live grouping
+ *  (reseed parity). */
+export function foldTranscript(prev: TaskTranscript, event: NcEvent): TaskTranscript {
+  switch (event.type) {
+    case 'session-started': {
+      const group = newGroup(prev.sessions.length, {
+        model: event.model,
+        prompt: event.prompt,
+      });
+      return { ...prev, sessions: [...prev.sessions, group] };
+    }
+    case 'session-ready': {
+      const last = prev.sessions[prev.sessions.length - 1];
+      // Enrich the fresh group opened by a preceding `session-started`; if none
+      // (a `session-ready` without a paired start), open a new group instead.
+      if (
+        last !== undefined &&
+        last.sdkSessionId === null &&
+        last.stream.entries.length === 0
+      ) {
+        const sessions = prev.sessions.slice();
+        sessions[sessions.length - 1] = {
+          ...last,
+          sdkSessionId: event.sdkSessionId,
+          model: event.model ?? last.model,
+        };
+        return { ...prev, sessions };
+      }
+      const group = newGroup(prev.sessions.length, {
+        sdkSessionId: event.sdkSessionId,
+        model: event.model,
+      });
+      return { ...prev, sessions: [...prev.sessions, group] };
+    }
+    default: {
+      const sessions = prev.sessions.slice();
+      // Defensive: events before any session boundary open a default group so
+      // their activity is never dropped.
+      if (sessions.length === 0) sessions.push(newGroup(0, { phase: 'build' }));
+      const lastIdx = sessions.length - 1;
+      const last = sessions[lastIdx];
+      if (last === undefined) return prev;
+      const nextStream = foldSession(last.stream, event);
+      if (nextStream === last.stream) return prev; // unknown / no-op event
+      sessions[lastIdx] = { ...last, stream: nextStream };
+      return { sessions, toolCount: aggregateToolCount(sessions) };
+    }
+  }
+}

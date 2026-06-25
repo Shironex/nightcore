@@ -48,8 +48,13 @@ export {
 } from './status';
 export {
   EMPTY_STREAM,
+  EMPTY_TRANSCRIPT,
   foldSession,
+  foldTranscript,
   type SessionStream,
+  type SessionGroup,
+  type SessionPhase,
+  type TaskTranscript,
   type TimelineEntry,
   type TextEntry,
   type ToolEntry,
