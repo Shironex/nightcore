@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react';
 import {
   BoltIcon,
   BranchIcon,
@@ -26,7 +27,7 @@ import {
   STATUS_LABEL,
   STATUS_TEXT,
 } from '../status';
-import type { TimelineEntry } from '../session-stream';
+import type { SessionGroup, SessionPhase, TimelineEntry } from '../session-stream';
 import { TaskStatusDot } from '../TaskStatusDot';
 import { PermissionPrompt } from '../PermissionPrompt';
 import { KindPicker } from '../KindPicker';
@@ -40,6 +41,7 @@ import {
   canMerge,
   deriveTaskDetailView,
   summarizeSession,
+  useCollapse,
   useHistoryCard,
   useSessionCard,
 } from './TaskDetail.hooks';
@@ -385,13 +387,141 @@ function HistoryCard({
   );
 }
 
-/** The unified activity timeline (decision A): one chronological list that
- *  interleaves assistant text turns (rendered via `<Markdown>`, each its own
- *  `<li>` so distinct turns are visually separated) with boxed tool-call lines,
- *  in arrival order. Replaces the split Tools + Transcript sections. The live
+/** A short, divider-style band label that groups the drawer's many sections into
+ *  scannable bands (Result / Overview / Activity / History). Uppercase mono to
+ *  match the existing section-heading vocabulary, with a hairline rule. */
+function GroupLabel({ children }: { children: ReactNode }) {
+  return (
+    <div className="flex items-center gap-2 pt-1">
+      <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.14em] text-muted-foreground/70">
+        {children}
+      </span>
+      <span className="h-px flex-1 bg-border" aria-hidden="true" />
+    </div>
+  );
+}
+
+/** Display label for a session's lifecycle phase. A generic `session` falls back
+ *  to `Run N` (handled at the call site, which knows the ordinal). */
+const PHASE_LABEL: Record<SessionPhase, string> = {
+  build: 'Build',
+  verify: 'Verification',
+  plan: 'Plan',
+  session: 'Run',
+};
+
+/** The grouped activity log: one collapsible block per session in the task's
+ *  transcript. Keeping every session means the in-progress build run stays
+ *  visible alongside the later verification run (the old single-stream model
+ *  wiped the build when the verification session started). */
+function ActivityLog({
+  sessions,
+  isRunning,
+}: {
+  sessions: SessionGroup[];
+  isRunning: boolean;
+}) {
+  return (
+    <section aria-label="Activity">
+      <h3 className="mb-2 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+        <LogsIcon size={11} />
+        {isRunning ? 'Live activity' : 'Activity'}
+      </h3>
+
+      {sessions.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {isRunning
+            ? 'Waiting for first token…'
+            : 'No activity yet — run this task to stream its transcript.'}
+        </p>
+      ) : sessions.length === 1 ? (
+        // A single session needs no collapsible chrome — render it inline.
+        <TimelineBody
+          entries={sessions[0]!.stream.entries}
+          error={sessions[0]!.stream.error}
+          isRunning={isRunning}
+        />
+      ) : (
+        <div className="space-y-2">
+          {sessions.map((session, i) => (
+            <SessionLog
+              key={`${session.index}-${session.sdkSessionId ?? 'live'}`}
+              session={session}
+              // The most recent session is the live / most-relevant one — open it
+              // by default and collapse the earlier runs.
+              defaultOpen={i === sessions.length - 1}
+              isRunning={isRunning && i === sessions.length - 1}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+/** One collapsible session block within the activity log: a header summarizing
+ *  the session (phase, model, tool count, cost) over the session's timeline. */
+function SessionLog({
+  session,
+  defaultOpen,
+  isRunning,
+}: {
+  session: SessionGroup;
+  defaultOpen: boolean;
+  isRunning: boolean;
+}) {
+  const { open, toggle } = useCollapse(defaultOpen);
+  const { entries, error, costUsd, toolCount } = session.stream;
+  const label = session.phase === 'session' ? `Run ${session.index}` : PHASE_LABEL[session.phase];
+  const meta = [
+    session.model !== null ? modelDisplayName(session.model) : null,
+    toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : null,
+    costUsd !== null ? formatCost(costUsd) : null,
+  ].filter((x): x is string => x !== null);
+
+  return (
+    <section className="rounded-[10px] border border-border bg-white/[0.02]">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={toggle}
+        className="flex w-full items-center gap-2 rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-white/[0.03] focus:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+      >
+        <TerminalIcon size={13} className="shrink-0 text-muted-foreground" />
+        <span className="shrink-0 font-mono text-[11px] font-semibold uppercase tracking-[0.06em] text-foreground/90">
+          {label}
+        </span>
+        {isRunning && (
+          <span className="shrink-0 font-mono text-[10px] font-semibold uppercase tracking-[0.06em] text-primary">
+            Live
+          </span>
+        )}
+        <span className="min-w-0 flex-1 truncate text-right font-mono text-[11px] text-muted-foreground">
+          {meta.join(' · ')}
+        </span>
+        <ChevronDownIcon
+          size={14}
+          aria-hidden="true"
+          className={`shrink-0 text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+      <div hidden={!open}>
+        {open && (
+          <div className="border-t border-border px-3 pb-3 pt-3">
+            <TimelineBody entries={entries} error={error} isRunning={isRunning} />
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** The header-less activity list for a single session: assistant text turns
+ *  interleaved with boxed tool-call / subagent lines, in arrival order. The live
  *  cursor renders only on a trailing text entry; a terminal error replaces the
- *  list entirely. */
-function Timeline({
+ *  list entirely. Shared by the inline single-session view and each collapsible
+ *  `SessionLog`. */
+function TimelineBody({
   entries,
   error,
   isRunning,
@@ -401,12 +531,7 @@ function Timeline({
   isRunning: boolean;
 }) {
   return (
-    <section aria-label="Activity" className="flex-1">
-      <h3 className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-        <LogsIcon size={11} />
-        {isRunning ? 'Live activity' : 'Activity'}
-      </h3>
-
+    <>
       {error !== null ? (
         <pre className="whitespace-pre-wrap rounded-md border border-destructive/40 bg-destructive/[0.12] px-3 py-2 font-mono text-xs text-destructive">
           {error}
@@ -485,12 +610,10 @@ function Timeline({
         </ol>
       ) : (
         <p className="text-sm text-muted-foreground">
-          {isRunning
-            ? 'Waiting for first token…'
-            : 'No activity yet — run this task to stream its transcript.'}
+          {isRunning ? 'Waiting for first token…' : 'No activity recorded for this session.'}
         </p>
       )}
-    </section>
+    </>
   );
 }
 
@@ -534,14 +657,24 @@ export function TaskDetail({
   const {
     isRunning,
     cost,
-    error,
-    entries,
+    sessions,
     reviewParked,
     planParked,
     kindEditable,
     isDoneColumn,
   } = deriveTaskDetailView(task, stream);
   const mergeable = canMerge(task, gauntlet);
+  // Whether the Result band has anything to show (verdict and/or the Done-column
+  // readiness gauntlet) — its label is suppressed otherwise so it never sits empty.
+  const hasResult = task.review !== null || (isDoneColumn && onRunGauntlet !== undefined);
+  const hasAttention =
+    (prompts.length > 0 && onRespondPermission !== undefined) ||
+    (planParked && task.plan !== null);
+  const hasHistory =
+    task.sdkSessionId !== null &&
+    onResumeSession !== undefined &&
+    onRenameSession !== undefined &&
+    onTagSession !== undefined;
   const mainMode = task.runMode === 'main';
   // True while the named action is mid-flight for this task — disables the button
   // so it can't double-fire before the `nc:task` echo lands.
@@ -578,85 +711,103 @@ export function TaskDetail({
       </header>
 
       <div className="flex flex-1 flex-col gap-4 overflow-auto px-4 py-4">
-        {prompts.length > 0 && onRespondPermission !== undefined && (
-          <div className="space-y-2">
-            {prompts.map((prompt) => (
-              <PermissionPrompt
-                key={prompt.requestId}
-                prompt={prompt}
-                onRespond={(requestId, decision) =>
-                  onRespondPermission(task.id, requestId, decision)
-                }
-              />
-            ))}
+        {/* Needs attention — interactive items the user must act on. */}
+        {hasAttention && (
+          <div className="space-y-3">
+            {prompts.length > 0 && onRespondPermission !== undefined && (
+              <div className="space-y-2">
+                {prompts.map((prompt) => (
+                  <PermissionPrompt
+                    key={prompt.requestId}
+                    prompt={prompt}
+                    onRespond={(requestId, decision) =>
+                      onRespondPermission(task.id, requestId, decision)
+                    }
+                  />
+                ))}
+              </div>
+            )}
+
+            {planParked && task.plan !== null && (
+              <section>
+                <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+                  Proposed plan
+                </h3>
+                <Markdown className="rounded-md border border-info/40 bg-info/[0.08] px-3 py-2">
+                  {task.plan}
+                </Markdown>
+              </section>
+            )}
           </div>
         )}
 
-        {planParked && task.plan !== null && (
-          <section>
-            <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-              Proposed plan
-            </h3>
-            <Markdown className="rounded-md border border-info/40 bg-info/[0.08] px-3 py-2">
-              {task.plan}
-            </Markdown>
-          </section>
+        {/* Result — the verification verdict and pre-merge readiness gauntlet. */}
+        {hasResult && (
+          <div className="space-y-3">
+            <GroupLabel>Result</GroupLabel>
+            <ReviewPanel
+              task={task}
+              onAccept={onAcceptReview}
+              onReject={onRejectReview}
+              onRerun={onRerunVerification}
+            />
+            {isDoneColumn && onRunGauntlet !== undefined && (
+              <GauntletResults
+                result={gauntlet}
+                running={gauntletRunning}
+                onRun={() => onRunGauntlet(task.id)}
+              />
+            )}
+          </div>
         )}
 
-        <ReviewPanel
-          task={task}
-          onAccept={onAcceptReview}
-          onReject={onRejectReview}
-          onRerun={onRerunVerification}
-        />
-
-        {isDoneColumn && onRunGauntlet !== undefined && (
-          <GauntletResults
-            result={gauntlet}
-            running={gauntletRunning}
-            onRun={() => onRunGauntlet(task.id)}
+        {/* Overview — what was asked for and how the session is configured. */}
+        <div className="space-y-3">
+          <GroupLabel>Overview</GroupLabel>
+          {task.description.trim().length > 0 && (
+            <section>
+              <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+                Description
+              </h3>
+              <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+                {task.description}
+              </p>
+            </section>
+          )}
+          <SessionCard
+            task={task}
+            kindEditable={kindEditable}
+            onChangeKind={onChangeKind}
+            onChangeRunMode={onChangeRunMode}
+            onChangePermissionMode={onChangePermissionMode}
+            onChangeModel={onChangeModel}
+            onChangeEffort={onChangeEffort}
+            onChangeMaxTurns={onChangeMaxTurns}
+            onChangeMaxBudget={onChangeMaxBudget}
           />
-        )}
+        </div>
 
-        {task.description.trim().length > 0 && (
-          <section>
-            <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-              Description
-            </h3>
-            <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
-              {task.description}
-            </p>
-          </section>
-        )}
+        {/* Activity — every session's logs, grouped (build, verification, …). */}
+        <div className="space-y-3">
+          <GroupLabel>Activity</GroupLabel>
+          <ActivityLog sessions={sessions} isRunning={isRunning} />
+        </div>
 
-        <Timeline entries={entries} error={error} isRunning={isRunning} />
-
-        <SessionCard
-          task={task}
-          kindEditable={kindEditable}
-          onChangeKind={onChangeKind}
-          onChangeRunMode={onChangeRunMode}
-          onChangePermissionMode={onChangePermissionMode}
-          onChangeModel={onChangeModel}
-          onChangeEffort={onChangeEffort}
-          onChangeMaxTurns={onChangeMaxTurns}
-          onChangeMaxBudget={onChangeMaxBudget}
-        />
-
-        {task.sdkSessionId !== null &&
-          onResumeSession !== undefined &&
-          onRenameSession !== undefined &&
-          onTagSession !== undefined && (
+        {/* History — past SDK sessions for this task (resume / rename / tag). */}
+        {hasHistory && (
+          <div className="space-y-3">
+            <GroupLabel>History</GroupLabel>
             <HistoryCard
               task={task}
               // Resume requires no run in flight (the run path leases a slot), so
               // gate it the same way the footer Run button is gated.
               canResume={!anyRunning && !isRunning && task.status !== 'verifying'}
-              onResumeSession={onResumeSession}
-              onRenameSession={onRenameSession}
-              onTagSession={onTagSession}
+              onResumeSession={onResumeSession!}
+              onRenameSession={onRenameSession!}
+              onTagSession={onTagSession!}
             />
-          )}
+          </div>
+        )}
       </div>
 
       <footer className="flex items-center gap-2 border-t border-border bg-card px-4 py-3">

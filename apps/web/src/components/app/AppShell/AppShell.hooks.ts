@@ -60,11 +60,11 @@ import {
   type WorktreeInfo,
 } from '@/lib/bridge';
 import {
-  EMPTY_STREAM,
-  foldSession,
+  EMPTY_TRANSCRIPT,
+  foldTranscript,
   type ActiveWorktree,
   type BreakerInfo,
-  type SessionStream,
+  type TaskTranscript,
 } from '@/components/board';
 import { useToast, type ToastApi } from '@/components/ui';
 import type { AppView } from './AppShell.types';
@@ -392,7 +392,7 @@ function useNewProjectFlow(onClose: () => void, toast: ToastApi) {
 /** The board's task + stream state, reseeded whenever a project is activated. */
 function useBoard(toast: ToastApi) {
   const [tasks, setTasks] = useState<Task[]>([]);
-  const [streams, setStreams] = useState<Record<string, SessionStream>>({});
+  const [streams, setStreams] = useState<Record<string, TaskTranscript>>({});
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   // Seed from the active project's store, and reseed on every activation.
@@ -445,7 +445,7 @@ function useBoard(toast: ToastApi) {
     const unlisten = onSessionEvent(({ taskId, event }) => {
       setStreams((prev) => ({
         ...prev,
-        [taskId]: foldSession(prev[taskId] ?? EMPTY_STREAM, event),
+        [taskId]: foldTranscript(prev[taskId] ?? EMPTY_TRANSCRIPT, event),
       }));
     });
     return () => {
@@ -465,7 +465,7 @@ function useBoard(toast: ToastApi) {
         if (!alive || events.length === 0) return;
         setStreams((prev) => {
           if (prev[id] !== undefined) return prev;
-          const seeded = events.reduce(foldSession, { ...EMPTY_STREAM });
+          const seeded = events.reduce(foldTranscript, { ...EMPTY_TRANSCRIPT });
           return { ...prev, [id]: seeded };
         });
       })
@@ -803,8 +803,8 @@ export function useAppShell(): AppShellState {
   // task's entries on each delta.
   const logCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const [id, stream] of Object.entries(streams)) {
-      counts[id] = stream.toolCount;
+    for (const [id, transcript] of Object.entries(streams)) {
+      counts[id] = transcript.toolCount;
     }
     return counts;
   }, [streams]);
@@ -836,7 +836,7 @@ export function useAppShell(): AppShellState {
       // Optimistically reset the stream; guard against a double-fire between the
       // click and the run being accepted.
       action.guard('run', id, () => {
-        setStreams((prev) => ({ ...prev, [id]: { ...EMPTY_STREAM } }));
+        setStreams((prev) => ({ ...prev, [id]: { ...EMPTY_TRANSCRIPT } }));
         return runTask(id).catch((err) => {
           console.error('run_task failed', err);
           toast.error('Could not start the run', err);
@@ -861,7 +861,7 @@ export function useAppShell(): AppShellState {
       // Optimistically reset the stream (the resumed run streams fresh), guarded
       // against a double-fire like a normal run.
       action.guard('run', taskId, () => {
-        setStreams((prev) => ({ ...prev, [taskId]: { ...EMPTY_STREAM } }));
+        setStreams((prev) => ({ ...prev, [taskId]: { ...EMPTY_TRANSCRIPT } }));
         return resumeSession(taskId, sdkSessionId).catch((err) => {
           console.error('resume_session failed', err);
           toast.error('Could not resume the session', err);

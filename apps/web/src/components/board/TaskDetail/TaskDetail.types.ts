@@ -6,11 +6,11 @@ import type {
   Task,
   TaskKind,
 } from '@/lib/bridge';
-import type { SessionStream } from '../session-stream';
+import type { TaskTranscript } from '../session-stream';
 
 export interface TaskDetailProps {
   task: Task;
-  stream: SessionStream | undefined;
+  stream: TaskTranscript | undefined;
   /** True when ANY task is in_progress (serial-run guard). */
   anyRunning: boolean;
   /** Parked permission prompts for this task (interactive approval). */

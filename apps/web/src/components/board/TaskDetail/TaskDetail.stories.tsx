@@ -1,7 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { TaskDetail } from './TaskDetail';
-import { EMPTY_STREAM } from '../session-stream';
+import {
+  EMPTY_STREAM,
+  type SessionGroup,
+  type SessionPhase,
+  type SessionStream,
+  type TaskTranscript,
+} from '../session-stream';
 import {
   GAUNTLET_FAILED,
   GAUNTLET_PASSED,
@@ -10,6 +16,43 @@ import {
   TASKS_BY_STATUS,
   makeTask,
 } from '../_fixtures';
+
+/** Wrap a single session's stream into a one-session transcript (the common
+ *  story shape). */
+function oneSession(
+  stream: Partial<SessionStream>,
+  meta: Partial<Omit<SessionGroup, 'index' | 'stream'>> = {},
+): TaskTranscript {
+  const full: SessionStream = { ...EMPTY_STREAM, ...stream };
+  return {
+    sessions: [
+      {
+        index: 1,
+        sdkSessionId: meta.sdkSessionId ?? null,
+        model: meta.model ?? null,
+        prompt: meta.prompt ?? null,
+        phase: meta.phase ?? 'build',
+        stream: full,
+      },
+    ],
+    toolCount: full.toolCount,
+  };
+}
+
+/** Assemble a multi-session transcript from per-session (phase, stream) pairs. */
+function transcript(
+  parts: Array<{ phase: SessionPhase; model?: string; stream: Partial<SessionStream> }>,
+): TaskTranscript {
+  const sessions: SessionGroup[] = parts.map((p, i) => ({
+    index: i + 1,
+    sdkSessionId: null,
+    model: p.model ?? null,
+    prompt: null,
+    phase: p.phase,
+    stream: { ...EMPTY_STREAM, ...p.stream },
+  }));
+  return { sessions, toolCount: sessions.reduce((n, s) => n + s.stream.toolCount, 0) };
+}
 
 const meta = {
   title: 'Board/TaskDetail',
@@ -61,8 +104,7 @@ export const Running: Story = {
   args: {
     task: TASKS_BY_STATUS.in_progress,
     anyRunning: true,
-    stream: {
-      ...EMPTY_STREAM,
+    stream: oneSession({
       streamedPartial: true,
       entries: [
         {
@@ -78,8 +120,9 @@ export const Running: Story = {
         { kind: 'tool', id: 4, toolName: 'Edit', input: { file_path: 'src/api/client.ts' } },
       ],
       toolSeq: 4,
+      toolCount: 4,
       costUsd: 0.18,
-    },
+    }),
   },
 };
 
@@ -90,8 +133,7 @@ export const InterleavedTimeline: Story = {
   args: {
     task: TASKS_BY_STATUS.in_progress,
     anyRunning: true,
-    stream: {
-      ...EMPTY_STREAM,
+    stream: oneSession({
       streamedPartial: true,
       entries: [
         {
@@ -118,8 +160,9 @@ export const InterleavedTimeline: Story = {
         },
       ],
       toolSeq: 2,
+      toolCount: 2,
       costUsd: 0.12,
-    },
+    }),
   },
 };
 
@@ -285,15 +328,23 @@ export const Verifying: Story = {
   args: {
     task: TASKS_BY_STATUS.verifying,
     anyRunning: true,
-    stream: {
-      ...EMPTY_STREAM,
-      streamedPartial: true,
-      entries: [
-        { kind: 'text', id: 1, closed: true, markdown: 'Running git diff against the base branch…' },
-        { kind: 'tool', id: 1, toolName: 'Bash' },
-      ],
-      toolSeq: 1,
-    },
+    stream: oneSession(
+      {
+        streamedPartial: true,
+        entries: [
+          {
+            kind: 'text',
+            id: 1,
+            closed: true,
+            markdown: 'Running git diff against the base branch…',
+          },
+          { kind: 'tool', id: 1, toolName: 'Bash' },
+        ],
+        toolSeq: 1,
+        toolCount: 1,
+      },
+      { phase: 'verify' },
+    ),
   },
 };
 
@@ -369,5 +420,65 @@ export const RunsGauntlet: Story = {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /run checks/i }));
     await expect(args.onRunGauntlet).toHaveBeenCalledWith('t-done');
+  },
+};
+
+/** A finished task whose transcript holds BOTH the in-progress build run and the
+ *  later verification run — grouped into collapsible session blocks (the build
+ *  no longer vanishes behind the review). The latest session opens by default. */
+export const MultiSessionActivity: Story = {
+  args: {
+    task: makeTask({
+      id: 't-done',
+      status: 'done',
+      title: 'Wire up auth guard',
+      summary: 'Added the auth middleware and covered it with tests.',
+      costUsd: 0.54,
+      branch: 'nc/auth-guard',
+      runMode: 'worktree',
+      verified: true,
+      committed: true,
+      review: SAMPLE_REVIEW_PASS,
+    }),
+    gauntlet: GAUNTLET_PASSED,
+    stream: transcript([
+      {
+        phase: 'build',
+        model: 'claude-opus-4-8',
+        stream: {
+          entries: [
+            {
+              kind: 'text',
+              id: 1,
+              closed: true,
+              markdown: 'Adding the auth middleware and wiring it into the router.',
+            },
+            { kind: 'tool', id: 1, toolName: 'Edit', input: { file_path: 'src/auth/guard.ts' } },
+            { kind: 'tool', id: 2, toolName: 'Bash', input: { command: 'bun test auth' } },
+          ],
+          toolSeq: 2,
+          toolCount: 2,
+          costUsd: 0.42,
+        },
+      },
+      {
+        phase: 'verify',
+        model: 'claude-sonnet-4-6',
+        stream: {
+          entries: [
+            {
+              kind: 'text',
+              id: 1,
+              closed: true,
+              markdown: 'Reviewing the diff against the base branch — checks pass.',
+            },
+            { kind: 'tool', id: 1, toolName: 'Bash', input: { command: 'git diff main' } },
+          ],
+          toolSeq: 1,
+          toolCount: 1,
+          costUsd: 0.12,
+        },
+      },
+    ]),
   },
 };

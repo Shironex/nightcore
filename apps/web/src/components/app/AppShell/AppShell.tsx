@@ -1,5 +1,5 @@
 import { lazy, Suspense } from 'react';
-import { Board, EMPTY_STREAM, NewTaskForm } from '@/components/board';
+import { Board, EMPTY_TRANSCRIPT, NewTaskForm } from '@/components/board';
 import { NewProjectDialog } from '@/components/new-project';
 import {
   BoardIcon,
@@ -142,7 +142,7 @@ export function AppShell() {
               <Suspense fallback={null}>
               <TaskDetail
                 task={selected}
-                stream={board.streams[selected.id] ?? EMPTY_STREAM}
+                stream={board.streams[selected.id] ?? EMPTY_TRANSCRIPT}
                 anyRunning={anyRunning}
                 prompts={board.prompts[selected.id] ?? []}
                 gauntlet={board.gauntletResults[selected.id] ?? null}

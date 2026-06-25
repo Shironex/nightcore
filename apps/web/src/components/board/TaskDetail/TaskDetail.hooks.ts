@@ -6,7 +6,7 @@ import {
   PERMISSION_MODE_LABEL,
   RUN_MODE_LABEL,
 } from '../status';
-import type { SessionStream, TimelineEntry } from '../session-stream';
+import { EMPTY_STREAM, type SessionGroup, type TaskTranscript } from '../session-stream';
 
 export interface TaskDetailView {
   isRunning: boolean;
@@ -14,9 +14,11 @@ export interface TaskDetailView {
   isVerifying: boolean;
   cost: number | null;
   error: string | null;
-  /** The unified activity timeline — assistant text turns interleaved with tool
-   *  calls in arrival order (replaces the split `answer` + `tools`). */
-  entries: TimelineEntry[];
+  /** The transcript grouped by session — each session's activity timeline is
+   *  rendered as its own collapsible block, so a task's in-progress build run and
+   *  its later verification run both stay visible (instead of the build being
+   *  wiped by the verification session). */
+  sessions: SessionGroup[];
   /** A `waiting_approval` parked on a verification verdict (has `review`). */
   reviewParked: boolean;
   /** A `waiting_approval` parked on a plan (`ExitPlanMode`, no verdict yet). */
@@ -33,22 +35,52 @@ export interface TaskDetailView {
  *  the reviewer verdict, a parked plan does not. */
 export function deriveTaskDetailView(
   task: Task,
-  stream: SessionStream | undefined,
+  stream: TaskTranscript | undefined,
 ): TaskDetailView {
   const waiting = task.status === 'waiting_approval';
   const reviewParked = waiting && task.review !== null;
-  // A closed task with no live stream falls back to its stored summary, wrapped as
-  // a single synthetic text entry so the timeline still renders its final output.
-  const fallbackEntries: TimelineEntry[] =
-    task.summary !== null && task.summary.trim().length > 0
-      ? [{ kind: 'text', id: 0, markdown: task.summary, closed: true }]
-      : [];
+  const liveSessions = stream?.sessions ?? [];
+  // A closed task with no transcript falls back to its stored summary (or its
+  // persisted failure), wrapped as a single synthetic session so the timeline
+  // still renders the final output / error.
+  const hasSummary = task.summary !== null && task.summary.trim().length > 0;
+  const hasError = task.error !== null && task.error.trim().length > 0;
+  const sessions: SessionGroup[] =
+    liveSessions.length > 0
+      ? liveSessions
+      : hasSummary || hasError
+        ? [
+            {
+              index: 1,
+              sdkSessionId: task.sdkSessionId,
+              model: task.model,
+              prompt: null,
+              phase: 'build',
+              stream: {
+                ...EMPTY_STREAM,
+                entries: hasSummary
+                  ? [{ kind: 'text', id: 0, markdown: task.summary as string, closed: true }]
+                  : [],
+                error: task.error,
+                costUsd: task.costUsd,
+              },
+            },
+          ]
+        : [];
+  // Aggregate cost across sessions (each `session-completed` carries its own
+  // `costUsd`); fall back to the task's persisted total.
+  const streamCost = liveSessions.reduce<number | null>(
+    (acc, s) => (s.stream.costUsd !== null ? (acc ?? 0) + s.stream.costUsd : acc),
+    null,
+  );
+  // The most recent session's error surfaces the active failure.
+  const lastError = liveSessions[liveSessions.length - 1]?.stream.error ?? null;
   return {
     isRunning: task.status === 'in_progress',
     isVerifying: task.status === 'verifying',
-    cost: stream?.costUsd ?? task.costUsd,
-    error: stream?.error ?? task.error,
-    entries: stream?.entries ?? fallbackEntries,
+    cost: streamCost ?? task.costUsd,
+    error: lastError ?? task.error,
+    sessions,
     reviewParked,
     planParked: waiting && !reviewParked,
     kindEditable: task.status === 'backlog' || task.status === 'ready',
@@ -72,6 +104,14 @@ export function useSessionCard(kindEditable: boolean): {
  *  card) — history is a secondary, on-demand surface. The initializer runs once. */
 export function useHistoryCard(): { open: boolean; toggle: () => void } {
   const [open, setOpen] = useState(false);
+  return { open, toggle: () => setOpen((v) => !v) };
+}
+
+/** Generic collapse state for a session-log block. The latest session opens by
+ *  default (`defaultOpen`); older sessions stay collapsed until clicked. The
+ *  initializer runs once — toggling is never fought by re-renders. */
+export function useCollapse(defaultOpen: boolean): { open: boolean; toggle: () => void } {
+  const [open, setOpen] = useState(defaultOpen);
   return { open, toggle: () => setOpen((v) => !v) };
 }
 
