@@ -145,6 +145,7 @@ export function AppShell() {
                 stream={board.streams[selected.id] ?? EMPTY_TRANSCRIPT}
                 anyRunning={anyRunning}
                 prompts={board.prompts[selected.id] ?? []}
+                questions={board.questions[selected.id] ?? []}
                 gauntlet={board.gauntletResults[selected.id] ?? null}
                 gauntletRunning={board.gauntletRunning.has(selected.id)}
                 onClose={() => setSelectedId(null)}
@@ -152,6 +153,7 @@ export function AppShell() {
                 onCancel={board.handleCancel}
                 onDelete={board.handleDelete}
                 onRespondPermission={board.handleRespondPermission}
+                onAnswerQuestion={board.handleAnswerQuestion}
                 onApprove={board.handleApprove}
                 onReject={board.handleReject}
                 onRefine={board.handleRefine}

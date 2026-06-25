@@ -2,6 +2,8 @@ import type {
   GauntletResult,
   PermissionMode,
   PermissionPrompt,
+  QuestionAnswer,
+  QuestionPrompt,
   RunMode,
   Task,
   TaskKind,
@@ -15,6 +17,8 @@ export interface TaskDetailProps {
   anyRunning: boolean;
   /** Parked permission prompts for this task (interactive approval). */
   prompts?: PermissionPrompt[];
+  /** Parked AskUserQuestion prompts for this task (interactive answer). */
+  questions?: QuestionPrompt[];
   /** The last readiness-gauntlet result for this task (Verified column), or null. */
   gauntlet?: GauntletResult | null;
   /** True while a gauntlet run is in flight for this task. */
@@ -25,6 +29,8 @@ export interface TaskDetailProps {
   onDelete: (id: string) => void;
   /** Answer a parked permission prompt. */
   onRespondPermission?: (taskId: string, requestId: string, decision: 'allow' | 'deny') => void;
+  /** Answer a parked AskUserQuestion prompt (submit choices or skip). */
+  onAnswerQuestion?: (taskId: string, requestId: string, answer: QuestionAnswer) => void;
   /** Plan-approval actions (shown for a plan-parked `waiting_approval`). */
   onApprove?: (id: string) => void;
   onReject?: (id: string) => void;

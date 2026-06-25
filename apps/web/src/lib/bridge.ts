@@ -1,7 +1,13 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { open } from '@tauri-apps/plugin-dialog';
-import { NightcoreEventSchema, type NightcoreEvent } from '@nightcore/contracts';
+import {
+  NightcoreEventSchema,
+  QuestionItemSchema,
+  type NightcoreEvent,
+  type QuestionAnswer,
+  type QuestionItem,
+} from '@nightcore/contracts';
 
 export type { SessionStatus } from '@nightcore/contracts';
 
@@ -114,6 +120,19 @@ export interface PermissionPrompt {
   input: Record<string, unknown>;
   /** Optional SDK-provided choices the surface can offer (rarely present). */
   suggestions?: unknown;
+}
+
+export type { QuestionItem, QuestionOption, QuestionAnswer } from '@nightcore/contracts';
+
+/** `nc:question` payload: an interactive `AskUserQuestion` prompt for a running
+ *  task. The questions/options carry model-authored text — render it, but the core
+ *  never logs it. The surface answers via the `answer_question` command. */
+export interface QuestionPrompt {
+  taskId: string;
+  requestId: string;
+  /** SDK toolUseId of the originating call, when the dialog carried one. */
+  toolUseId?: string;
+  questions: QuestionItem[];
 }
 
 /** `nc:project` payload: a registry change plus the full registry snapshot.
@@ -345,6 +364,21 @@ export async function respondPermission(
       updatedInput: options.updatedInput ?? null,
       message: options.message ?? null,
     },
+    undefined,
+  );
+}
+
+/** Answer a parked `AskUserQuestion` prompt (`nc:question`). `answer` is either
+ *  the user's choices (`{behavior:'answer', answers}`) or a skip
+ *  (`{behavior:'cancel'}`). No-ops outside Tauri (browser preview). */
+export async function answerQuestion(
+  taskId: string,
+  requestId: string,
+  answer: QuestionAnswer,
+): Promise<void> {
+  await tauriInvoke<void>(
+    'answer_question',
+    { taskId, requestId, answer },
     undefined,
   );
 }
@@ -680,5 +714,28 @@ export async function onPermissionEvent(
   if (!isTauri()) return () => {};
   return listen<unknown>('nc:permission', (event) => {
     if (isPermissionPrompt(event.payload)) handler(event.payload);
+  });
+}
+
+/** Narrow an unknown payload to a `QuestionPrompt` defensively. The dock reads
+ *  `taskId`, `requestId`, and renders `questions`, so all three are checked and the
+ *  `questions` array is validated against the contract schema (it arrives over the
+ *  dedicated `nc:question` channel, not the zod-validated session stream). */
+function isQuestionPrompt(value: unknown): value is QuestionPrompt {
+  if (!hasKeys(value, ['taskId', 'requestId', 'questions'])) return false;
+  if (typeof value.taskId !== 'string' || typeof value.requestId !== 'string') {
+    return false;
+  }
+  return QuestionItemSchema.array().nonempty().safeParse(value.questions).success;
+}
+
+/** Subscribe to `nc:question` interactive AskUserQuestion prompts. Returns an
+ *  unlisten function (a no-op outside Tauri). */
+export async function onQuestionEvent(
+  handler: (prompt: QuestionPrompt) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<unknown>('nc:question', (event) => {
+    if (isQuestionPrompt(event.payload)) handler(event.payload);
   });
 }

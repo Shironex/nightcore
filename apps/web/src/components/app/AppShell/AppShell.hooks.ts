@@ -31,11 +31,13 @@ import {
   onLoopEvent,
   onPermissionEvent,
   onProjectEvent,
+  onQuestionEvent,
   onSessionEvent,
   onTaskEvent,
   resumeAutoLoop,
   resumeSession,
   respondPermission,
+  answerQuestion,
   runTask,
   tagSession,
   setActiveProject,
@@ -50,6 +52,8 @@ import {
   type PermissionMode,
   type PermissionPrompt,
   type Project,
+  type QuestionAnswer,
+  type QuestionPrompt,
   type RunMode,
   type Settings,
   type SettingsPatch,
@@ -563,14 +567,31 @@ function useWorktrees(): {
   return { worktrees, active, setActive };
 }
 
-/** Parked interactive permission prompts, grouped by task id and kept in sync with
- *  `nc:permission`. Answering removes a prompt optimistically (the backend resolves
- *  the parked request); a terminal `nc:task` for a task drops any stale prompts. */
-function usePermissions(tasks: Task[], toast: ToastApi) {
-  const [prompts, setPrompts] = useState<Record<string, PermissionPrompt[]>>({});
+/**
+ * Shared machinery for a family of parked interactive prompts that block a live
+ * run — permission approvals (`nc:permission`) and AskUserQuestion answers
+ * (`nc:question`). It:
+ *  - subscribes to the prompt channel and groups prompts by task id (dedup-guarded);
+ *  - prunes prompts for tasks whose session is no longer live (kept for both
+ *    `in_progress` AND `verifying`, since the reviewer subagent runs in-session and
+ *    can park a dialog — pruning a still-live task would hang the engine dialog);
+ *  - exposes `resolve(taskId, requestId, send)` that removes the prompt
+ *    optimistically and re-inserts it (dedup-guarded) if `send` rejects, so the run
+ *    never hangs on a prompt the UI already dropped.
+ */
+function useParkedPrompts<T extends { taskId: string; requestId: string }>(
+  subscribe: (handler: (prompt: T) => void) => Promise<() => void>,
+  tasks: Task[],
+  toast: ToastApi,
+  errorMessage: string,
+): {
+  prompts: Record<string, T[]>;
+  resolve: (taskId: string, requestId: string, send: () => Promise<void>) => void;
+} {
+  const [prompts, setPrompts] = useState<Record<string, T[]>>({});
 
   useEffect(() => {
-    const unlisten = onPermissionEvent((prompt) => {
+    const unlisten = subscribe((prompt) => {
       setPrompts((prev) => {
         const existing = prev[prompt.taskId] ?? [];
         if (existing.some((p) => p.requestId === prompt.requestId)) return prev;
@@ -580,29 +601,30 @@ function usePermissions(tasks: Task[], toast: ToastApi) {
     return () => {
       void unlisten.then((fn) => fn());
     };
-  }, []);
+  }, [subscribe]);
 
-  // Drop prompts for any task no longer running — a cancel/terminal transition
-  // fail-closed-denies them on the backend, so they must not linger in the UI.
   useEffect(() => {
-    const running = new Set(tasks.filter((t) => t.status === 'in_progress').map((t) => t.id));
+    const live = new Set(
+      tasks
+        .filter((t) => t.status === 'in_progress' || t.status === 'verifying')
+        .map((t) => t.id),
+    );
     setPrompts((prev) => {
-      const next: Record<string, PermissionPrompt[]> = {};
+      const next: Record<string, T[]> = {};
       let changed = false;
       for (const [taskId, list] of Object.entries(prev)) {
-        if (running.has(taskId)) next[taskId] = list;
+        if (live.has(taskId)) next[taskId] = list;
         else changed = true;
       }
       return changed ? next : prev;
     });
   }, [tasks]);
 
-  const respond = useCallback(
-    (taskId: string, requestId: string, decision: 'allow' | 'deny') => {
-      // Optimistically remove the prompt, capturing it so a failed response can
-      // be re-inserted — otherwise the run parks forever on a prompt the UI
-      // already dropped.
-      let removed: PermissionPrompt | undefined;
+  const resolve = useCallback(
+    (taskId: string, requestId: string, send: () => Promise<void>) => {
+      // Optimistically remove the prompt, capturing it so a failed relay can be
+      // re-inserted — otherwise the run parks forever on a prompt already dropped.
+      let removed: T | undefined;
       setPrompts((prev) => {
         const list = prev[taskId] ?? [];
         removed = list.find((p) => p.requestId === requestId);
@@ -612,9 +634,9 @@ function usePermissions(tasks: Task[], toast: ToastApi) {
         else next[taskId] = remaining;
         return next;
       });
-      void respondPermission(taskId, requestId, decision).catch((err) => {
-        console.error('respond_permission failed', err);
-        toast.error('Could not answer the permission prompt', err);
+      void send().catch((err) => {
+        console.error(errorMessage, err);
+        toast.error(errorMessage, err);
         if (removed === undefined) return;
         const prompt = removed;
         // Re-insert (dedup-guarded) so the user can retry rather than hang the run.
@@ -625,10 +647,48 @@ function usePermissions(tasks: Task[], toast: ToastApi) {
         });
       });
     },
-    [toast],
+    [toast, errorMessage],
   );
 
+  return { prompts, resolve };
+}
+
+/** Parked interactive permission prompts (`nc:permission`). Answering removes the
+ *  prompt optimistically (the backend resolves the parked request) and re-inserts
+ *  it if the relay fails — see {@link useParkedPrompts}. */
+function usePermissions(tasks: Task[], toast: ToastApi) {
+  const { prompts, resolve } = useParkedPrompts<PermissionPrompt>(
+    onPermissionEvent,
+    tasks,
+    toast,
+    'Could not answer the permission prompt',
+  );
+  const respond = useCallback(
+    (taskId: string, requestId: string, decision: 'allow' | 'deny') => {
+      resolve(taskId, requestId, () => respondPermission(taskId, requestId, decision));
+    },
+    [resolve],
+  );
   return { prompts, respond };
+}
+
+/** Parked interactive `AskUserQuestion` prompts (`nc:question`). Answering removes
+ *  the prompt optimistically (the engine settles the parked dialog) and re-inserts
+ *  it if the relay fails — see {@link useParkedPrompts}. */
+function useQuestions(tasks: Task[], toast: ToastApi) {
+  const { prompts, resolve } = useParkedPrompts<QuestionPrompt>(
+    onQuestionEvent,
+    tasks,
+    toast,
+    'Could not answer the question',
+  );
+  const answer = useCallback(
+    (taskId: string, requestId: string, value: QuestionAnswer) => {
+      resolve(taskId, requestId, () => answerQuestion(taskId, requestId, value));
+    },
+    [resolve],
+  );
+  return { prompts, answer };
 }
 
 /** Per-task readiness-gauntlet results + in-flight state (M4, §C). The Verified
@@ -696,7 +756,10 @@ export interface AppShellState {
     blockedIds: Set<string>;
     /** Parked permission prompts keyed by task id (`nc:permission`). */
     prompts: Record<string, PermissionPrompt[]>;
-    /** Task ids with at least one parked prompt — drives the card's pulse. */
+    /** Parked AskUserQuestion prompts keyed by task id (`nc:question`). */
+    questions: Record<string, QuestionPrompt[]>;
+    /** Task ids with at least one parked prompt OR question — drives the card's
+     *  pulse and the "needs input" affordance. */
     promptIds: Set<string>;
     /** Per-task readiness-gauntlet results (M4), keyed by task id. */
     gauntletResults: Record<string, GauntletResult>;
@@ -730,6 +793,12 @@ export interface AppShellState {
       taskId: string,
       requestId: string,
       decision: 'allow' | 'deny',
+    ) => void;
+    /** Answer a parked AskUserQuestion prompt (submit choices or skip). */
+    handleAnswerQuestion: (
+      taskId: string,
+      requestId: string,
+      answer: QuestionAnswer,
     ) => void;
     handleApprove: (id: string) => void;
     handleReject: (id: string) => void;
@@ -787,6 +856,7 @@ export function useAppShell(): AppShellState {
   const blockedIds = useBlockedIds();
   const { tasks, setTasks, streams, setStreams, selectedId, setSelectedId } = board;
   const permissions = usePermissions(tasks, toast);
+  const questions = useQuestions(tasks, toast);
   const gauntlet = useGauntlet(toast);
   const worktrees = useWorktrees();
 
@@ -1091,8 +1161,8 @@ export function useAppShell(): AppShellState {
   );
 
   const promptIds = useMemo(
-    () => new Set(Object.keys(permissions.prompts)),
-    [permissions.prompts],
+    () => new Set([...Object.keys(permissions.prompts), ...Object.keys(questions.prompts)]),
+    [permissions.prompts, questions.prompts],
   );
 
   return {
@@ -1108,6 +1178,7 @@ export function useAppShell(): AppShellState {
       logCounts,
       blockedIds,
       prompts: permissions.prompts,
+      questions: questions.prompts,
       promptIds,
       gauntletResults: gauntlet.results,
       gauntletRunning: gauntlet.running,
@@ -1124,6 +1195,7 @@ export function useAppShell(): AppShellState {
       handleClearColumn,
       handleMoveTask,
       handleRespondPermission: permissions.respond,
+      handleAnswerQuestion: questions.answer,
       handleApprove,
       handleReject,
       handleRefine,
