@@ -1,6 +1,7 @@
 import type { PermissionPolicy, ToolRisk } from '@nightcore/contracts';
 import { createRequestIdFactory, type Logger } from '@nightcore/shared';
 import type { CanUseTool, PermissionResult } from '@anthropic-ai/claude-agent-sdk';
+import { ASK_USER_QUESTION_TOOL } from './question-layer.js';
 
 /** Look up a tool's declared risk class by the name the model uses. Returns
  *  `undefined` when no descriptor declares one — treated as `dangerous`. */
@@ -64,6 +65,14 @@ export class PermissionLayer {
 
   /** The callback wired into the SDK `query()` options. */
   readonly canUseTool: CanUseTool = async (toolName, input, options) => {
+    // AskUserQuestion carries no side effect — its interactive answer is
+    // collected over the SDK `onUserDialog` channel (QuestionLayer), not here.
+    // Auto-allow so it never surfaces as a generic allow/deny prompt with no
+    // answers (the bug this feature fixes); the dialog is what the user answers.
+    if (toolName === ASK_USER_QUESTION_TOOL) {
+      return { behavior: 'allow', updatedInput: input };
+    }
+
     if (this.policy.deny.includes(toolName)) {
       return {
         behavior: 'deny',

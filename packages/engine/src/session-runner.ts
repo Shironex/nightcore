@@ -4,6 +4,7 @@ import type {
   NightcoreEvent,
   PermissionMode,
   PermissionPolicy,
+  QuestionAnswer,
   SettingSource,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
@@ -23,6 +24,7 @@ import {
   type SlashCommand,
 } from './sdk-adapter.js';
 import { PermissionLayer, type ApprovalDecision } from './permission-layer.js';
+import { QuestionLayer, ASK_USER_QUESTION_DIALOG } from './question-layer.js';
 import { ToolRegistry } from './tool-registry.js';
 import { HookBus } from './hook-bus.js';
 import { resolveClaudeBinary } from './resolve-claude-binary.js';
@@ -178,6 +180,7 @@ export class SessionRunner {
   private query?: Query;
   private readonly abort = new AbortController();
   private readonly permissions: PermissionLayer;
+  private readonly questions: QuestionLayer;
   private readonly registry = new ToolRegistry();
   private readonly hooks: HookBus;
 
@@ -208,6 +211,17 @@ export class SessionRunner {
       (name) => this.registry.riskOf(name),
       logger,
     );
+    this.questions = new QuestionLayer(
+      (req) =>
+        this.emit({
+          type: 'question-required',
+          sessionId: cfg.sessionId,
+          requestId: req.requestId,
+          ...(req.toolUseId !== undefined ? { toolUseId: req.toolUseId } : {}),
+          questions: req.questions,
+        }),
+      logger,
+    );
   }
 
   /** Drive the query loop to completion. Resolves when the session reaches a
@@ -234,6 +248,12 @@ export class SessionRunner {
       permissionMode: this.cfg.permissionMode,
       includePartialMessages: true,
       canUseTool: this.permissions.canUseTool,
+      // AskUserQuestion is delivered as a `request_user_dialog` of this kind, NOT
+      // via canUseTool. Declaring ONLY this dialog kind opts the session into
+      // receiving it (the CLI fails closed on undeclared kinds) while leaving
+      // every other dialog kind on its existing no-dialog/canUseTool behavior.
+      onUserDialog: this.questions.onUserDialog,
+      supportedDialogKinds: [ASK_USER_QUESTION_DIALOG],
       // Native SDK tools only — the agent uses the SDK's native
       // Read/Write/Edit/Bash/Grep/Glob (the Claude-Code mental model); Nightcore
       // ships no in-house custom tools and registers no IN-PROCESS MCP server.
@@ -306,6 +326,7 @@ export class SessionRunner {
       this.handleCrash(error);
     } finally {
       this.permissions.failAllPending();
+      this.questions.failAllPending();
     }
   }
 
@@ -356,6 +377,11 @@ export class SessionRunner {
   /** Resolve a parked interactive permission from a surface command. */
   approvePermission(requestId: string, decision: ApprovalDecision): boolean {
     return this.permissions.resolve(requestId, decision);
+  }
+
+  /** Resolve a parked AskUserQuestion dialog from a surface command. */
+  answerQuestion(requestId: string, answer: QuestionAnswer): boolean {
+    return this.questions.resolve(requestId, answer);
   }
 
   /**

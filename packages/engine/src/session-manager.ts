@@ -161,6 +161,9 @@ export class SessionManager {
       case 'approve-permission':
         session.runner.approvePermission(command.requestId, command.decision);
         break;
+      case 'answer-question':
+        session.runner.answerQuestion(command.requestId, command.answer);
+        break;
     }
   }
 
