@@ -131,6 +131,7 @@ export const ARTIFACT_KIND_META: Record<ArtifactKind, { label: string }> = {
   'eslint-plugin-file': { label: 'ESLint plugin file' },
   'eslint-config': { label: 'ESLint config' },
   'agent-contract': { label: 'Agent contract' },
+  'custom-lint-plugin': { label: 'Custom lint plugin' },
 };
 
 /** How `apply` writes the artifact, as the confirm dialog states it. */
