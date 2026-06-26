@@ -473,6 +473,7 @@ pub enum ArtifactKind {
     EslintPluginFile,
     EslintConfig,
     AgentContract,
+    CustomLintPlugin,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

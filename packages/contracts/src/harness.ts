@@ -138,7 +138,11 @@ export type RepoProfile = z.infer<typeof RepoProfileSchema>;
  * The kind of harness artifact the synthesis pass proposes. Maps to a write
  * target: `lint-meta-rule` / `eslint-rule` / `eslint-plugin-file` / `eslint-config`
  * form the enforceable plugin + manifest; `agent-contract` is the CLAUDE.md /
- * AGENTS.md guardrail doc.
+ * AGENTS.md guardrail doc. `custom-lint-plugin` tags a multi-file bundle that
+ * packages a whole project-specific ESLint plugin (its members are
+ * `eslint-plugin-file` artifacts sharing one `group`) — a label for the group, so
+ * the UI can announce "this is a generated lint plugin" without changing the
+ * one-file-at-a-time write primitive.
  */
 export const ArtifactKindSchema = z.enum([
   'lint-meta-rule',
@@ -146,6 +150,7 @@ export const ArtifactKindSchema = z.enum([
   'eslint-plugin-file',
   'eslint-config',
   'agent-contract',
+  'custom-lint-plugin',
 ]);
 export type ArtifactKind = z.infer<typeof ArtifactKindSchema>;
 

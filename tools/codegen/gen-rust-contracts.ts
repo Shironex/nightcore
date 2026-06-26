@@ -311,7 +311,7 @@ const ENUM_NAMES: Record<string, string> = {
   'convention|gap': 'ConventionKind',
   'pnpm|bun|yarn|npm|turbo|nx|cargo|single|unknown': 'WorkspaceTool',
   'app|package|tool|unknown': 'RepoPackageRole',
-  'lint-meta-rule|eslint-rule|eslint-plugin-file|eslint-config|agent-contract':
+  'lint-meta-rule|eslint-rule|eslint-plugin-file|eslint-config|agent-contract|custom-lint-plugin':
     'ArtifactKind',
   'create|merge-section': 'ArtifactWriteMode',
 };
