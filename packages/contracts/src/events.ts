@@ -407,6 +407,15 @@ export const HarnessCategoryCompletedEvent = z.object({
   error: z.string().optional(),
 });
 
+/** The synthesis pass began (after every convention pass, before proposals).
+ *  Carries no payload beyond `runId`: it exists so the UI can show a
+ *  "Synthesizing harness…" state instead of a frozen, all-lenses-done dead zone,
+ *  and so the Rust/terminal logs mark the start of the (serial) synthesis tail. */
+export const HarnessSynthesisStartedEvent = z.object({
+  type: z.literal('harness-synthesis-started'),
+  runId: z.string(),
+});
+
 /** The synthesis pass finished: the proposed harness artifacts stream in as a batch.
  *  Emitted after every convention pass, before the terminal event. */
 export const HarnessProposalsReadyEvent = z.object({
@@ -460,6 +469,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   HarnessProfileReadyEvent,
   HarnessCategoryStartedEvent,
   HarnessCategoryCompletedEvent,
+  HarnessSynthesisStartedEvent,
   HarnessProposalsReadyEvent,
   HarnessScanCompletedEvent,
   HarnessScanFailedEvent,

@@ -1057,6 +1057,10 @@ const EVENT_INPUTS: Record<string, unknown> = {
     },
     costUsd: 0.04,
   },
+  'harness-synthesis-started': {
+    type: 'harness-synthesis-started',
+    runId: 'run-h1',
+  },
   'harness-proposals-ready': {
     type: 'harness-proposals-ready',
     runId: 'run-h1',
