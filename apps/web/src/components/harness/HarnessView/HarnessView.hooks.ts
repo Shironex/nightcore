@@ -1,0 +1,555 @@
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { MenuItem } from '@/components/ui';
+import {
+  applyHarnessArtifact,
+  cancelHarnessScan,
+  dismissHarnessArtifact,
+  dismissHarnessFinding,
+  getHarnessRun,
+  listHarnessRuns,
+  onHarnessEvent,
+  restoreHarnessArtifact,
+  restoreHarnessFinding,
+  startHarnessScan,
+  type ConventionCategory,
+  type EffortLevel,
+  type HarnessEvent,
+  type HarnessRun,
+} from '@/lib/bridge';
+import { ALL_CATEGORIES, severityRankValue } from '../harness.constants';
+import type {
+  ConventionFindingVM,
+  ProposedArtifactVM,
+} from '../harness.types';
+import {
+  EMPTY_HARNESS_STREAM,
+  foldHarness,
+  streamFromRun,
+  type CategoryProgress,
+  type HarnessStream,
+} from '../harness-stream';
+import type { CategoryTab } from '../CategoryTabs';
+import type { HarnessViewProps } from './HarnessView.types';
+
+export interface UseHarnessResult {
+  stream: HarnessStream;
+  runs: HarnessRun[];
+  isStarting: boolean;
+  startError: string | null;
+  start: (
+    categories: ConventionCategory[],
+    model: string | null,
+    effort: string | null,
+  ) => Promise<void>;
+  cancel: () => Promise<void>;
+  selectRun: (runId: string) => Promise<void>;
+  dismissFinding: (findingId: string) => Promise<void>;
+  restoreFinding: (findingId: string) => Promise<void>;
+  dismissArtifact: (artifactId: string) => Promise<void>;
+  restoreArtifact: (artifactId: string) => Promise<void>;
+  /** Apply an artifact to disk. Resolves on success; REJECTS with the write error
+   *  (surfaced inline by the confirm dialog) so a refused overwrite isn't swallowed. */
+  applyArtifact: (artifactId: string) => Promise<void>;
+}
+
+/** Drive the Harness data layer: live `harness-*` fold for the active run,
+ *  authoritative reconciliation against the persisted run on completion, and the
+ *  finding/artifact lifecycle actions. */
+export function useHarness(hasProject: boolean): UseHarnessResult {
+  const [stream, setStream] = useState<HarnessStream>(EMPTY_HARNESS_STREAM);
+  const [runs, setRuns] = useState<HarnessRun[]>([]);
+  const [isStarting, setIsStarting] = useState(false);
+  const [startError, setStartError] = useState<string | null>(null);
+
+  // The run the live event stream is folded into. A ref so the once-installed
+  // listener always reads the latest without re-subscribing.
+  const activeRunId = useRef<string | null>(null);
+  // Synchronous re-entrancy guard for `start`: blocks a second dispatch in the
+  // render-timing gap before the disabled Scan button / optimistic running state
+  // lands, so two fast clicks can't mint two uuids and launch two paid scans.
+  const scanInFlight = useRef(false);
+
+  const refreshRuns = useCallback(async () => {
+    const next = await listHarnessRuns();
+    setRuns(next);
+    return next;
+  }, []);
+
+  const reconcile = useCallback(
+    async (runId: string) => {
+      const run = await getHarnessRun(runId);
+      if (run !== null) setStream(streamFromRun(run));
+      await refreshRuns();
+    },
+    [refreshRuns],
+  );
+
+  // Initial load: list runs and display the newest (already sorted newest-first).
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const next = await refreshRuns();
+      if (cancelled || next.length === 0) return;
+      const newest = next[0];
+      if (newest === undefined) return;
+      activeRunId.current = newest.id;
+      setStream(streamFromRun(newest));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshRuns]);
+
+  // Subscribe to the live harness stream once.
+  useEffect(() => {
+    let unlisten: (() => void) | undefined;
+    let disposed = false;
+    void (async () => {
+      const fn = await onHarnessEvent((event: HarnessEvent) => {
+        if (event.type === 'artifact-applied') {
+          setStream((prev) =>
+            prev.runId === event.runId
+              ? {
+                  ...prev,
+                  artifacts: prev.artifacts.map((a) =>
+                    a.id === event.artifactId
+                      ? { ...a, status: 'applied', appliedPath: event.path }
+                      : a,
+                  ),
+                }
+              : prev,
+          );
+          void refreshRuns();
+          return;
+        }
+        // harness-* events only apply to the run currently displayed/driven.
+        if (event.runId !== activeRunId.current) return;
+        setStream((prev) => foldHarness(prev, event));
+        if (
+          event.type === 'harness-scan-completed' ||
+          event.type === 'harness-scan-failed'
+        ) {
+          void reconcile(event.runId);
+        }
+      });
+      if (disposed) fn();
+      else unlisten = fn;
+    })();
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [reconcile, refreshRuns]);
+
+  const start = useCallback(
+    async (
+      categories: ConventionCategory[],
+      model: string | null,
+      effort: string | null,
+    ) => {
+      if (!hasProject || categories.length === 0) return;
+      // Set synchronously, before the first await: a second click that slips
+      // through the render gap before `isStarting`/the optimistic running state
+      // disables Scan is a no-op instead of a second paid scan.
+      if (scanInFlight.current) return;
+      scanInFlight.current = true;
+      setIsStarting(true);
+      setStartError(null);
+      try {
+        const runId = await startHarnessScan(categories, {
+          model,
+          effort: effort as EffortLevel | null,
+        });
+        activeRunId.current = runId;
+        // Optimistic running state until `harness-scan-started` lands.
+        setStream({
+          ...EMPTY_HARNESS_STREAM,
+          runId,
+          status: 'running',
+          model,
+          requestedCategories: categories,
+          categoryState: Object.fromEntries(
+            categories.map((c) => [c, 'pending' as const]),
+          ),
+        });
+        await refreshRuns();
+      } catch (err) {
+        setStartError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setIsStarting(false);
+        scanInFlight.current = false;
+      }
+    },
+    [hasProject, refreshRuns],
+  );
+
+  const cancel = useCallback(async () => {
+    if (stream.runId === null) return;
+    await cancelHarnessScan(stream.runId);
+  }, [stream.runId]);
+
+  const selectRun = useCallback(async (runId: string) => {
+    const run = await getHarnessRun(runId);
+    if (run === null) return;
+    activeRunId.current = runId;
+    setStream(streamFromRun(run));
+  }, []);
+
+  const dismissFinding = useCallback(
+    async (findingId: string) => {
+      if (stream.runId === null) return;
+      const run = await dismissHarnessFinding(stream.runId, findingId);
+      if (run !== null) setStream(streamFromRun(run));
+      await refreshRuns();
+    },
+    [stream.runId, refreshRuns],
+  );
+
+  const restoreFinding = useCallback(
+    async (findingId: string) => {
+      if (stream.runId === null) return;
+      const run = await restoreHarnessFinding(stream.runId, findingId);
+      if (run !== null) setStream(streamFromRun(run));
+      await refreshRuns();
+    },
+    [stream.runId, refreshRuns],
+  );
+
+  const dismissArtifact = useCallback(
+    async (artifactId: string) => {
+      if (stream.runId === null) return;
+      const run = await dismissHarnessArtifact(stream.runId, artifactId);
+      if (run !== null) setStream(streamFromRun(run));
+      await refreshRuns();
+    },
+    [stream.runId, refreshRuns],
+  );
+
+  const restoreArtifact = useCallback(
+    async (artifactId: string) => {
+      if (stream.runId === null) return;
+      const run = await restoreHarnessArtifact(stream.runId, artifactId);
+      if (run !== null) setStream(streamFromRun(run));
+      await refreshRuns();
+    },
+    [stream.runId, refreshRuns],
+  );
+
+  const applyArtifact = useCallback(
+    async (artifactId: string) => {
+      if (stream.runId === null) return;
+      // Writes to disk — `apply_harness_artifact` rejects on a refused overwrite;
+      // let it propagate so the confirm dialog can surface the error inline.
+      const run = await applyHarnessArtifact(stream.runId, artifactId);
+      // The write succeeded — from the user's perspective the apply is DONE.
+      // The post-write run-list reconcile is best-effort (the `artifact-applied`
+      // listener already drives authoritative state), so a `listHarnessRuns`
+      // failure here must NOT surface as a write failure and re-open the confirm
+      // dialog. Isolate it in its own catch and log rather than rethrow.
+      setStream(streamFromRun(run));
+      await refreshRuns().catch((err) => {
+        console.error('listHarnessRuns failed', err);
+      });
+    },
+    [stream.runId, refreshRuns],
+  );
+
+  return {
+    stream,
+    runs,
+    isStarting,
+    startError,
+    start,
+    cancel,
+    selectRun,
+    dismissFinding,
+    restoreFinding,
+    dismissArtifact,
+    restoreArtifact,
+    applyArtifact,
+  };
+}
+
+const RUNNING: CategoryProgress = 'running';
+
+/** Order findings for display: open before dismissed, then severity (high→low). */
+function sortFindings(findings: ConventionFindingVM[]): ConventionFindingVM[] {
+  const statusRank = (f: ConventionFindingVM) => (f.status === 'open' ? 0 : 1);
+  return [...findings].sort((a, b) => {
+    const s = statusRank(a) - statusRank(b);
+    if (s !== 0) return s;
+    return severityRankValue(b.severity) - severityRankValue(a.severity);
+  });
+}
+
+/** Lenses that appear as tabs: those requested this scan plus any that produced
+ *  findings (covers loading a past run whose requested set we project from). */
+function tabCategories(stream: HarnessStream): ConventionCategory[] {
+  const present = new Set<ConventionCategory>(stream.requestedCategories);
+  for (const f of stream.findings) present.add(f.category);
+  return ALL_CATEGORIES.filter((c) => present.has(c));
+}
+
+function openCount(
+  findings: ConventionFindingVM[],
+  category?: ConventionCategory,
+): number {
+  return findings.filter(
+    (f) =>
+      f.status === 'open' && (category === undefined || f.category === category),
+  ).length;
+}
+
+/** Which body section is showing: the convention grid or the proposed harness. */
+export type HarnessSection = 'conventions' | 'proposals';
+
+/** Everything the HarnessView shell renders. `hasProject === false` is the only
+ *  early-return branch; every other field is meaningful in the project view. */
+export interface HarnessViewModel {
+  hasProject: boolean;
+  projectName: string | null;
+  stream: HarnessStream;
+  isStarting: boolean;
+  startError: string | null;
+  /** Run-history menu entries (newest first), each selecting that run. */
+  runHistory: MenuItem[];
+  /** Whether to surface the history affordance (≥1 persisted run). */
+  hasHistory: boolean;
+  /** Whether the profile banner should show its skeleton (scan running, no profile). */
+  profileLoading: boolean;
+  /** Which body section is active, and the toggle. */
+  section: HarnessSection;
+  setSection: (section: HarnessSection) => void;
+  /** Open-finding count + proposed-artifact count for the section toggle badges. */
+  conventionCount: number;
+  proposalCount: number;
+  /** Convention-lens tabs + active tab. */
+  tabs: CategoryTab[];
+  activeTab: 'all' | ConventionCategory;
+  setActiveTab: (key: 'all' | ConventionCategory) => void;
+  gridFindings: ConventionFindingVM[];
+  skeletonCount: number;
+  emptyMessage: string;
+  /** Proposed-harness panel inputs. */
+  artifacts: ProposedArtifactVM[];
+  proposalsLoading: boolean;
+  proposalsEmptyMessage: string;
+  /** The finding open in the detail panel, or `null`. */
+  selectedFinding: ConventionFindingVM | null;
+  openFinding: (finding: ConventionFindingVM) => void;
+  closeFinding: () => void;
+  /** The artifact open in the detail panel, or `null`. */
+  selectedArtifact: ProposedArtifactVM | null;
+  openArtifact: (artifact: ProposedArtifactVM) => void;
+  closeArtifact: () => void;
+  /** True while a finding/artifact action (dismiss/restore) is in flight. */
+  pending: boolean;
+  /** The artifact awaiting apply confirmation, or `null` (drives the dialog). */
+  applyTarget: ProposedArtifactVM | null;
+  /** True while the apply write is in flight. */
+  applying: boolean;
+  /** The error returned by the apply write, or `null`. */
+  applyError: string | null;
+  onScan: (
+    categories: ConventionCategory[],
+    model: string | null,
+    effort: string | null,
+  ) => void;
+  onCancel: () => void;
+  onDismissFinding: (findingId: string) => void;
+  onRestoreFinding: (findingId: string) => void;
+  onDismissArtifact: (artifactId: string) => void;
+  onRestoreArtifact: (artifactId: string) => void;
+  /** Open the apply confirmation for an artifact. */
+  requestApply: (artifactId: string) => void;
+  /** Confirm the apply (writes to disk). */
+  confirmApply: () => void;
+  /** Dismiss the apply confirmation. */
+  cancelApply: () => void;
+}
+
+/** Resolve the entire Harness surface into a single view model: the live/persisted
+ *  stream (via `useHarness`), the section/tab + selected finding/artifact UI state,
+ *  the apply-confirm flow, and every derived list. The component shell renders
+ *  purely from this. */
+export function useHarnessView({
+  projectPath,
+  projectName,
+}: HarnessViewProps): HarnessViewModel {
+  const hasProject = projectPath !== null;
+  const harness = useHarness(hasProject);
+  const { stream } = harness;
+
+  const [section, setSection] = useState<HarnessSection>('conventions');
+  const [activeTab, setActiveTab] = useState<'all' | ConventionCategory>('all');
+  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
+  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const [applyTargetId, setApplyTargetId] = useState<string | null>(null);
+  const [applying, setApplying] = useState(false);
+  const [applyError, setApplyError] = useState<string | null>(null);
+
+  const visibleCategories = useMemo(() => tabCategories(stream), [stream]);
+
+  const tabs: CategoryTab[] = useMemo(() => {
+    const runningCount = Object.values(stream.categoryState).filter(
+      (s) => s === RUNNING,
+    ).length;
+    const head: CategoryTab = {
+      key: 'all',
+      count: openCount(stream.findings),
+      running: runningCount > 0,
+      errored: false,
+    };
+    return [
+      head,
+      ...visibleCategories.map((c) => ({
+        key: c,
+        count: openCount(stream.findings, c),
+        running: stream.categoryState[c] === RUNNING,
+        errored: stream.categoryState[c] === 'error',
+      })),
+    ];
+  }, [stream, visibleCategories]);
+
+  const gridFindings = useMemo(() => {
+    const filtered =
+      activeTab === 'all'
+        ? stream.findings
+        : stream.findings.filter((f) => f.category === activeTab);
+    return sortFindings(filtered);
+  }, [stream.findings, activeTab]);
+
+  const skeletonCount = useMemo(() => {
+    if (stream.status !== 'running') return 0;
+    if (activeTab === 'all') {
+      const running = Object.values(stream.categoryState).filter(
+        (s) => s === RUNNING,
+      ).length;
+      return Math.min(6, running * 2);
+    }
+    return stream.categoryState[activeTab] === RUNNING ? 3 : 0;
+  }, [stream.status, stream.categoryState, activeTab]);
+
+  const selectedFinding = useMemo(
+    () => stream.findings.find((f) => f.id === selectedFindingId) ?? null,
+    [stream.findings, selectedFindingId],
+  );
+  const selectedArtifact = useMemo(
+    () => stream.artifacts.find((a) => a.id === selectedArtifactId) ?? null,
+    [stream.artifacts, selectedArtifactId],
+  );
+  const applyTarget = useMemo(
+    () => stream.artifacts.find((a) => a.id === applyTargetId) ?? null,
+    [stream.artifacts, applyTargetId],
+  );
+
+  const runHistory: MenuItem[] = useMemo(
+    () =>
+      harness.runs.map((run) => ({
+        label: `${new Date(run.createdAt).toLocaleString()} · ${run.findings.length} conventions`,
+        onClick: () => void harness.selectRun(run.id),
+      })),
+    [harness],
+  );
+
+  const emptyMessage = useMemo(() => {
+    if (stream.status === 'idle') {
+      return 'Run a scan to surface the conventions across your codebase.';
+    }
+    if (stream.status === 'running') return 'Scanning…';
+    if (stream.status === 'failed') {
+      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
+    }
+    return 'No conventions in this lens.';
+  }, [stream.status, stream.error]);
+
+  const proposalsEmptyMessage = useMemo(() => {
+    if (stream.status === 'idle') {
+      return 'Run a scan to synthesize a proposed harness from your conventions.';
+    }
+    if (stream.status === 'failed') {
+      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
+    }
+    return 'No harness artifacts proposed for this scan.';
+  }, [stream.status, stream.error]);
+
+  const runAction = useCallback(async (fn: () => Promise<unknown>) => {
+    setPending(true);
+    try {
+      await fn();
+    } finally {
+      setPending(false);
+    }
+  }, []);
+
+  const confirmApply = useCallback(() => {
+    if (applyTargetId === null) return;
+    const id = applyTargetId;
+    setApplying(true);
+    setApplyError(null);
+    void (async () => {
+      try {
+        await harness.applyArtifact(id);
+        setApplyTargetId(null);
+      } catch (err) {
+        setApplyError(err instanceof Error ? err.message : String(err));
+      } finally {
+        setApplying(false);
+      }
+    })();
+  }, [applyTargetId, harness]);
+
+  const cancelApply = useCallback(() => {
+    if (applying) return;
+    setApplyTargetId(null);
+    setApplyError(null);
+  }, [applying]);
+
+  return {
+    hasProject,
+    projectName,
+    stream,
+    isStarting: harness.isStarting,
+    startError: harness.startError,
+    runHistory,
+    hasHistory: harness.runs.length > 0,
+    profileLoading: stream.status === 'running' && stream.profile === null,
+    section,
+    setSection,
+    conventionCount: openCount(stream.findings),
+    proposalCount: stream.artifacts.filter((a) => a.status === 'proposed').length,
+    tabs,
+    activeTab,
+    setActiveTab,
+    gridFindings,
+    skeletonCount,
+    emptyMessage,
+    artifacts: stream.artifacts,
+    proposalsLoading: stream.status === 'running' && stream.artifacts.length === 0,
+    proposalsEmptyMessage,
+    selectedFinding,
+    openFinding: (finding: ConventionFindingVM) => setSelectedFindingId(finding.id),
+    closeFinding: () => setSelectedFindingId(null),
+    selectedArtifact,
+    openArtifact: (artifact: ProposedArtifactVM) => setSelectedArtifactId(artifact.id),
+    closeArtifact: () => setSelectedArtifactId(null),
+    pending,
+    applyTarget,
+    applying,
+    applyError,
+    onScan: (categories, model, effort) =>
+      void harness.start(categories, model, effort),
+    onCancel: () => void harness.cancel(),
+    onDismissFinding: (id) => void runAction(() => harness.dismissFinding(id)),
+    onRestoreFinding: (id) => void runAction(() => harness.restoreFinding(id)),
+    onDismissArtifact: (id) => void runAction(() => harness.dismissArtifact(id)),
+    onRestoreArtifact: (id) => void runAction(() => harness.restoreArtifact(id)),
+    requestApply: (id) => {
+      setApplyError(null);
+      setApplyTargetId(id);
+    },
+    confirmApply,
+    cancelApply,
+  };
+}

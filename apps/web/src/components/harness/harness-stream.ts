@@ -1,0 +1,299 @@
+/**
+ * The live Harness reducer: folds the `harness-*` event stream into a view model,
+ * the same incremental-fold shape `insight-stream.ts` uses for Insight. Also holds
+ * the normalizers that map the two sources for each shape — the live wire
+ * `ConventionFinding` / `ProposedArtifact` / `RepoProfile` (contract) and the
+ * persisted `Stored*` (ts-rs) — into the single view models the UI renders.
+ *
+ * Harness adds two hops over Insight: a `harness-profile-ready` up front (the
+ * deterministic repo profile, drives the ProfileBanner) and a
+ * `harness-proposals-ready` near the end (the synthesized artifacts, drive the
+ * proposed-harness panel) — both folded incrementally before the terminal event.
+ */
+import type {
+  ConventionCategory,
+  ConventionFinding,
+  HarnessRun,
+  HarnessScanEvent,
+  ProposedArtifact,
+  RepoProfile,
+  StoredConventionFinding,
+  StoredProposedArtifact,
+  StoredRepoProfile,
+} from '@/lib/bridge';
+import type {
+  ArtifactStatus,
+  CategoryProgress,
+  ConventionFindingVM,
+  FindingStatus,
+  ProposedArtifactVM,
+  RepoProfileVM,
+  RunStatus,
+} from './harness.types';
+
+export type { CategoryProgress } from './harness.types';
+
+export interface HarnessStream {
+  runId: string | null;
+  status: RunStatus;
+  model: string | null;
+  requestedCategories: ConventionCategory[];
+  categoryState: Record<string, CategoryProgress>;
+  /** The detected repo profile, once `harness-profile-ready` lands (else `null`). */
+  profile: RepoProfileVM | null;
+  findings: ConventionFindingVM[];
+  artifacts: ProposedArtifactVM[];
+  costUsd: number;
+  usage: { inputTokens: number; outputTokens: number };
+  durationMs: number;
+  error: string | null;
+}
+
+export const EMPTY_HARNESS_STREAM: HarnessStream = {
+  runId: null,
+  status: 'idle',
+  model: null,
+  requestedCategories: [],
+  categoryState: {},
+  profile: null,
+  findings: [],
+  artifacts: [],
+  costUsd: 0,
+  usage: { inputTokens: 0, outputTokens: 0 },
+  durationMs: 0,
+  error: null,
+};
+
+/** Map a live wire `ConventionFinding` (contract) into the view shape — it is
+ *  always `open` when it streams in (lifecycle is applied on persist). */
+export function wireToConventionFinding(f: ConventionFinding): ConventionFindingVM {
+  return {
+    id: f.id,
+    category: f.category,
+    kind: f.kind,
+    severity: f.severity,
+    title: f.title,
+    description: f.description,
+    rationale: f.rationale ?? null,
+    evidence: (f.evidence ?? []).map((e) => ({
+      file: e.file,
+      startLine: e.startLine ?? null,
+      endLine: e.endLine ?? null,
+      symbol: e.symbol ?? null,
+    })),
+    suggestion: f.suggestion ?? null,
+    tags: f.tags ?? [],
+    confidence: f.confidence ?? null,
+    fingerprint: f.fingerprint,
+    status: 'open',
+  };
+}
+
+/** Map a persisted `StoredConventionFinding` (string-typed) into the view shape,
+ *  narrowing the unified wire strings to their unions (the engine guarantees
+ *  valid values). */
+export function storedToConventionFinding(
+  f: StoredConventionFinding,
+): ConventionFindingVM {
+  return {
+    id: f.id,
+    category: f.category as ConventionFindingVM['category'],
+    kind: f.kind as ConventionFindingVM['kind'],
+    severity: f.severity as ConventionFindingVM['severity'],
+    title: f.title,
+    description: f.description,
+    rationale: f.rationale,
+    evidence: f.evidence,
+    suggestion: f.suggestion,
+    tags: f.tags,
+    confidence: f.confidence,
+    fingerprint: f.fingerprint,
+    status: f.status as FindingStatus,
+  };
+}
+
+/** Map a live wire `ProposedArtifact` (contract) into the view shape — it is
+ *  always `proposed` (unapplied) when it streams in. */
+export function wireToArtifact(a: ProposedArtifact): ProposedArtifactVM {
+  return {
+    id: a.id,
+    kind: a.kind,
+    group: a.group ?? null,
+    groupTitle: a.groupTitle ?? null,
+    title: a.title,
+    description: a.description,
+    rationale: a.rationale ?? null,
+    targetPath: a.targetPath,
+    writeMode: a.writeMode,
+    content: a.content,
+    language: a.language ?? null,
+    sourceFindings: a.sourceFindings ?? [],
+    dependsOn: a.dependsOn ?? [],
+    confidence: a.confidence ?? null,
+    fingerprint: a.fingerprint,
+    status: 'proposed',
+    appliedPath: null,
+    appliedAt: null,
+  };
+}
+
+/** Map a persisted `StoredProposedArtifact` (string-typed) into the view shape,
+ *  narrowing the wire strings to their unions and carrying the applied lifecycle. */
+export function storedToArtifact(a: StoredProposedArtifact): ProposedArtifactVM {
+  return {
+    id: a.id,
+    kind: a.kind as ProposedArtifactVM['kind'],
+    group: a.group,
+    groupTitle: a.groupTitle,
+    title: a.title,
+    description: a.description,
+    rationale: a.rationale,
+    targetPath: a.targetPath,
+    writeMode: a.writeMode as ProposedArtifactVM['writeMode'],
+    content: a.content,
+    language: a.language,
+    sourceFindings: a.sourceFindings,
+    dependsOn: a.dependsOn,
+    confidence: a.confidence,
+    fingerprint: a.fingerprint,
+    status: a.status as ArtifactStatus,
+    appliedPath: a.appliedPath,
+    appliedAt: a.appliedAt,
+  };
+}
+
+/** Map a live wire `RepoProfile` (contract) into the ProfileBanner view shape. */
+export function wireToProfile(p: RepoProfile): RepoProfileVM {
+  return {
+    isMonorepo: p.isMonorepo,
+    workspaceTool: p.workspaceTool,
+    packages: p.packages ?? [],
+    languages: p.languages ?? [],
+    frameworks: p.frameworks ?? [],
+    hasEslintFlatConfig: p.hasEslintFlatConfig,
+    hasLintMeta: p.hasLintMeta,
+    hasAgentDocs: p.hasAgentDocs,
+    existingPlugins: p.existingPlugins ?? [],
+  };
+}
+
+/** Map a persisted `StoredRepoProfile` (string-typed enums) into the view shape. */
+export function storedToProfile(p: StoredRepoProfile): RepoProfileVM {
+  return {
+    isMonorepo: p.isMonorepo,
+    workspaceTool: p.workspaceTool as RepoProfileVM['workspaceTool'],
+    packages: p.packages.map((pkg) => ({
+      name: pkg.name,
+      path: pkg.path,
+      role: pkg.role as RepoProfileVM['packages'][number]['role'],
+    })),
+    languages: p.languages,
+    frameworks: p.frameworks,
+    hasEslintFlatConfig: p.hasEslintFlatConfig,
+    hasLintMeta: p.hasLintMeta,
+    hasAgentDocs: p.hasAgentDocs,
+    existingPlugins: p.existingPlugins,
+  };
+}
+
+/** Project a persisted run into the same `HarnessStream` shape the live fold
+ *  produces, so the view renders both from one model. */
+export function streamFromRun(run: HarnessRun): HarnessStream {
+  const status: RunStatus =
+    run.status === 'running'
+      ? 'running'
+      : run.status === 'failed'
+        ? 'failed'
+        : 'completed';
+  const categories = run.categories as ConventionCategory[];
+  return {
+    runId: run.id,
+    status,
+    model: run.model || null,
+    requestedCategories: categories,
+    categoryState: Object.fromEntries(
+      categories.map((c) => [c, status === 'running' ? 'pending' : 'done']),
+    ),
+    profile: storedToProfile(run.profile),
+    findings: run.findings.map(storedToConventionFinding),
+    artifacts: run.artifacts.map(storedToArtifact),
+    costUsd: run.costUsd,
+    usage: run.usage,
+    durationMs: run.durationMs,
+    error: run.error,
+  };
+}
+
+function addUsage(
+  a: { inputTokens: number; outputTokens: number },
+  b: { inputTokens: number; outputTokens: number } | undefined,
+): { inputTokens: number; outputTokens: number } {
+  if (b === undefined) return a;
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+  };
+}
+
+/** Fold one `harness-*` scan event into the live stream. */
+export function foldHarness(
+  prev: HarnessStream,
+  event: HarnessScanEvent,
+): HarnessStream {
+  switch (event.type) {
+    case 'harness-scan-started':
+      return {
+        ...EMPTY_HARNESS_STREAM,
+        runId: event.runId,
+        status: 'running',
+        model: event.model,
+        requestedCategories: event.categories,
+        categoryState: Object.fromEntries(
+          event.categories.map((c) => [c, 'pending' as CategoryProgress]),
+        ),
+      };
+    case 'harness-profile-ready':
+      return { ...prev, profile: wireToProfile(event.profile) };
+    case 'harness-category-started':
+      return {
+        ...prev,
+        categoryState: { ...prev.categoryState, [event.category]: 'running' },
+      };
+    case 'harness-category-completed': {
+      const incoming = event.findings.map(wireToConventionFinding);
+      // Replace this lens's optimistic findings with the completed batch.
+      const others = prev.findings.filter((f) => f.category !== event.category);
+      return {
+        ...prev,
+        categoryState: {
+          ...prev.categoryState,
+          [event.category]: event.error ? 'error' : 'done',
+        },
+        findings: [...others, ...incoming],
+        costUsd: prev.costUsd + event.costUsd,
+        usage: addUsage(prev.usage, event.usage),
+      };
+    }
+    case 'harness-proposals-ready':
+      return { ...prev, artifacts: event.artifacts.map(wireToArtifact) };
+    case 'harness-scan-completed':
+      return {
+        ...prev,
+        status: 'completed',
+        profile: wireToProfile(event.profile),
+        findings: event.findings.map(wireToConventionFinding),
+        artifacts: event.artifacts.map(wireToArtifact),
+        costUsd: event.costUsd,
+        usage: event.usage ?? prev.usage,
+        durationMs: event.durationMs,
+        categoryState: Object.fromEntries(
+          prev.requestedCategories.map((c) => [
+            c,
+            prev.categoryState[c] === 'error' ? 'error' : 'done',
+          ]),
+        ),
+      };
+    case 'harness-scan-failed':
+      return { ...prev, status: 'failed', error: event.message };
+  }
+}

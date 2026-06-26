@@ -10,6 +10,7 @@ import {
   GearIcon,
   InsightIcon,
   LayersIcon,
+  VerifiedIcon,
 } from '@/components/ui';
 import { Sidebar } from '../Sidebar';
 import { Splash } from '../Splash';
@@ -32,6 +33,9 @@ const SettingsView = lazy(() =>
 const InsightView = lazy(() =>
   import('@/components/insight').then((m) => ({ default: m.InsightView })),
 );
+const HarnessView = lazy(() =>
+  import('@/components/harness').then((m) => ({ default: m.HarnessView })),
+);
 
 /** A minimal fallback while a lazy route view streams in — a quiet centered
  *  status line that never flashes chrome of its own. */
@@ -51,6 +55,7 @@ const NAV: NavItem[] = [
   { view: 'projects', label: 'Projects', hint: 'P', icon: <LayersIcon size={16} /> },
   { view: 'board', label: 'Kanban Board', hint: 'K', icon: <BoardIcon size={16} /> },
   { view: 'insight', label: 'Insight', hint: 'I', icon: <InsightIcon size={16} /> },
+  { view: 'harness', label: 'Harness', hint: 'H', icon: <VerifiedIcon size={16} /> },
   { view: 'settings', label: 'Settings', hint: 'S', icon: <GearIcon size={16} /> },
 ];
 
@@ -197,6 +202,15 @@ export function AppShell() {
               projectPath={active?.path ?? null}
               projectName={active?.name ?? null}
               onGotoBoard={() => routing.goto('board')}
+            />
+          </Suspense>
+        )}
+
+        {view === 'harness' && (
+          <Suspense fallback={<RouteFallback />}>
+            <HarnessView
+              projectPath={active?.path ?? null}
+              projectName={active?.name ?? null}
             />
           </Suspense>
         )}

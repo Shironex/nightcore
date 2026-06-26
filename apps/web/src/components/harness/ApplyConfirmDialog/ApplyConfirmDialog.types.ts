@@ -1,0 +1,14 @@
+import type { ProposedArtifactVM } from '../harness.types';
+
+export interface ApplyConfirmDialogProps {
+  /** The artifact the user is about to write to disk. */
+  artifact: ProposedArtifactVM;
+  /** True while the apply write is in flight — disables confirm. */
+  applying: boolean;
+  /** The error returned by `apply_harness_artifact`, surfaced inline (or null). */
+  error: string | null;
+  /** Confirm the write (Enter or the Apply button). */
+  onConfirm: () => void;
+  /** Cancel (Esc, click-outside, or Cancel). */
+  onCancel: () => void;
+}
