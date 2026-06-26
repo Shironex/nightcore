@@ -156,7 +156,7 @@ describe('foldInsight', () => {
     expect(next.categoryState.bugs).toBe('done');
   });
 
-  it('analysis-failed records the error', () => {
+  it('analysis-failed records the error and carries the abort reason', () => {
     const next = foldInsight(
       { ...EMPTY_INSIGHT_STREAM, runId: 'run-1', status: 'running' },
       {
@@ -168,6 +168,22 @@ describe('foldInsight', () => {
     );
     expect(next.status).toBe('failed');
     expect(next.error).toBe('cancelled');
+    // The reason threads through so the view can show a neutral cancel notice
+    // instead of the destructive failure banner.
+    expect(next.failureReason).toBe('aborted');
+  });
+
+  it('analysis-failed carries a non-abort crash reason', () => {
+    const next = foldInsight(
+      { ...EMPTY_INSIGHT_STREAM, runId: 'run-1', status: 'running' },
+      {
+        type: 'analysis-failed',
+        runId: 'run-1',
+        reason: 'runner-crash',
+        message: 'boom',
+      } as AnalysisEvent,
+    );
+    expect(next.failureReason).toBe('runner-crash');
   });
 });
 

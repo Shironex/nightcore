@@ -22,6 +22,13 @@ import type {
 /** A category's progress within a run. */
 export type CategoryProgress = 'pending' | 'running' | 'done' | 'error';
 
+/** The stable reason an `analysis-failed` event carries, threaded through the fold
+ *  so the view can tell a user cancel (`aborted`) from a real crash. */
+export type AnalysisFailureReason = Extract<
+  AnalysisEvent,
+  { type: 'analysis-failed' }
+>['reason'];
+
 export interface InsightStream {
   runId: string | null;
   status: RunStatus;
@@ -34,6 +41,9 @@ export interface InsightStream {
   usage: { inputTokens: number; outputTokens: number };
   durationMs: number;
   error: string | null;
+  /** Why the run failed, when `status === 'failed'`. Only set from the live
+   *  `analysis-failed` event (a reloaded persisted run carries no reason). */
+  failureReason: AnalysisFailureReason | null;
 }
 
 export const EMPTY_INSIGHT_STREAM: InsightStream = {
@@ -48,6 +58,7 @@ export const EMPTY_INSIGHT_STREAM: InsightStream = {
   usage: { inputTokens: 0, outputTokens: 0 },
   durationMs: 0,
   error: null,
+  failureReason: null,
 };
 
 /** Map a live wire `Finding` (contract) into the view shape — it is always `open`
@@ -129,6 +140,9 @@ export function streamFromRun(run: InsightRun): InsightStream {
     usage: run.usage,
     durationMs: run.durationMs,
     error: run.error,
+    // The persisted run records no failure reason — a reloaded failed run can't
+    // distinguish a cancel from a crash, so it falls back to the generic banner.
+    failureReason: null,
   };
 }
 
@@ -197,6 +211,11 @@ export function foldInsight(
         ),
       };
     case 'analysis-failed':
-      return { ...prev, status: 'failed', error: event.message };
+      return {
+        ...prev,
+        status: 'failed',
+        error: event.message,
+        failureReason: event.reason,
+      };
   }
 }

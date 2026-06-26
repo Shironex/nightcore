@@ -47,7 +47,14 @@ type Story = StoryObj<typeof meta>;
 export const Open: Story = {};
 
 export const Converted: Story = {
-  args: { finding: finding({ status: 'converted', linkedTaskId: 't1' }) },
+  args: {
+    finding: finding({
+      status: 'converted',
+      linkedTaskId: 't1',
+      codeBefore: null,
+      codeAfter: null,
+    }),
+  },
 };
 
 export const Dismissed: Story = {

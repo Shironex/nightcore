@@ -2,6 +2,7 @@ import type { ReactNode } from 'react';
 import {
   Button,
   CloseIcon,
+  CodeBlock,
   IconButton,
   Markdown,
   Modal,
@@ -26,6 +27,14 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
       {children}
     </section>
   );
+}
+
+/** Infer a syntax-highlight language from the finding's grounded file extension,
+ *  defaulting to `ts`. CodeBlock maps anything it doesn't know to plain text. */
+function inferLanguage(finding: InsightFinding): string {
+  const file = finding.location?.file;
+  const ext = file?.split('.').pop()?.toLowerCase();
+  return ext !== undefined && ext.length > 0 ? ext : 'ts';
 }
 
 function locationLabel(finding: InsightFinding): string | null {
@@ -56,6 +65,7 @@ export function FindingDetailPanel({
   const Meta = CATEGORY_META[finding.category];
   const Icon = Meta.icon;
   const loc = locationLabel(finding);
+  const lang = inferLanguage(finding);
 
   return (
     <Modal
@@ -124,16 +134,16 @@ export function FindingDetailPanel({
 
         {finding.codeBefore !== null && (
           <Section title="Before">
-            <pre className="overflow-x-auto rounded-md border border-border bg-white/[0.03] p-3 font-mono text-[11.5px] text-foreground">
-              {finding.codeBefore}
-            </pre>
+            <CodeBlock code={finding.codeBefore} language={lang} />
           </Section>
         )}
         {finding.codeAfter !== null && (
           <Section title="After">
-            <pre className="overflow-x-auto rounded-md border border-success/30 bg-success/[0.06] p-3 font-mono text-[11.5px] text-foreground">
-              {finding.codeAfter}
-            </pre>
+            <CodeBlock
+              code={finding.codeAfter}
+              language={lang}
+              className="border-success/30 bg-success/[0.06]"
+            />
           </Section>
         )}
 

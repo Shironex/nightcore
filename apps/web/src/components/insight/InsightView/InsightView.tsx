@@ -1,10 +1,16 @@
 import {
   Button,
+  ChevronLeftIcon,
   EmptyState,
   FolderIcon,
   HistoryIcon,
   InsightIcon,
   Menu,
+  MoveIcon,
+  RetryIcon,
+  RunLifecycleShell,
+  RunProgress,
+  StopIcon,
 } from '@/components/ui';
 import { CategoryTabs } from '../CategoryTabs';
 import { FindingDetailPanel } from '../FindingDetailPanel';
@@ -13,8 +19,9 @@ import { RunControls } from '../RunControls';
 import { useInsightView } from './InsightView.hooks';
 import type { InsightViewProps } from './InsightView.types';
 
-/** The Insight surface: run controls, a tabbed-by-category finding grid with
- *  streaming skeletons, and a slide-in detail panel with convert/dismiss actions. */
+/** The Insight surface as a three-screen lifecycle (CONFIGURE / RUNNING /
+ *  RESULTS) wrapped in the shared `RunLifecycleShell`, driven by `stream.status`
+ *  plus an explicit "New run" reconfigure override. */
 export function InsightView(props: InsightViewProps) {
   const view = useInsightView(props);
 
@@ -28,60 +35,193 @@ export function InsightView(props: InsightViewProps) {
     );
   }
 
+  const title = (
+    <span className="flex items-center gap-2">
+      <InsightIcon size={16} className="text-primary" />
+      Insight
+    </span>
+  );
+
+  const actions = (
+    <>
+      {view.hasHistory && (
+        <Menu
+          label="Run history"
+          items={view.runHistory}
+          align="right"
+          trigger={
+            <Button variant="ghost">
+              <HistoryIcon size={14} />
+              History
+            </Button>
+          }
+        />
+      )}
+      {view.phase === 'results' && (
+        <Button variant="ghost" onClick={view.startNewRun}>
+          <RetryIcon size={14} />
+          New run
+        </Button>
+      )}
+    </>
+  );
+
+  // Collapsed-config bar: read-only while running, click-to-reconfigure otherwise.
+  const summary =
+    view.stream.status === 'running' ? (
+      <span>{view.summary}</span>
+    ) : (
+      <button
+        type="button"
+        onClick={view.startNewRun}
+        className="transition-colors hover:text-foreground"
+      >
+        {view.summary}
+        {/* Append to the accessible name without an aria-label, which would
+            clobber the visible config text screen-reader users still want read. */}
+        <span className="sr-only"> — reconfigure run</span>
+      </button>
+    );
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      {/* Header */}
-      <div className="flex items-center gap-3 border-b border-border px-6 py-4">
-        <InsightIcon size={18} className="text-primary" />
-        <div className="flex flex-col">
-          <h1 className="text-[15px] font-semibold text-foreground">Insight</h1>
-          <span className="text-[12px] text-muted-foreground">
-            {view.projectName ?? 'Codebase analysis'}
-          </span>
-        </div>
-        {view.hasHistory && (
-          <div className="ml-auto">
-            <Menu
-              label="Run history"
-              items={view.runHistory}
-              align="right"
-              trigger={
-                <Button variant="ghost">
-                  <HistoryIcon size={14} />
-                  History
-                </Button>
-              }
+    <>
+      <RunLifecycleShell
+        title={title}
+        subtitle={view.projectName ?? 'Codebase analysis'}
+        phase={view.phase}
+        summary={summary}
+        actions={actions}
+      >
+        {view.phase === 'configure' && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            {view.startError !== null && (
+              <p className="border-b border-destructive/40 bg-destructive/[0.1] px-6 py-2 text-[12.5px] text-destructive">
+                {view.startError}
+              </p>
+            )}
+            <RunControls
+              config={view.config}
+              isStarting={view.isStarting}
+              onAnalyze={view.onAnalyze}
             />
           </div>
         )}
-      </div>
 
-      <RunControls
-        stream={view.stream}
-        isStarting={view.isStarting}
-        disabled={!view.hasProject}
-        onAnalyze={view.onAnalyze}
-        onCancel={view.onCancel}
-      />
+        {view.phase === 'running' && (
+          <div className="flex min-h-0 flex-1 overflow-y-auto">
+            <div className="mx-auto w-full max-w-[820px] px-6 py-7">
+              {view.peekCategory === null ? (
+                <>
+                  <RunProgress
+                    status={view.stream.status}
+                    categories={view.progressCategories}
+                    categoryState={view.stream.categoryState}
+                    findingCounts={view.findingCounts}
+                    unitLabel="categories"
+                    costUsd={view.stream.costUsd}
+                    usage={view.stream.usage}
+                    durationMs={view.stream.durationMs}
+                    onOpenCategory={view.onOpenCategory}
+                  />
+                  <div className="mt-5 flex justify-end">
+                    <Button variant="danger" onClick={view.onCancel}>
+                      <StopIcon size={15} />
+                      Cancel scan
+                    </Button>
+                  </div>
+                </>
+              ) : (
+                <div className="flex flex-col gap-3">
+                  <button
+                    type="button"
+                    onClick={view.clearPeek}
+                    className="inline-flex w-fit items-center gap-1 font-mono text-[11px] uppercase tracking-[0.1em] text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    <ChevronLeftIcon size={13} />
+                    Back to progress
+                  </button>
+                  <span className="text-[13px] font-semibold text-foreground">
+                    {view.peekLabel}
+                  </span>
+                  <FindingGrid
+                    findings={view.peekFindings}
+                    skeletonCount={0}
+                    emptyMessage="No findings in this category yet."
+                    onOpen={view.openFinding}
+                  />
+                </div>
+              )}
+            </div>
+          </div>
+        )}
 
-      {view.startError !== null && (
-        <p className="border-b border-destructive/40 bg-destructive/[0.1] px-6 py-2 text-[12.5px] text-destructive">
-          {view.startError}
-        </p>
-      )}
+        {view.phase === 'results' && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            {view.stream.status === 'failed' &&
+              (view.stream.failureReason === 'aborted' ? (
+                // A user cancel isn't a failure — show a neutral notice, not the
+                // destructive banner.
+                <div className="px-6 pt-5">
+                  <div className="rounded-[10px] border border-border bg-white/[0.02] px-4 py-3 text-[12.5px] text-muted-foreground">
+                    Analysis cancelled. Any findings gathered before you stopped are
+                    shown below.
+                  </div>
+                </div>
+              ) : (
+                <div className="px-6 pt-5">
+                  <div className="rounded-[10px] border border-destructive/40 bg-destructive/[0.08] px-4 py-3 text-[12.5px] text-destructive">
+                    {view.stream.error ?? 'Analysis failed.'}
+                  </div>
+                </div>
+              ))}
 
-      <CategoryTabs
-        tabs={view.tabs}
-        active={view.activeTab}
-        onSelect={view.setActiveTab}
-      />
+            {view.stream.status === 'completed' && (
+              <div className="flex items-center gap-3 border-b border-border px-6 py-3">
+                <Button
+                  // aria-busy + aria-disabled (not the `disabled` attribute) keep the
+                  // trigger focusable through the conversion so focus isn't dropped to
+                  // <body> when it becomes inert; `convertAll` is a no-op when inert.
+                  aria-busy={view.bulkConverting}
+                  aria-disabled={view.openCount === 0 || view.bulkConverting}
+                  onClick={view.convertAll}
+                  className={
+                    view.openCount === 0 || view.bulkConverting
+                      ? 'cursor-not-allowed opacity-40'
+                      : undefined
+                  }
+                >
+                  <MoveIcon size={15} />
+                  {view.bulkConverting
+                    ? `Converting… ${view.bulkProgress.done}/${view.bulkProgress.total}`
+                    : `Convert all to tasks (${view.openCount})`}
+                </Button>
+                {view.bulkError !== null && (
+                  <span className="text-[12px] text-destructive">
+                    {view.bulkError}
+                  </span>
+                )}
+                {/* Announce convert-all progress + completion to assistive tech. */}
+                <span role="status" aria-live="polite" className="sr-only">
+                  {view.bulkStatusMessage}
+                </span>
+              </div>
+            )}
 
-      <FindingGrid
-        findings={view.gridFindings}
-        skeletonCount={view.skeletonCount}
-        emptyMessage={view.emptyMessage}
-        onOpen={view.openFinding}
-      />
+            <CategoryTabs
+              tabs={view.tabs}
+              active={view.activeTab}
+              onSelect={view.setActiveTab}
+            />
+
+            <FindingGrid
+              findings={view.gridFindings}
+              skeletonCount={view.skeletonCount}
+              emptyMessage={view.emptyMessage}
+              onOpen={view.openFinding}
+            />
+          </div>
+        )}
+      </RunLifecycleShell>
 
       {view.selected !== null && (
         <FindingDetailPanel
@@ -94,6 +234,6 @@ export function InsightView(props: InsightViewProps) {
           onGotoBoard={view.onGotoBoard}
         />
       )}
-    </div>
+    </>
   );
 }
