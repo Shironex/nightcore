@@ -24,3 +24,11 @@ test('a converted finding offers a go-to-task action instead of convert', async 
   await screen.getByRole('button', { name: /go to task/i }).click();
   expect(onGotoBoard).toHaveBeenCalledTimes(1);
 });
+
+test('renders before/after as syntax-highlighted code blocks', async () => {
+  const screen = render(<Open />);
+  // CodeBlock streams in Shiki HTML; once it resolves the keyword tokenizes into
+  // its own element, proving the before/after code is wired through CodeBlock.
+  await expect.element(screen.getByText('void', { exact: true })).toBeVisible();
+  await expect.element(screen.getByText('await', { exact: true })).toBeVisible();
+});

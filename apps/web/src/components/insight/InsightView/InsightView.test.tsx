@@ -11,8 +11,9 @@ test('renders the Insight header for an active project', async () => {
   await expect.element(screen.getByText('acme')).toBeInTheDocument();
 });
 
-test('offers the Analyze control in the idle project view', async () => {
+test('shows the CONFIGURE screen with the Analyze control when idle', async () => {
   const screen = render(<Idle />);
+  await expect.element(screen.getByText('Run config')).toBeInTheDocument();
   await expect.element(screen.getByRole('button', { name: /^analyze$/i })).toBeInTheDocument();
 });
 
