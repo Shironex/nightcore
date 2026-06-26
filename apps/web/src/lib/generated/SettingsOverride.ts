@@ -26,4 +26,9 @@ maxBudgetUsd?: number,
  * resolution every other field uses — `default_model` is the template; no
  * cross-scope merge). Serde-additive: a legacy override block loads this `None`.
  */
-mcpServers?: Array<McpServerEntry>, };
+mcpServers?: Array<McpServerEntry>, 
+/**
+ * Lock (feature #4): per-project override of whether the context pack is
+ * injected. `None` ⇒ inherit the global toggle. Serde-additive.
+ */
+contextPackEnabled?: boolean, };

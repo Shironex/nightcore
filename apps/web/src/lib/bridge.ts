@@ -641,6 +641,7 @@ const MOCK_SETTINGS: Settings = {
   maxTurns: null,
   maxBudgetUsd: null,
   mcpServers: [],
+  contextPackEnabled: true,
   projectOverrides: {},
 };
 
@@ -666,6 +667,33 @@ export async function updateSettings(patch: SettingsPatch): Promise<Settings> {
  *  outside Tauri (browser preview). */
 export async function getAppInfo(): Promise<AppInfo> {
   return tauriInvoke<AppInfo>('app_info', {}, MOCK_APP_INFO);
+}
+
+// --- Pre-flight Context Pack (Lock, feature #4) ----------------------------
+
+/** The mock Constitution shown outside Tauri (browser preview). */
+const MOCK_CONTEXT_PACK =
+  '# Pre-flight Context Pack\n\nNightcore injects this trusted, project-controlled ' +
+  'context into every agent run.\n\n## Project Constitution\n\n- Keep tests green.\n' +
+  '- Folder-per-component for every UI component.';
+
+/** Read the active project's curated context pack (`.nightcore/context.md`), or
+ *  `null` when no project is active or none has been authored yet. Returns the mock
+ *  outside Tauri (browser preview). */
+export async function getContextPack(): Promise<string | null> {
+  return tauriInvoke<string | null>('get_context_pack', {}, MOCK_CONTEXT_PACK);
+}
+
+/** Persist the active project's curated context pack. No-ops outside Tauri. */
+export async function setContextPack(content: string): Promise<void> {
+  await tauriInvoke<void>('set_context_pack', { content }, undefined);
+}
+
+/** Re-assemble the context pack from on-disk sources (`CLAUDE.md`/`AGENTS.md` +
+ *  `.nightcore/memory/*.md`), persist it, and return the new content. Returns the
+ *  mock outside Tauri (browser preview). */
+export async function regenerateContextPack(): Promise<string> {
+  return tauriInvoke<string>('regenerate_context_pack', {}, MOCK_CONTEXT_PACK);
 }
 
 // --- Events ---------------------------------------------------------------

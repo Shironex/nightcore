@@ -14,6 +14,7 @@ const settings: Settings = {
   maxTurns: null,
   maxBudgetUsd: null,
   mcpServers: [],
+  contextPackEnabled: true,
   projectOverrides: {
     nightcore: { defaultModel: 'claude-haiku-4-5' },
   },
