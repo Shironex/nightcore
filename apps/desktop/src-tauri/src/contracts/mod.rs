@@ -136,8 +136,8 @@ mod tests {
             .expect("fixtures.events is an object");
         assert_eq!(
             events.len(),
-            24,
-            "all 24 NightcoreEvent variants must have a fixture"
+            25,
+            "all 25 NightcoreEvent variants must have a fixture"
         );
         for (tag, wire) in events {
             let event: NightcoreEvent = serde_json::from_value(wire.clone())

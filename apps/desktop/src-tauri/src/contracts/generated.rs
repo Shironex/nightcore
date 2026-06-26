@@ -351,6 +351,8 @@ pub enum NightcoreEvent {
         error: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
+    HarnessSynthesisStarted { run_id: String },
+    #[serde(rename_all = "camelCase")]
     HarnessProposalsReady {
         run_id: String,
         artifacts: Vec<ProposedArtifact>,
