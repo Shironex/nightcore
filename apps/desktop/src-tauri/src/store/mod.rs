@@ -11,6 +11,7 @@
 pub(crate) mod harness;
 pub(crate) mod insight;
 pub(crate) mod project;
+pub(crate) mod scorecard;
 pub(crate) mod settings;
 pub(crate) mod task;
 pub(crate) mod transcript;

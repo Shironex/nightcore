@@ -7,6 +7,7 @@ import {
 } from './config.js';
 import { PermissionDecisionSchema, QuestionAnswerSchema } from './tools.js';
 import { AnalysisScopeSchema, FindingCategorySchema } from './insight.js';
+import { ScorecardDimensionSchema } from './scorecard.js';
 import { ConventionCategorySchema } from './harness.js';
 
 /**
@@ -175,6 +176,39 @@ export const CancelHarnessScanCommand = z.object({
   runId: z.string(),
 });
 
+/** Start a Readiness Scorecard run. Like `start-analysis` this is NOT a single
+ *  rendered Claude turn — the engine fans out one read-only GRADING pass per
+ *  `dimensions` entry (bounded by `maxConcurrency`), each emitting a single A–F
+ *  reading grounded in evidence, and streams `scorecard-*` events keyed by `runId`.
+ *  The Rust core assigns `runId` and owns persistence; the engine stays stateless
+ *  about history. The whole repo is always graded (readiness is repo-wide), so
+ *  there is no scope field. */
+export const StartScorecardCommand = z.object({
+  type: z.literal('start-scorecard'),
+  /** Correlation id (also the persisted run id) assigned by the Rust core. */
+  runId: z.string(),
+  /** Absolute project root the passes run in (read-only). */
+  projectPath: z.string(),
+  /** The dimensions to grade (a subset of the 10). */
+  dimensions: z.array(ScorecardDimensionSchema),
+  /** Model override for the passes; absent ⇒ inherit the resolved config. */
+  model: z.string().optional(),
+  /** Reasoning effort for the passes; absent ⇒ inherit. */
+  effort: EffortLevelSchema.optional(),
+  /** Max dimension passes to run at once. Absent ⇒ engine default (bounded). */
+  maxConcurrency: z.number().int().positive().optional(),
+  /** Per-dimension autonomy ceiling (SDK `Options.maxTurns`). */
+  maxTurnsPerDimension: z.number().int().positive().optional(),
+  /** Per-dimension spend ceiling in USD (SDK `Options.maxBudgetUsd`). */
+  maxBudgetUsdPerDimension: z.number().positive().optional(),
+});
+
+/** Cancel an in-flight Scorecard run (aborts every dimension pass). */
+export const CancelScorecardCommand = z.object({
+  type: z.literal('cancel-scorecard'),
+  runId: z.string(),
+});
+
 export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   StartSessionCommand,
   SendInputCommand,
@@ -187,6 +221,8 @@ export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   CancelAnalysisCommand,
   StartHarnessScanCommand,
   CancelHarnessScanCommand,
+  StartScorecardCommand,
+  CancelScorecardCommand,
 ]);
 export type SurfaceCommand = z.infer<typeof SurfaceCommandSchema>;
 

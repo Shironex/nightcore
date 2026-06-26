@@ -28,6 +28,8 @@ pub(crate) enum EventRoute {
     Analysis,
     /// Any `harness-*` event — route to the harness channel by `runId`.
     Harness,
+    /// Any `scorecard-*` event — route to the scorecard channel by `runId`.
+    Scorecard,
     /// A `permission-required` for `ExitPlanMode` — park as `waiting_approval`.
     PermissionPlanGate,
     /// A `permission-required` for any other tool — surface an `nc:permission` prompt.
@@ -61,6 +63,10 @@ pub(crate) fn classify_event(event: &Value) -> EventRoute {
 
     if event_type.starts_with("harness-") {
         return EventRoute::Harness;
+    }
+
+    if event_type.starts_with("scorecard-") {
+        return EventRoute::Scorecard;
     }
 
     // Session-correlated events below: all require a sessionId (or a special
@@ -127,6 +133,14 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
     // owned by a separate channel + store, so it is routed BEFORE session-id correlation.
     if event_type.starts_with("harness-") {
         super::harness::handle_harness_event(app, event_type, &event).await;
+        return;
+    }
+
+    // The Scorecard `scorecard-*` family also correlates by `runId` (no `sessionId`)
+    // and is owned by a separate channel + store, so it is routed BEFORE session-id
+    // correlation.
+    if event_type.starts_with("scorecard-") {
+        super::scorecard::handle_scorecard_event(app, event_type, &event).await;
         return;
     }
 

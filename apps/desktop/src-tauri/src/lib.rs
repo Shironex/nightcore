@@ -83,6 +83,15 @@ pub fn run() {
             // Reap scans left `running` by a dead process so the UI doesn't spin.
             harness_store.reap_running();
 
+            // Readiness Scorecard runs are project-scoped like Insight/Harness: load
+            // the active project's `.nightcore/scorecards/` (or an empty scratch dir).
+            let scorecards_dir = project_store
+                .active_scorecards_dir()
+                .unwrap_or_else(|| config_dir.join("no-active-project/scorecards"));
+            let scorecard_store = store::scorecard::ScorecardStore::load_from(scorecards_dir);
+            // Reap runs left `running` by a dead process so the UI doesn't spin.
+            scorecard_store.reap_running();
+
             // The M2 orchestrator (slot manager + circuit breaker + provider +
             // auto-loop) starts at the persisted concurrency. The provider spawns
             // `bun run apps/sidecar/src/index.ts` in the workspace root on first use.
@@ -97,6 +106,7 @@ pub fn run() {
             app.manage(task_store);
             app.manage(insight_store);
             app.manage(harness_store);
+            app.manage(scorecard_store);
             app.manage(project_store);
             app.manage(settings_store);
             app.manage(orchestrator);
@@ -146,6 +156,12 @@ pub fn run() {
             sidecar::dismiss_harness_artifact,
             sidecar::restore_harness_artifact,
             sidecar::apply_harness_artifact,
+            sidecar::start_scorecard,
+            sidecar::cancel_scorecard,
+            sidecar::list_scorecard_runs,
+            sidecar::get_scorecard_run,
+            sidecar::delete_scorecard_run,
+            sidecar::convert_reading_to_task,
             transcript::read_transcript,
             plan_approval::approve_task,
             plan_approval::reject_task,

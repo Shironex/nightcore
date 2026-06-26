@@ -16,6 +16,7 @@ import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionRunner } from './session-runner.js';
 import { AnalysisManager } from './analysis-manager.js';
 import { HarnessManager } from './harness-manager.js';
+import { ScorecardManager } from './scorecard-manager.js';
 import { resolveKindPreset } from './kind-presets.js';
 import type { ModelInfo } from './sdk-adapter.js';
 import { SessionApi, type SDKSessionInfo, type SessionMessage } from './session-api.js';
@@ -104,6 +105,7 @@ export class SessionManager {
   private readonly providerConfig: ProviderConfigReader;
   private readonly analysis: AnalysisManager;
   private readonly harness: HarnessManager;
+  private readonly scorecard: ScorecardManager;
 
   constructor(
     private readonly config: Config,
@@ -126,6 +128,12 @@ export class SessionManager {
       apiKeyFallback: this.apiKeyFallback,
       emit: (event) => this.emit(event),
       ...(logger !== undefined ? { logger: logger.child('harness') } : {}),
+    });
+    this.scorecard = new ScorecardManager({
+      config,
+      apiKeyFallback: this.apiKeyFallback,
+      emit: (event) => this.emit(event),
+      ...(logger !== undefined ? { logger: logger.child('scorecard') } : {}),
     });
     // Seed the id counter past the highest persisted id so a restart never
     // reuses an id and clobbers a prior record (the SessionStore collapses by id,
@@ -171,6 +179,17 @@ export class SessionManager {
     }
     if (command.type === 'cancel-harness-scan') {
       this.harness.cancel(command.runId);
+      return;
+    }
+    // Readiness Scorecard runs are also keyed by `runId` (not a session id) and are
+    // owned by the ScorecardManager, which fans out its own read-only grading passes
+    // and emits the `scorecard-*` event family.
+    if (command.type === 'start-scorecard') {
+      this.scorecard.start(command);
+      return;
+    }
+    if (command.type === 'cancel-scorecard') {
+      this.scorecard.cancel(command.runId);
       return;
     }
 
