@@ -8,6 +8,7 @@ export type SettingsScope = 'global' | 'project';
 export type SettingsPage =
   | 'models'
   | 'permissions'
+  | 'constitution'
   | 'worktrees'
   | 'providers'
   | 'hooks'

@@ -30,6 +30,9 @@ export interface EffectiveSettings {
    *  REPLACES the global list wholesale (whole-list semantics, same as the Rust
    *  resolver), else the global list. Editing it sends the full next list. */
   mcpServers: McpServerEntry[];
+  /** Pre-flight Context Pack (Lock #4): whether the curated Constitution is injected
+   *  for the scope (project override, else the global toggle; defaults on). */
+  contextPackEnabled: boolean;
 }
 
 export interface SettingsViewState {
@@ -78,6 +81,10 @@ export function useSettingsView({
       // Rust `enabled_mcp_servers` resolution); `?? []` keeps a legacy/absent list
       // empty so the card always renders.
       mcpServers: override?.mcpServers ?? settings.mcpServers ?? [],
+      // Lock #4: project override wins, else the global toggle (defaults on). `??`
+      // chains so a `false` override is honored (only `null`/`undefined` falls back).
+      contextPackEnabled:
+        override?.contextPackEnabled ?? settings.contextPackEnabled ?? true,
     };
   }, [scope, activeProjectId, settings]);
 

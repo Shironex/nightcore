@@ -56,6 +56,14 @@ maxBudgetUsd: number | null,
  */
 mcpServers: Array<McpServerEntry>, 
 /**
+ * Pre-flight Context Pack (Lock, feature #4): whether the Nightcore-curated
+ * project Constitution (`.nightcore/context.md`) is injected into agent runs'
+ * `appendSystemPrompt`. Per-project overridable. Default `true` (a project that
+ * has authored a context pack gets it on-rails; the toggle opts a project OUT).
+ * Serde-additive: a settings file written before this field loads as `true`.
+ */
+contextPackEnabled: boolean, 
+/**
  * Per-project overrides keyed by project id.
  */
 projectOverrides: { [key in string]: SettingsOverride }, };

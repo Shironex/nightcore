@@ -28,4 +28,9 @@ maxBudgetUsd?: number,
  * list. The UI always sends the COMPLETE next list (add/edit/remove/toggle all
  * resolve to "here is the new list"), so there is no partial-entry merge.
  */
-mcpServers?: Array<McpServerEntry>, };
+mcpServers?: Array<McpServerEntry>, 
+/**
+ * Lock (feature #4): toggle context-pack injection. With a `projectId` it lands
+ * in that project's override; without one, the global default.
+ */
+contextPackEnabled?: boolean, };

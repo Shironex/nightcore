@@ -17,6 +17,7 @@ import {
 } from '@/components/ui';
 import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
 import { parseNumericCommit } from '@/lib/numeric-field';
+import { ConstitutionCard } from '../ConstitutionCard';
 import { McpServersCard } from '../McpServersCard';
 import { SettingsCard } from '../SettingsCard';
 import type { SettingsCardProps } from '../SettingsCard';
@@ -238,6 +239,7 @@ const NAV_GROUPS: NavGroup[] = [
     items: [
       { page: 'models', label: 'Models & runs', icon: <SlidersIcon size={16} /> },
       { page: 'permissions', label: 'Permissions', icon: <LockIcon size={16} />, badge: 'M3' },
+      { page: 'constitution', label: 'Constitution', icon: <BookIcon size={16} /> },
     ],
   },
   {
@@ -272,6 +274,7 @@ interface PageHeader {
 const PAGE_HEADERS: Record<SettingsPage, PageHeader> = {
   models: { title: 'Models & runs', subtitle: 'AGENT DEFAULTS', icon: <SlidersIcon size={26} /> },
   permissions: { title: 'Permissions', subtitle: 'TOOL ACCESS', icon: <LockIcon size={24} />, badge: 'M3' },
+  constitution: { title: 'Project Constitution', subtitle: 'PRE-FLIGHT CONTEXT', icon: <BookIcon size={24} /> },
   worktrees: { title: 'Git worktrees', subtitle: 'ISOLATION', icon: <BranchIcon size={24} /> },
   providers: { title: 'Providers', subtitle: 'MODEL BACKENDS', icon: <BoltIcon size={24} /> },
   hooks: { title: 'Hooks & notifications', subtitle: 'EVENTS', icon: <BellIcon size={24} /> },
@@ -404,6 +407,18 @@ export function SettingsView({
             <McpServersCard
               servers={effective.mcpServers}
               onChange={(next) => patchScoped({ mcpServers: next })}
+            />
+          )}
+
+          {/* The Constitution editor (Pre-flight Context Pack, Lock #4). The pack
+              content is inherently per-project (one `context.md` per repo, edited via
+              the bridge against the ACTIVE project); the on/off toggle follows the
+              standard scope model (global or this project's override). */}
+          {page === 'constitution' && (
+            <ConstitutionCard
+              enabled={effective.contextPackEnabled}
+              onToggleEnabled={(next) => patchScoped({ contextPackEnabled: next })}
+              projectActive={projectScopeEnabled}
             />
           )}
 
@@ -545,6 +560,11 @@ function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardProps[] {
           ],
         },
       ];
+    case 'constitution':
+      // The Constitution editor is fully interactive (load/edit/save + regenerate),
+      // so it renders outside the presentational `SettingsCard` set — like the MCP
+      // servers card. No presentational rows here.
+      return [];
     case 'worktrees':
       return [
         {
