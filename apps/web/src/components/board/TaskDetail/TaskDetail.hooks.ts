@@ -1,11 +1,4 @@
-import { useState } from 'react';
 import type { GauntletResult, Task } from '@/lib/bridge';
-import {
-  KIND_LABEL,
-  modelDisplayName,
-  PERMISSION_MODE_LABEL,
-  RUN_MODE_LABEL,
-} from '../status';
 import { EMPTY_STREAM, type SessionGroup, type TaskTranscript } from '../session-stream';
 
 export interface TaskDetailView {
@@ -86,52 +79,6 @@ export function deriveTaskDetailView(
     kindEditable: task.status === 'backlog' || task.status === 'ready',
     isDoneColumn: task.status === 'done',
   };
-}
-
-/** The Session card's collapse state. Collapsed by default; opens once at mount
- *  when the task is still editable (`kindEditable`) so a fresh backlog/ready task
- *  surfaces its config without a click. The initializer runs once — toggling is
- *  never fought by re-renders. */
-export function useSessionCard(kindEditable: boolean): {
-  open: boolean;
-  toggle: () => void;
-} {
-  const [open, setOpen] = useState(kindEditable);
-  return { open, toggle: () => setOpen((v) => !v) };
-}
-
-/** The History card's collapse state. Collapsed by default (unlike the Session
- *  card) — history is a secondary, on-demand surface. The initializer runs once. */
-export function useHistoryCard(): { open: boolean; toggle: () => void } {
-  const [open, setOpen] = useState(false);
-  return { open, toggle: () => setOpen((v) => !v) };
-}
-
-/** Generic collapse state for a session-log block. The latest session opens by
- *  default (`defaultOpen`); older sessions stay collapsed until clicked. The
- *  initializer runs once — toggling is never fought by re-renders. */
-export function useCollapse(defaultOpen: boolean): { open: boolean; toggle: () => void } {
-  const [open, setOpen] = useState(defaultOpen);
-  return { open, toggle: () => setOpen((v) => !v) };
-}
-
-/** A compact middot-joined one-line summary of a task's session configuration,
- *  for the collapsed Session card. Reuses the shared label maps so it stays in
- *  lockstep with the expanded pickers/pills. Pure. */
-export function summarizeSession(task: Task): string {
-  const permission =
-    task.permissionMode !== null ? PERMISSION_MODE_LABEL[task.permissionMode] : 'Inherit';
-  const modelEffort =
-    modelDisplayName(task.model) + (task.effort !== null ? `·${task.effort}` : '');
-  const turns = task.maxTurns !== null ? `${task.maxTurns} turns` : '∞ turns';
-  const limits = task.maxBudgetUsd !== null ? `${turns} · $${task.maxBudgetUsd}` : turns;
-  return [
-    KIND_LABEL[task.kind],
-    RUN_MODE_LABEL[task.runMode],
-    permission,
-    modelEffort,
-    limits,
-  ].join(' · ');
 }
 
 /** Whether Merge is permitted: the pre-merge gate requires a verified task AND a

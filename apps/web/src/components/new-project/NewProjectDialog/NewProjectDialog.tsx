@@ -61,7 +61,7 @@ export function NewProjectDialog({
               Point Nightcore at a git repo to begin.
             </div>
           </div>
-          <IconButton label="Close dialog" onClick={onClose}>
+          <IconButton label="Close dialog" onClick={close}>
             <CloseIcon size={16} />
           </IconButton>
         </div>

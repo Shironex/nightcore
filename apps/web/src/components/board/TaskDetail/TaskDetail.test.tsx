@@ -26,7 +26,9 @@ const {
 
 test('shows the plan and Approve / Refine / Reject for a waiting task', async () => {
   const onApprove = vi.fn();
-  const screen = render(<WaitingApproval onApprove={onApprove} />);
+  const screen = render(
+    <WaitingApproval actions={{ ...WaitingApproval.args!.actions!, onApprove }} />,
+  );
   await expect.element(screen.getByText('Proposed plan')).toBeInTheDocument();
   await expect.element(screen.getByText(/Back up the users table/)).toBeInTheDocument();
   await screen.getByRole('button', { name: /approve/i }).click();
@@ -36,7 +38,11 @@ test('shows the plan and Approve / Refine / Reject for a waiting task', async ()
 
 test('renders a parked permission prompt and relays the decision', async () => {
   const onRespondPermission = vi.fn();
-  const screen = render(<RunningWithPrompt onRespondPermission={onRespondPermission} />);
+  const screen = render(
+    <RunningWithPrompt
+      actions={{ ...RunningWithPrompt.args!.actions!, onRespondPermission }}
+    />,
+  );
   await expect.element(screen.getByText('Approval needed')).toBeInTheDocument();
   await screen.getByRole('button', { name: 'Allow' }).click();
   expect(onRespondPermission).toHaveBeenCalledWith('t-running', 'req-1', 'allow');
@@ -52,7 +58,7 @@ test('shows the live activity heading and cancel control while running', async (
 
 test('renders the persisted error for a failed task', async () => {
   const onRun = vi.fn();
-  const screen = render(<Failed onRun={onRun} />);
+  const screen = render(<Failed actions={{ ...Failed.args!.actions!, onRun }} />);
   await expect
     .element(screen.getByText("cannot resolve 'sass-loader'"))
     .toBeInTheDocument();
@@ -95,7 +101,9 @@ test('deriveTaskDetailView falls back to the stored summary as a single session'
 
 test('shows the reviewer verdict and Accept / Rerun / Reject for a review-parked task', async () => {
   const onAcceptReview = vi.fn();
-  const screen = render(<ReviewParked onAcceptReview={onAcceptReview} />);
+  const screen = render(
+    <ReviewParked actions={{ ...ReviewParked.args!.actions!, onAcceptReview }} />,
+  );
   await expect.element(screen.getByText('Changes requested')).toBeInTheDocument();
   await screen.getByRole('button', { name: /accept/i }).click();
   expect(onAcceptReview).toHaveBeenCalledWith('t-waiting');
@@ -111,7 +119,7 @@ test('a review-parked task does not show the plan-approval controls', async () =
 
 test('enables Merge for a verified task with a passing gauntlet', async () => {
   const onMerge = vi.fn();
-  const screen = render(<Done onMerge={onMerge} />);
+  const screen = render(<Done actions={{ ...Done.args!.actions!, onMerge }} />);
   const merge = screen.getByRole('button', { name: /^merge$/i });
   await expect.element(merge).toBeEnabled();
   await merge.click();

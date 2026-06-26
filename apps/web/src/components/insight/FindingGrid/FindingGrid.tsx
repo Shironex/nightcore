@@ -39,7 +39,8 @@ function FindingCard({
   return (
     <Card
       onClick={() => onOpen(finding)}
-      className={`flex flex-col gap-2 p-3.5 text-left ${dimmed ? 'opacity-55' : ''}`}
+      title={dimmed ? (finding.status === 'converted' ? 'Converted to task' : 'Dismissed') : undefined}
+      className="flex flex-col gap-2 p-3.5 text-left"
     >
       <div className="flex items-center gap-2">
         <span
@@ -66,17 +67,17 @@ function FindingCard({
         )}
       </div>
 
-      <h3 className="text-[13.5px] font-semibold leading-snug text-foreground">
+      <h3 className={`text-[13.5px] font-semibold leading-snug ${dimmed ? 'text-muted-foreground' : 'text-foreground'}`}>
         {finding.title}
       </h3>
 
       {loc !== null && (
-        <code className="truncate font-mono text-[11px] text-muted-foreground">
+        <code className={`truncate font-mono text-[11px] ${dimmed ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
           {loc}
         </code>
       )}
 
-      <p className="line-clamp-2 text-[12px] leading-relaxed text-muted-foreground">
+      <p className={`line-clamp-2 text-[12px] leading-relaxed ${dimmed ? 'text-muted-foreground/60' : 'text-muted-foreground'}`}>
         {finding.description}
       </p>
     </Card>

@@ -21,6 +21,7 @@ export function CategoryTabs({ tabs, active, onSelect }: CategoryTabsProps) {
             role="tab"
             type="button"
             aria-selected={isActive}
+            aria-busy={tab.running}
             onClick={() => onSelect(tab.key)}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
               isActive
@@ -32,7 +33,7 @@ export function CategoryTabs({ tabs, active, onSelect }: CategoryTabsProps) {
             {label}
             {tab.running ? (
               <span
-                aria-label="analyzing"
+                aria-hidden
                 className="ml-0.5 h-1.5 w-1.5 animate-pulse rounded-full bg-primary"
               />
             ) : tab.count > 0 ? (
@@ -46,7 +47,7 @@ export function CategoryTabs({ tabs, active, onSelect }: CategoryTabsProps) {
                 {tab.count}
               </span>
             ) : tab.errored ? (
-              <span className="ml-0.5 text-[10px] font-semibold text-destructive">
+              <span aria-label="analysis failed" className="ml-0.5 text-[10px] font-semibold text-destructive">
                 !
               </span>
             ) : null}
