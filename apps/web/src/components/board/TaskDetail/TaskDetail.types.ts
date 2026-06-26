@@ -10,20 +10,13 @@ import type {
 } from '@/lib/bridge';
 import type { TaskTranscript } from '../session-stream';
 
-export interface TaskDetailProps {
-  task: Task;
-  stream: TaskTranscript | undefined;
-  /** True when ANY task is in_progress (serial-run guard). */
-  anyRunning: boolean;
-  /** Parked permission prompts for this task (interactive approval). */
-  prompts?: PermissionPrompt[];
-  /** Parked AskUserQuestion prompts for this task (interactive answer). */
-  questions?: QuestionPrompt[];
-  /** The last readiness-gauntlet result for this task (Verified column), or null. */
-  gauntlet?: GauntletResult | null;
-  /** True while a gauntlet run is in flight for this task. */
-  gauntletRunning?: boolean;
-  onClose: () => void;
+/** The drawer's action callbacks, grouped into one object so the ~25 `on*`
+ *  handlers travel as a single prop instead of being threaded individually
+ *  through `TaskDetail` and its sub-components. Assembled once at the AppShell
+ *  call site from the `board` controller. Each handler is optional — the drawer
+ *  degrades the matching control to a no-op / hidden state when one is absent
+ *  (e.g. the History section only renders once resume/rename/tag are wired). */
+export interface TaskDetailActions {
   onRun: (id: string) => void;
   onCancel: (id: string) => void;
   onDelete: (id: string) => void;
@@ -66,6 +59,24 @@ export interface TaskDetailProps {
   onRenameSession?: (sdkSessionId: string, title: string) => void;
   /** Tag a past session, or clear its tag with `null`. */
   onTagSession?: (sdkSessionId: string, tag: string | null) => void;
+}
+
+export interface TaskDetailProps {
+  task: Task;
+  stream: TaskTranscript | undefined;
+  /** True when ANY task is in_progress (serial-run guard). */
+  anyRunning: boolean;
+  /** Parked permission prompts for this task (interactive approval). */
+  prompts?: PermissionPrompt[];
+  /** Parked AskUserQuestion prompts for this task (interactive answer). */
+  questions?: QuestionPrompt[];
+  /** The last readiness-gauntlet result for this task (Verified column), or null. */
+  gauntlet?: GauntletResult | null;
+  /** True while a gauntlet run is in flight for this task. */
+  gauntletRunning?: boolean;
+  onClose: () => void;
+  /** Every drawer action callback, grouped into one object (see `TaskDetailActions`). */
+  actions: TaskDetailActions;
   /** True while a guarded action (`run`/`approve`/`refine`/`reject`/`commit`/
    *  `merge`) is in flight for this task, so the matching footer button disables
    *  itself between the click and the `nc:task` echo. Defaults to never-pending. */

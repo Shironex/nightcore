@@ -4,6 +4,7 @@ import { NewProjectDialog } from '@/components/new-project';
 import {
   BoardIcon,
   Button,
+  ConfirmDialog,
   EmptyState,
   FolderIcon,
   GearIcon,
@@ -60,7 +61,7 @@ const MODELS = ['Opus 4.8', 'Sonnet 4.8', 'Haiku 4.5'];
  *  and TaskDetail overlays. All state lives in `useAppShell`; this is a thin
  *  presentational host wiring views to the live registry, settings, and board. */
 export function AppShell() {
-  const { routing, registry, settings, autoLoop, newProject, board, showSplash, isTauri } =
+  const { routing, registry, settings, autoLoop, newProject, board, confirm, showSplash, isTauri } =
     useAppShell();
   const { view, switcherOpen, collapsed, newProjectOpen } = routing;
   const { projects, active } = registry;
@@ -129,9 +130,9 @@ export function AppShell() {
                   onNewTask={routing.openNewTask}
                   onRun={board.handleRun}
                   onCancel={board.handleCancel}
-                  onDelete={board.handleDelete}
+                  onDelete={board.requestDelete}
                   onMoveTask={board.handleMoveTask}
-                  onClearColumn={board.handleClearColumn}
+                  onClearColumn={board.requestClear}
                   onApprove={board.handleApprove}
                   onRefine={board.handleRefine}
                   onCommit={board.handleCommit}
@@ -154,30 +155,35 @@ export function AppShell() {
                 gauntlet={board.gauntletResults[selected.id] ?? null}
                 gauntletRunning={board.gauntletRunning.has(selected.id)}
                 onClose={() => setSelectedId(null)}
-                onRun={board.handleRun}
-                onCancel={board.handleCancel}
-                onDelete={board.handleDelete}
-                onRespondPermission={board.handleRespondPermission}
-                onAnswerQuestion={board.handleAnswerQuestion}
-                onApprove={board.handleApprove}
-                onReject={board.handleReject}
-                onRefine={board.handleRefine}
-                onChangeKind={board.handleChangeKind}
-                onChangeRunMode={board.handleChangeRunMode}
-                onChangePermissionMode={board.handleChangePermissionMode}
-                onChangeModel={board.handleChangeModel}
-                onChangeEffort={board.handleChangeEffort}
-                onChangeMaxTurns={board.handleChangeMaxTurns}
-                onChangeMaxBudget={board.handleChangeMaxBudget}
-                onAcceptReview={board.handleAcceptReview}
-                onRejectReview={board.handleRejectReview}
-                onRerunVerification={board.handleRerunVerification}
-                onRunGauntlet={board.handleRunGauntlet}
-                onMerge={board.handleMerge}
-                onCommit={board.handleCommit}
-                onResumeSession={board.handleResumeSession}
-                onRenameSession={board.handleRenameSession}
-                onTagSession={board.handleTagSession}
+                // The drawer's ~25 action callbacks travel as one grouped object,
+                // assembled here from the `board` controller. Delete routes through
+                // the confirm-gated `requestDelete` (matching the card/column deletes).
+                actions={{
+                  onRun: board.handleRun,
+                  onCancel: board.handleCancel,
+                  onDelete: board.requestDelete,
+                  onRespondPermission: board.handleRespondPermission,
+                  onAnswerQuestion: board.handleAnswerQuestion,
+                  onApprove: board.handleApprove,
+                  onReject: board.handleReject,
+                  onRefine: board.handleRefine,
+                  onChangeKind: board.handleChangeKind,
+                  onChangeRunMode: board.handleChangeRunMode,
+                  onChangePermissionMode: board.handleChangePermissionMode,
+                  onChangeModel: board.handleChangeModel,
+                  onChangeEffort: board.handleChangeEffort,
+                  onChangeMaxTurns: board.handleChangeMaxTurns,
+                  onChangeMaxBudget: board.handleChangeMaxBudget,
+                  onAcceptReview: board.handleAcceptReview,
+                  onRejectReview: board.handleRejectReview,
+                  onRerunVerification: board.handleRerunVerification,
+                  onRunGauntlet: board.handleRunGauntlet,
+                  onMerge: board.handleMerge,
+                  onCommit: board.handleCommit,
+                  onResumeSession: board.handleResumeSession,
+                  onRenameSession: board.handleRenameSession,
+                  onTagSession: board.handleTagSession,
+                }}
                 isActionPending={board.isActionPending}
               />
               </Suspense>
@@ -245,6 +251,28 @@ export function AppShell() {
             routing.closeNewProject();
             newProject.reset();
           }}
+        />
+      )}
+
+      {confirm.pendingDelete !== null && (
+        <ConfirmDialog
+          title="Delete this task?"
+          message="This task and its run history will be removed. This can't be undone."
+          confirmLabel="Delete"
+          destructive
+          onConfirm={confirm.confirm}
+          onCancel={confirm.cancel}
+        />
+      )}
+
+      {confirm.pendingClear !== null && (
+        <ConfirmDialog
+          title={`Delete all ${confirm.pendingClear.count} tasks in ${confirm.pendingClear.columnTitle}?`}
+          message={`Every task in ${confirm.pendingClear.columnTitle} will be removed. This can't be undone.`}
+          confirmLabel="Delete all"
+          destructive
+          onConfirm={confirm.confirm}
+          onCancel={confirm.cancel}
         />
       )}
     </div>

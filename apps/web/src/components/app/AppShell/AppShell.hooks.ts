@@ -1,747 +1,52 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 import {
   acceptReview,
-  activeProject,
   approveTask,
-  blockedTaskIds,
   cancelTask,
-  chooseFolder,
   commitTask,
-  createProject,
   createTask,
-  deleteProject,
   deleteTask,
-  getSettings,
-  gitInit,
-  isGitRepo,
   isTauri,
-  listProjects,
-  listTasks,
-  listWorktrees,
   mergeTask,
   moveTask,
-  readTranscript,
   refineTask,
-  renameProject,
   renameSession,
   rejectReview,
   rejectTask,
   rerunVerification,
-  runGauntlet,
-  onLoopEvent,
-  onPermissionEvent,
-  onProjectEvent,
-  onQuestionEvent,
-  onSessionEvent,
-  onTaskEvent,
-  resumeAutoLoop,
   resumeSession,
-  respondPermission,
-  answerQuestion,
   runTask,
   tagSession,
-  setActiveProject,
-  setMaxConcurrency,
-  startAutoLoop,
-  stopAutoLoop,
   updateTask,
-  updateSettings,
   type CreateTaskOptions,
   type GauntletResult,
-  type LoopEnvelope,
   type PermissionMode,
   type PermissionPrompt,
-  type Project,
   type QuestionAnswer,
   type QuestionPrompt,
   type RunMode,
-  type Settings,
-  type SettingsPatch,
   type Task,
   type TaskKind,
   type TaskPatch,
   type TaskStatus,
   type WorktreeInfo,
 } from '@/lib/bridge';
-import {
-  EMPTY_TRANSCRIPT,
-  foldTranscript,
-  type ActiveWorktree,
-  type BreakerInfo,
-  type TaskTranscript,
-} from '@/components/board';
-import { useToast, type ToastApi } from '@/components/ui';
-import type { AppView } from './AppShell.types';
-
-/** Subscribe to a load with a "still mounted" guard. Folds the three hand-rolled
- *  `let alive = true` mount-loads (#13) into one place; `load` runs once on mount
- *  and `onResult` only fires while mounted, so a late resolve can't set state on an
- *  unmounted component. */
-function useAsyncData<T>(load: () => Promise<T>, onResult: (value: T) => void): void {
-  // `load`/`onResult` are expected stable (defined at hook scope); we intentionally
-  // run once on mount, mirroring the previous inline effects.
-  useEffect(() => {
-    let alive = true;
-    void load().then((value) => {
-      if (alive) onResult(value);
-    });
-    return () => {
-      alive = false;
-    };
-  }, []);
-}
-
-/** Tracks in-flight task actions keyed by `${action}:${id}` so an action button
- *  can disable between click and the command settling — closing the double-fire
- *  window the audit flagged on Run/Approve/Refine/Reject/Commit/Merge. */
-function useActionGuard() {
-  const [pending, setPending] = useState<Set<string>>(new Set());
-
-  const mark = useCallback((key: string, on: boolean) => {
-    setPending((prev) => {
-      if (on === prev.has(key)) return prev;
-      const next = new Set(prev);
-      if (on) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  }, []);
-
-  /** Run a guarded action: no-op if already in flight; clears the key when the
-   *  underlying command settles (the dispatch-ack window that the double-click
-   *  races). Returns immediately for callers that don't await. */
-  const guard = useCallback(
-    (action: string, id: string, run: () => Promise<unknown>): void => {
-      const key = `${action}:${id}`;
-      let already = false;
-      setPending((prev) => {
-        if (prev.has(key)) {
-          already = true;
-          return prev;
-        }
-        const next = new Set(prev);
-        next.add(key);
-        return next;
-      });
-      if (already) return;
-      void run().finally(() => mark(key, false));
-    },
-    [mark],
-  );
-
-  const isPending = useCallback(
-    (action: string, id: string) => pending.has(`${action}:${id}`),
-    [pending],
-  );
-
-  return { guard, isPending };
-}
-
-/** How long the boot splash stays up on first mount (ms). */
-const SPLASH_DURATION_MS = 1400;
-
-/** A brief boot splash on first mount, per the design. Skipped outside Tauri so
- *  Storybook/dev renders the shell immediately. */
-function useSplash() {
-  const [showSplash, setShowSplash] = useState(isTauri());
-  useEffect(() => {
-    if (!showSplash) return;
-    const timer = setTimeout(() => setShowSplash(false), SPLASH_DURATION_MS);
-    return () => clearTimeout(timer);
-  }, [showSplash]);
-  return showSplash;
-}
-
-/** Routing + overlay open/close state for the shell. */
-function useRouting() {
-  const [view, setView] = useState<AppView>('board');
-  const [switcherOpen, setSwitcherOpen] = useState(false);
-  const [newProjectOpen, setNewProjectOpen] = useState(false);
-  const [newTaskOpen, setNewTaskOpen] = useState(false);
-  const [collapsed, setCollapsed] = useState(false);
-
-  const goto = useCallback((next: AppView) => {
-    setView(next);
-    setSwitcherOpen(false);
-  }, []);
-
-  return {
-    view,
-    goto,
-    switcherOpen,
-    toggleSwitcher: useCallback(() => setSwitcherOpen((v) => !v), []),
-    closeSwitcher: useCallback(() => setSwitcherOpen(false), []),
-    newProjectOpen,
-    openNewProject: useCallback(() => {
-      setNewProjectOpen(true);
-      setSwitcherOpen(false);
-    }, []),
-    closeNewProject: useCallback(() => setNewProjectOpen(false), []),
-    newTaskOpen,
-    openNewTask: useCallback(() => setNewTaskOpen(true), []),
-    closeNewTask: useCallback(() => setNewTaskOpen(false), []),
-    collapsed,
-    toggleCollapsed: useCallback(() => {
-      setCollapsed((v) => !v);
-      setSwitcherOpen(false);
-    }, []),
-  };
-}
-
-/** The project registry + active project, kept in sync via `nc:project`. */
-function useProjectRegistry(toast: ToastApi) {
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [active, setActive] = useState<Project | null>(null);
-
-  useAsyncData(
-    () =>
-      Promise.all([listProjects(), activeProject()]).catch((err) => {
-        console.error('load projects failed', err);
-        toast.error('Could not load projects', err);
-        return [[], null] as [Project[], Project | null];
-      }),
-    ([list, current]) => {
-      setProjects(list);
-      setActive(current);
-    },
-  );
-
-  useEffect(() => {
-    const unlisten = onProjectEvent(({ project, projects: next, type }) => {
-      setProjects(next);
-      if (type === 'activated' && project !== null) setActive(project);
-      if (type === 'deleted') setActive((cur) => next.find((p) => p.id === cur?.id) ?? null);
-      // A rename of the active project must refresh its label (its id is unchanged).
-      if (type === 'renamed' && project !== null) {
-        setActive((cur) => (cur?.id === project.id ? project : cur));
-      }
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  const activate = useCallback(
-    (id: string) => {
-      void setActiveProject(id).catch((err) => {
-        console.error('set_active_project failed', err);
-        toast.error('Could not open project', err);
-      });
-    },
-    [toast],
-  );
-
-  const remove = useCallback(
-    (id: string) => {
-      void deleteProject(id).catch((err) => {
-        console.error('delete_project failed', err);
-        toast.error('Could not delete project', err);
-      });
-    },
-    [toast],
-  );
-
-  const rename = useCallback(
-    (id: string, name: string) => {
-      void renameProject(id, name).catch((err) => {
-        console.error('rename_project failed', err);
-        toast.error('Could not rename project', err);
-      });
-    },
-    [toast],
-  );
-
-  return { projects, active, activate, remove, rename };
-}
-
-/** Live settings, kept in memory and patched through `update_settings`. */
-function useSettingsData(toast: ToastApi) {
-  const [settings, setSettings] = useState<Settings | null>(null);
-
-  useAsyncData(
-    () =>
-      getSettings().catch((err) => {
-        console.error('get_settings failed', err);
-        toast.error('Could not load settings', err);
-        return null;
-      }),
-    (loaded) => {
-      if (loaded !== null) setSettings(loaded);
-    },
-  );
-
-  const update = useCallback(
-    (patch: SettingsPatch) => {
-      void updateSettings(patch)
-        .then(setSettings)
-        .catch((err) => {
-          console.error('update_settings failed', err);
-          // The control snaps back to the last-saved value on failure; surface it
-          // so the change isn't silently lost.
-          toast.error('Could not save settings', err);
-        });
-    },
-    [toast],
-  );
-
-  return { settings, update };
-}
-
-/** Live autonomous-loop state, derived from `nc:loop`. The board's Auto Mode
- *  toggle and concurrency slider reflect this; the persisted concurrency is the
- *  first-load fallback until the first loop event arrives. */
-function useAutoLoop(
-  fallbackConcurrency: number,
-  persistConcurrency: (n: number) => void,
-  toast: ToastApi,
-) {
-  const [loop, setLoop] = useState<LoopEnvelope | null>(null);
-
-  useEffect(() => {
-    const unlisten = onLoopEvent(setLoop);
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  const autoMode = loop?.state === 'running';
-  const concurrency = loop?.maxConcurrency ?? fallbackConcurrency;
-  const breaker = useMemo<BreakerInfo | null>(() => {
-    if (loop?.state !== 'paused') return null;
-    if (loop.reason === undefined || !loop.reason.toLowerCase().includes('circuit')) {
-      return null;
-    }
-    return { failureThreshold: loop.failureThreshold };
-  }, [loop]);
-
-  const toggleAutoMode = useCallback(() => {
-    const fn = loop?.state === 'running' ? stopAutoLoop : startAutoLoop;
-    void fn().catch((err) => {
-      console.error('auto loop toggle failed', err);
-      toast.error('Could not toggle Auto Mode', err);
-    });
-  }, [loop, toast]);
-
-  const changeConcurrency = useCallback(
-    (n: number) => {
-      void setMaxConcurrency(n).catch((err) => {
-        console.error('set_max_concurrency failed', err);
-        toast.error('Could not change concurrency', err);
-      });
-      persistConcurrency(n);
-    },
-    [persistConcurrency, toast],
-  );
-
-  const resume = useCallback(() => {
-    void resumeAutoLoop().catch((err) => {
-      console.error('resume_auto_loop failed', err);
-      toast.error('Could not resume the loop', err);
-    });
-  }, [toast]);
-
-  return { autoMode, concurrency, breaker, toggleAutoMode, changeConcurrency, resume };
-}
-
-/** Git-repo status for the folder chosen in the New Project dialog. */
-type GitState = 'unknown' | 'checking' | 'valid' | 'invalid';
-
-/** The New Project flow: native folder pick → git-repo check → optional
- *  `git init` → `create_project` (which activates it). */
-function useNewProjectFlow(onClose: () => void, toast: ToastApi) {
-  const [folder, setFolder] = useState<string | null>(null);
-  const [gitState, setGitState] = useState<GitState>('unknown');
-
-  const reset = useCallback(() => {
-    setFolder(null);
-    setGitState('unknown');
-  }, []);
-
-  const pickFolder = useCallback(async () => {
-    const chosen = await chooseFolder();
-    if (chosen === null) return;
-    setFolder(chosen);
-    setGitState('checking');
-    const ok = await isGitRepo(chosen).catch(() => false);
-    setGitState(ok ? 'valid' : 'invalid');
-  }, []);
-
-  const initGit = useCallback(async () => {
-    if (folder === null) return;
-    try {
-      await gitInit(folder);
-      setGitState('valid');
-    } catch (err) {
-      console.error('git_init failed', err);
-      toast.error('Could not initialize a git repository', err);
-    }
-  }, [folder, toast]);
-
-  const create = useCallback(
-    async (path: string, name: string) => {
-      await createProject(path, name).catch((err) => {
-        console.error('create_project failed', err);
-        toast.error('Could not create project', err);
-        throw err;
-      });
-      reset();
-      onClose();
-    },
-    [onClose, reset, toast],
-  );
-
-  return { folder, gitState, pickFolder, initGit, create, reset };
-}
-
-/** The board's task + stream state, reseeded whenever a project is activated. */
-function useBoard(toast: ToastApi) {
-  const [tasks, setTasks] = useState<Task[]>([]);
-  const [streams, setStreams] = useState<Record<string, TaskTranscript>>({});
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-
-  // Seed from the active project's store, and reseed on every activation.
-  useEffect(() => {
-    let alive = true;
-    const reseed = () =>
-      void listTasks()
-        .then((seed) => {
-          if (alive) setTasks(seed);
-        })
-        .catch((err) => {
-          console.error('list_tasks failed', err);
-          toast.error('Could not load tasks', err);
-        });
-    reseed();
-    const unlisten = onProjectEvent(({ type }) => {
-      if (type === 'activated' || type === 'deleted') {
-        setStreams({});
-        setSelectedId(null);
-        reseed();
-      }
-    });
-    return () => {
-      alive = false;
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onTaskEvent((task) => {
-      setTasks((prev) => {
-        const idx = prev.findIndex((t) => t.id === task.id);
-        if (idx === -1) return [...prev, task];
-        // Reconcile by `updatedAt` (#6): a `nc:task` echo that is OLDER than the
-        // record we already hold is a stale/out-of-order event (e.g. an optimistic
-        // move racing a run's stream) — drop it so newer state isn't clobbered.
-        const current = prev[idx];
-        if (current !== undefined && task.updatedAt < current.updatedAt) return prev;
-        const next = prev.slice();
-        next[idx] = task;
-        return next;
-      });
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  useEffect(() => {
-    const unlisten = onSessionEvent(({ taskId, event }) => {
-      setStreams((prev) => ({
-        ...prev,
-        [taskId]: foldTranscript(prev[taskId] ?? EMPTY_TRANSCRIPT, event),
-      }));
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  // Reseed the opened task's transcript from its persisted JSONL (M4.7 §C) so a
-  // reload/HMR no longer blanks it. Skips a task that already has a live stream
-  // (an in-flight run's accumulating events must not be clobbered).
-  useEffect(() => {
-    if (selectedId === null) return;
-    let alive = true;
-    const id = selectedId;
-    void readTranscript(id)
-      .then((events) => {
-        if (!alive || events.length === 0) return;
-        setStreams((prev) => {
-          if (prev[id] !== undefined) return prev;
-          const seeded = events.reduce(foldTranscript, { ...EMPTY_TRANSCRIPT });
-          return { ...prev, [id]: seeded };
-        });
-      })
-      .catch((err) => {
-        // A missing/unreadable transcript is non-fatal — the panel just shows the
-        // empty timeline — but surface it so the open task isn't silently blank.
-        console.error('read_transcript failed', err);
-        toast.error('Could not load this task’s transcript', err);
-      });
-    return () => {
-      alive = false;
-    };
-  }, [selectedId, toast]);
-
-  return { tasks, setTasks, streams, setStreams, selectedId, setSelectedId };
-}
-
-/** The backend-computed blocked-task set (deps not yet satisfied, fail-closed).
- *  Fetched on mount and refreshed on every `nc:task` — dependency satisfaction
- *  changes as tasks complete, so a card unblocks the moment its last dep lands. */
-function useBlockedIds(): Set<string> {
-  const [blockedIds, setBlockedIds] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    let alive = true;
-    // Monotonic request id (#7): every `nc:task` fires a refetch, so an older,
-    // slower response must not clobber a newer one. We stamp each request and
-    // only apply the latest.
-    let seq = 0;
-    let applied = 0;
-    const refresh = () => {
-      const id = ++seq;
-      void blockedTaskIds()
-        .then((ids) => {
-          if (!alive || id < applied) return;
-          applied = id;
-          setBlockedIds(new Set(ids));
-        })
-        .catch((err) => console.error('blocked_task_ids failed', err));
-    };
-    refresh();
-    const unlisten = onTaskEvent(() => refresh());
-    return () => {
-      alive = false;
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  return blockedIds;
-}
-
-/** The active project's live worktrees (M4.6) plus the selected worktree tab.
- *  Worktrees are fetched on mount and refreshed on every `nc:task` (a run can
- *  allocate/dirty a worktree) and on project activation; the active selection
- *  resets to Main (`null`) whenever the project changes. */
-function useWorktrees(): {
-  worktrees: WorktreeInfo[];
-  active: ActiveWorktree;
-  setActive: (active: ActiveWorktree) => void;
-} {
-  const [worktrees, setWorktrees] = useState<WorktreeInfo[]>([]);
-  const [active, setActive] = useState<ActiveWorktree>(null);
-
-  useEffect(() => {
-    let alive = true;
-    // Monotonic request id (#7): like useBlockedIds, drop a stale response that
-    // resolves after a newer refetch so the switcher never shows older data.
-    let seq = 0;
-    let applied = 0;
-    const refresh = () => {
-      const id = ++seq;
-      void listWorktrees()
-        .then((list) => {
-          if (!alive || id < applied) return;
-          applied = id;
-          setWorktrees(list);
-        })
-        .catch((err) => console.error('list_worktrees failed', err));
-    };
-    refresh();
-    const unlistenTask = onTaskEvent(() => refresh());
-    const unlistenProject = onProjectEvent(({ type }) => {
-      if (type === 'activated' || type === 'deleted') {
-        setActive(null);
-        refresh();
-      }
-    });
-    return () => {
-      alive = false;
-      void unlistenTask.then((fn) => fn());
-      void unlistenProject.then((fn) => fn());
-    };
-  }, []);
-
-  return { worktrees, active, setActive };
-}
-
-/**
- * Shared machinery for a family of parked interactive prompts that block a live
- * run — permission approvals (`nc:permission`) and AskUserQuestion answers
- * (`nc:question`). It:
- *  - subscribes to the prompt channel and groups prompts by task id (dedup-guarded);
- *  - prunes prompts for tasks whose session is no longer live (kept for both
- *    `in_progress` AND `verifying`, since the reviewer subagent runs in-session and
- *    can park a dialog — pruning a still-live task would hang the engine dialog);
- *  - exposes `resolve(taskId, requestId, send)` that removes the prompt
- *    optimistically and re-inserts it (dedup-guarded) if `send` rejects, so the run
- *    never hangs on a prompt the UI already dropped.
- */
-function useParkedPrompts<T extends { taskId: string; requestId: string }>(
-  subscribe: (handler: (prompt: T) => void) => Promise<() => void>,
-  tasks: Task[],
-  toast: ToastApi,
-  errorMessage: string,
-): {
-  prompts: Record<string, T[]>;
-  resolve: (taskId: string, requestId: string, send: () => Promise<void>) => void;
-} {
-  const [prompts, setPrompts] = useState<Record<string, T[]>>({});
-
-  useEffect(() => {
-    const unlisten = subscribe((prompt) => {
-      setPrompts((prev) => {
-        const existing = prev[prompt.taskId] ?? [];
-        if (existing.some((p) => p.requestId === prompt.requestId)) return prev;
-        return { ...prev, [prompt.taskId]: [...existing, prompt] };
-      });
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, [subscribe]);
-
-  useEffect(() => {
-    const live = new Set(
-      tasks
-        .filter((t) => t.status === 'in_progress' || t.status === 'verifying')
-        .map((t) => t.id),
-    );
-    setPrompts((prev) => {
-      const next: Record<string, T[]> = {};
-      let changed = false;
-      for (const [taskId, list] of Object.entries(prev)) {
-        if (live.has(taskId)) next[taskId] = list;
-        else changed = true;
-      }
-      return changed ? next : prev;
-    });
-  }, [tasks]);
-
-  const resolve = useCallback(
-    (taskId: string, requestId: string, send: () => Promise<void>) => {
-      // Optimistically remove the prompt, capturing it so a failed relay can be
-      // re-inserted — otherwise the run parks forever on a prompt already dropped.
-      let removed: T | undefined;
-      setPrompts((prev) => {
-        const list = prev[taskId] ?? [];
-        removed = list.find((p) => p.requestId === requestId);
-        const remaining = list.filter((p) => p.requestId !== requestId);
-        const next = { ...prev };
-        if (remaining.length === 0) delete next[taskId];
-        else next[taskId] = remaining;
-        return next;
-      });
-      void send().catch((err) => {
-        console.error(errorMessage, err);
-        toast.error(errorMessage, err);
-        if (removed === undefined) return;
-        const prompt = removed;
-        // Re-insert (dedup-guarded) so the user can retry rather than hang the run.
-        setPrompts((prev) => {
-          const list = prev[taskId] ?? [];
-          if (list.some((p) => p.requestId === prompt.requestId)) return prev;
-          return { ...prev, [taskId]: [...list, prompt] };
-        });
-      });
-    },
-    [toast, errorMessage],
-  );
-
-  return { prompts, resolve };
-}
-
-/** Parked interactive permission prompts (`nc:permission`). Answering removes the
- *  prompt optimistically (the backend resolves the parked request) and re-inserts
- *  it if the relay fails — see {@link useParkedPrompts}. */
-function usePermissions(tasks: Task[], toast: ToastApi) {
-  const { prompts, resolve } = useParkedPrompts<PermissionPrompt>(
-    onPermissionEvent,
-    tasks,
-    toast,
-    'Could not answer the permission prompt',
-  );
-  const respond = useCallback(
-    (taskId: string, requestId: string, decision: 'allow' | 'deny') => {
-      resolve(taskId, requestId, () => respondPermission(taskId, requestId, decision));
-    },
-    [resolve],
-  );
-  return { prompts, respond };
-}
-
-/** Parked interactive `AskUserQuestion` prompts (`nc:question`). Answering removes
- *  the prompt optimistically (the engine settles the parked dialog) and re-inserts
- *  it if the relay fails — see {@link useParkedPrompts}. */
-function useQuestions(tasks: Task[], toast: ToastApi) {
-  const { prompts, resolve } = useParkedPrompts<QuestionPrompt>(
-    onQuestionEvent,
-    tasks,
-    toast,
-    'Could not answer the question',
-  );
-  const answer = useCallback(
-    (taskId: string, requestId: string, value: QuestionAnswer) => {
-      resolve(taskId, requestId, () => answerQuestion(taskId, requestId, value));
-    },
-    [resolve],
-  );
-  return { prompts, answer };
-}
-
-/** Per-task readiness-gauntlet results + in-flight state (M4, §C). The Verified
- *  column runs the gauntlet on demand; the result gates the merge. Results are
- *  cleared whenever the project is re-activated (the board re-seeds). */
-function useGauntlet(toast: ToastApi) {
-  const [results, setResults] = useState<Record<string, GauntletResult>>({});
-  const [running, setRunning] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    const unlisten = onProjectEvent(({ type }) => {
-      if (type === 'activated' || type === 'deleted') {
-        setResults({});
-        setRunning(new Set());
-      }
-    });
-    return () => {
-      void unlisten.then((fn) => fn());
-    };
-  }, []);
-
-  const run = useCallback(
-    (id: string) => {
-      setRunning((prev) => new Set(prev).add(id));
-      void runGauntlet(id)
-        .then((result) => setResults((prev) => ({ ...prev, [id]: result })))
-        .catch((err) => {
-          console.error('run_gauntlet failed', err);
-          toast.error('Could not run the readiness checks', err);
-          // Surface a failed result so the merge gate stays closed and the user
-          // sees the failure in the Verified column rather than a silent no-op.
-          setResults((prev) => ({
-            ...prev,
-            [id]: {
-              passed: false,
-              steps: [],
-              failedStep: 'Checks could not run',
-            },
-          }));
-        })
-        .finally(() =>
-          setRunning((prev) => {
-            const next = new Set(prev);
-            next.delete(id);
-            return next;
-          }),
-        );
-    },
-    [toast],
-  );
-
-  return { results, running, run };
-}
+import { EMPTY_TRANSCRIPT, type ActiveWorktree } from '@/components/board';
+import { useToast } from '@/components/ui';
+import { useActionGuard } from './hooks/useActionGuard.hooks';
+import { useAutoLoop } from './hooks/useAutoLoop.hooks';
+import { useBlockedIds } from './hooks/useBlockedIds.hooks';
+import { useBoard } from './hooks/useBoard.hooks';
+import { useDestructiveConfirm } from './hooks/useDestructiveConfirm.hooks';
+import { useGauntlet } from './hooks/useGauntlet.hooks';
+import { useNewProjectFlow } from './hooks/useNewProjectFlow.hooks';
+import { usePermissions, useQuestions } from './hooks/useParkedPrompts.hooks';
+import { useProjectRegistry } from './hooks/useProjectRegistry.hooks';
+import { useRouting } from './hooks/useRouting.hooks';
+import { useSettingsData } from './hooks/useSettingsData.hooks';
+import { useSplash } from './hooks/useSplash.hooks';
+import { useStableLogCounts } from './hooks/useStableLogCounts.hooks';
+import { useWorktrees } from './hooks/useWorktrees.hooks';
 
 export interface AppShellState {
   routing: ReturnType<typeof useRouting>;
@@ -828,13 +133,23 @@ export interface AppShellState {
     /** True while a guarded task action (`run`/`approve`/`commit`/…) is in flight,
      *  so the matching button can disable itself and not double-fire. */
     isActionPending: (action: string, id: string) => boolean;
+    /** Open the destructive-delete confirmation for a card's trash button (the
+     *  board wires this as the card `onDelete` so a delete is never immediate). */
+    requestDelete: (id: string) => void;
+    /** Open the destructive bulk-clear confirmation for a column's Clear button. */
+    requestClear: (statuses: TaskStatus[]) => void;
   };
+  /** The shared destructive-delete confirmation (card trash + column Clear),
+   *  rendered by AppShell as a single `ConfirmDialog`. */
+  confirm: ReturnType<typeof useDestructiveConfirm>;
   showSplash: boolean;
   isTauri: boolean;
 }
 
 /** The shell's single composition hook: routing, the project registry, settings,
- *  the New Project flow, and the board's task/stream wiring. */
+ *  the New Project flow, and the board's task/stream wiring. Each domain hook
+ *  lives in its own `./hooks/*` module; this composes them and exposes the cross-
+ *  hook action handlers (which bridge the action guard + board state). */
 export function useAppShell(): AppShellState {
   const toast = useToast();
   const action = useActionGuard();
@@ -868,16 +183,10 @@ export function useAppShell(): AppShellState {
     () => tasks.find((t) => t.id === selectedId) ?? null,
     [tasks, selectedId],
   );
-  // Streamed log-line count per task, for the running card's Logs badge. Reads the
-  // incrementally-maintained `toolCount` (perf #6) rather than re-filtering every
-  // task's entries on each delta.
-  const logCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const [id, transcript] of Object.entries(streams)) {
-      counts[id] = transcript.toolCount;
-    }
-    return counts;
-  }, [streams]);
+  // Streamed log-line count per task, for the running card's Logs badge. Its
+  // object identity is stabilized on the count VALUES (not the per-delta `streams`
+  // map) so text-only deltas don't churn the memoized Board/Column/TaskCard tree.
+  const logCounts = useStableLogCounts(streams);
 
   const handleCreate = useCallback(
     async (
@@ -1160,6 +469,10 @@ export function useAppShell(): AppShellState {
     [action, toast],
   );
 
+  // Route the card trash + column Clear through a shared destructive confirm
+  // (the real deletes stay optimistic; only the trigger is gated).
+  const confirm = useDestructiveConfirm(tasks, handleDelete, handleClearColumn);
+
   const promptIds = useMemo(
     () => new Set([...Object.keys(permissions.prompts), ...Object.keys(questions.prompts)]),
     [permissions.prompts, questions.prompts],
@@ -1213,7 +526,10 @@ export function useAppShell(): AppShellState {
       handleRerunVerification,
       handleRunGauntlet: gauntlet.run,
       isActionPending: action.isPending,
+      requestDelete: confirm.requestDelete,
+      requestClear: confirm.requestClear,
     },
+    confirm,
     showSplash,
     isTauri: isTauri(),
   };

@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   AgentsIcon,
   AlertIcon,
@@ -28,8 +29,14 @@ const EMPTY_TEXT: Record<string, string> = {
  *  search, the live concurrency slider + Auto Mode toggle) over the five columns,
  *  plus a circuit-breaker Resume banner when the autonomous loop has paused after
  *  consecutive failures. Search lives in the board's view hook; the loop state
- *  and bridge actions are owned by the shell and passed down. */
-export function Board({
+ *  and bridge actions are owned by the shell and passed down.
+ *
+ *  Memoized (perf): the shell re-renders AppShell on every coalesced `nc:session`
+ *  flush, but the Board's props are referentially stable (the `on*` handlers are
+ *  `useCallback`s in `useAppShell`, and `logCounts` is identity-stabilized on the
+ *  tool-count values) — so the board only re-renders when its tasks/selection/
+ *  loop state actually change, not on every stream delta. */
+function BoardImpl({
   tasks,
   projectName,
   projectPath,
@@ -236,3 +243,5 @@ export function Board({
     </div>
   );
 }
+
+export const Board = memo(BoardImpl);

@@ -157,19 +157,45 @@ export interface QuestionPrompt {
   questions: QuestionItem[];
 }
 
+/** The `nc:project` event variant union. This is the AUTHORITATIVE type — every
+ *  place that cares about project event kinds (the interface, the runtime guard,
+ *  and any downstream switch) references THIS, not a hand-enumerated literal. When
+ *  a new event variant is added to the Rust emitter, add it here first; the
+ *  `satisfies` on `PROJECT_EVENT_TYPES` below will then force a compile error until
+ *  the array is updated to match. */
+export type ProjectEventType = 'created' | 'deleted' | 'activated' | 'renamed';
+
+/** Runtime membership array for `ProjectEventType`. Must stay exhaustive: the
+ *  `satisfies` clause makes adding a variant to `ProjectEventType` above without
+ *  adding it here a compile error. The guard uses this array directly — no
+ *  hand-enumerated strings at the call site. */
+const PROJECT_EVENT_TYPES = [
+  'created',
+  'deleted',
+  'activated',
+  'renamed',
+] as const satisfies readonly ProjectEventType[];
+
 /** `nc:project` payload: a registry change plus the full registry snapshot.
  *  `renamed` carries the updated project (name changed; active pointer unchanged). */
 export interface ProjectEnvelope {
-  type: 'created' | 'deleted' | 'activated' | 'renamed';
+  type: ProjectEventType;
   project: Project | null;
   projects: Project[];
 }
 
-/** The autonomous loop's run state (the `state` field of the generated
- *  `LoopEnvelope`). Web-local union — the generated `LoopEnvelope.state` is a plain
- *  `string` (the Rust payload carries it as a free string), so this narrows it for
- *  the board's `loop.state === 'running'` checks. */
+/** The autonomous loop's run state. This is the AUTHORITATIVE type — the generated
+ *  `LoopEnvelope.state` field is a plain `string` (Rust emits it as a free string),
+ *  so this web-local union is the single source of truth for valid states. When the
+ *  Rust coordinator adds a new state, add it here first; the `satisfies` on
+ *  `LOOP_STATES` below will then force a compile error until the array is updated. */
 export type LoopState = 'running' | 'drained' | 'paused';
+
+/** Runtime membership array for `LoopState`. Must stay exhaustive: the `satisfies`
+ *  clause makes adding a state to `LoopState` above without adding it here a compile
+ *  error. The guard uses this array directly — no hand-enumerated strings at the
+ *  call site. */
+const LOOP_STATES = ['running', 'drained', 'paused'] as const satisfies readonly LoopState[];
 
 // --- Commands -------------------------------------------------------------
 
@@ -616,9 +642,11 @@ function hasKeys<K extends string>(
   return keys.every((k) => k in value);
 }
 
-/** Narrow an unknown payload to a `Task` defensively. Checks the fields the board
- *  reducer + optimistic-move reconciliation actually read (`id`, `status`,
- *  `createdAt`/`updatedAt` timestamps) rather than trusting the rest blindly. */
+/** Narrow an unknown payload to a `Task` defensively. INTENTIONALLY PARTIAL: only
+ *  validates the fields the board reducer + optimistic-move reconciliation actually
+ *  read (`id`, `status`, `createdAt`/`updatedAt`). The full shape is the generated
+ *  `Task` type (`./generated/Task.ts`) — add checks here if the reducer starts
+ *  consuming new fields that could be missing or mis-typed. */
 function isTask(value: unknown): value is Task {
   if (!hasKeys(value, ['id', 'status', 'createdAt', 'updatedAt'])) return false;
   return (
@@ -666,14 +694,12 @@ export async function onSessionEvent(
 /** Narrow an unknown payload to a `ProjectEnvelope` defensively. The handler reads
  *  `type`, the full `projects` snapshot, and `project` (for activated/renamed), so
  *  all three are checked: a valid `type`, an array `projects`, and `project` being
- *  an object-or-null. */
+ *  an object-or-null. `PROJECT_EVENT_TYPES` is the single source of truth for the
+ *  membership check — no hand-enumerated string literals here. */
 function isProjectEnvelope(value: unknown): value is ProjectEnvelope {
   if (!hasKeys(value, ['type', 'project', 'projects'])) return false;
   return (
-    (value.type === 'created' ||
-      value.type === 'deleted' ||
-      value.type === 'activated' ||
-      value.type === 'renamed') &&
+    (PROJECT_EVENT_TYPES as readonly string[]).includes(value.type as string) &&
     Array.isArray(value.projects) &&
     (value.project === null || typeof value.project === 'object')
   );
@@ -691,13 +717,13 @@ export async function onProjectEvent(
 
 /** Narrow an unknown payload to a `LoopEnvelope` defensively. The handler reads
  *  `state`, `maxConcurrency`, `reason`, and `failureThreshold` (the breaker
- *  badge), so the numeric fields it depends on are type-checked too. */
+ *  badge), so the numeric fields it depends on are type-checked too. `LOOP_STATES`
+ *  is the single source of truth for the membership check — no hand-enumerated
+ *  string literals here. */
 function isLoopEnvelope(value: unknown): value is LoopEnvelope {
   if (!hasKeys(value, ['state', 'maxConcurrency', 'failureThreshold'])) return false;
   return (
-    (value.state === 'running' ||
-      value.state === 'drained' ||
-      value.state === 'paused') &&
+    (LOOP_STATES as readonly string[]).includes(value.state as string) &&
     typeof value.maxConcurrency === 'number' &&
     typeof value.failureThreshold === 'number'
   );

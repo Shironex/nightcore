@@ -9,8 +9,10 @@ test('renders a tab per descriptor with the open count badge', async () => {
   const screen = render(<Default />);
   const tabs = screen.container.querySelectorAll('[role="tab"]');
   expect(tabs).toHaveLength(5);
-  // The "All" tab is running → shows an analyzing pulse, not a count badge.
-  expect(screen.container.querySelector('[aria-label="analyzing"]')).not.toBeNull();
+  // The "All" tab is running → aria-busy="true" on the tab, pulse dot is aria-hidden.
+  const allTab = screen.container.querySelector('[role="tab"][aria-busy="true"]');
+  expect(allTab).not.toBeNull();
+  expect(screen.container.querySelector('[aria-hidden="true"].animate-pulse')).not.toBeNull();
 });
 
 test('marks the active tab selected', async () => {

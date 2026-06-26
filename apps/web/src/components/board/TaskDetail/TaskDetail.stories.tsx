@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 import { TaskDetail } from './TaskDetail';
+import type { TaskDetailActions } from './TaskDetail.types';
 import {
   EMPTY_STREAM,
   type SessionGroup,
@@ -16,6 +17,33 @@ import {
   TASKS_BY_STATUS,
   makeTask,
 } from '../_fixtures';
+
+/** Every drawer action stubbed — the grouped `actions` object the drawer (and its
+ *  sub-components) destructure from. Stories override individual handlers by
+ *  spreading this and replacing one entry. */
+const actions: TaskDetailActions = {
+  onRun: fn(),
+  onCancel: fn(),
+  onDelete: fn(),
+  onRespondPermission: fn(),
+  onAnswerQuestion: fn(),
+  onApprove: fn(),
+  onReject: fn(),
+  onRefine: fn(),
+  onChangeKind: fn(),
+  onChangeRunMode: fn(),
+  onChangePermissionMode: fn(),
+  onChangeModel: fn(),
+  onChangeEffort: fn(),
+  onChangeMaxTurns: fn(),
+  onChangeMaxBudget: fn(),
+  onAcceptReview: fn(),
+  onRejectReview: fn(),
+  onRerunVerification: fn(),
+  onRunGauntlet: fn(),
+  onMerge: fn(),
+  onCommit: fn(),
+};
 
 /** Wrap a single session's stream into a one-session transcript (the common
  *  story shape). */
@@ -63,26 +91,7 @@ const meta = {
     gauntlet: null,
     gauntletRunning: false,
     onClose: fn(),
-    onRun: fn(),
-    onCancel: fn(),
-    onDelete: fn(),
-    onRespondPermission: fn(),
-    onApprove: fn(),
-    onReject: fn(),
-    onRefine: fn(),
-    onChangeKind: fn(),
-    onChangeRunMode: fn(),
-    onChangePermissionMode: fn(),
-    onChangeModel: fn(),
-    onChangeEffort: fn(),
-    onChangeMaxTurns: fn(),
-    onChangeMaxBudget: fn(),
-    onAcceptReview: fn(),
-    onRejectReview: fn(),
-    onRerunVerification: fn(),
-    onRunGauntlet: fn(),
-    onMerge: fn(),
-    onCommit: fn(),
+    actions,
   },
   decorators: [
     (Story) => (
@@ -222,13 +231,13 @@ export const EditablePickers: Story = {
     const canvas = within(canvasElement);
     const modes = within(canvas.getByRole('radiogroup', { name: /permission mode/i }));
     await userEvent.click(modes.getByRole('radio', { name: /^ask$/i }));
-    await expect(args.onChangePermissionMode).toHaveBeenCalledWith('t-edit', 'ask');
+    await expect(args.actions.onChangePermissionMode).toHaveBeenCalledWith('t-edit', 'ask');
 
     // Committing a max-turns ceiling (blur) patches the per-task guardrail.
     const turns = canvas.getByRole('spinbutton', { name: 'Max turns' });
     await userEvent.type(turns, '40');
     await userEvent.tab();
-    await expect(args.onChangeMaxTurns).toHaveBeenCalledWith('t-edit', 40);
+    await expect(args.actions.onChangeMaxTurns).toHaveBeenCalledWith('t-edit', 40);
   },
 };
 
@@ -409,7 +418,7 @@ export const AcceptsReview: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /accept/i }));
-    await expect(args.onAcceptReview).toHaveBeenCalledWith('t-waiting');
+    await expect(args.actions.onAcceptReview).toHaveBeenCalledWith('t-waiting');
   },
 };
 
@@ -419,7 +428,7 @@ export const RunsGauntlet: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: /run checks/i }));
-    await expect(args.onRunGauntlet).toHaveBeenCalledWith('t-done');
+    await expect(args.actions.onRunGauntlet).toHaveBeenCalledWith('t-done');
   },
 };
 
