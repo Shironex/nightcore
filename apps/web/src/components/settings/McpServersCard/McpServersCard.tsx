@@ -85,12 +85,17 @@ function Editor({
           placeholder="filesystem"
           className={FIELD_INPUT}
           aria-invalid={errors.name !== undefined}
+          aria-describedby={
+            errors.name !== undefined ? 'mcp-name-help mcp-name-error' : 'mcp-name-help'
+          }
         />
-        <p className="mt-1 text-[11px] text-muted-foreground">
+        <p id="mcp-name-help" className="mt-1 text-[11px] text-muted-foreground">
           The tool prefix becomes <span className="font-mono">mcp__{draft.name || 'name'}__*</span>.
         </p>
         {errors.name !== undefined && (
-          <p className="mt-1 text-[11px] text-warning">{errors.name}</p>
+          <p id="mcp-name-error" className="mt-1 text-[11px] text-warning">
+            {errors.name}
+          </p>
         )}
       </div>
 
@@ -127,9 +132,14 @@ function Editor({
               placeholder="npx"
               className={`${FIELD_INPUT} font-mono`}
               aria-invalid={errors.command !== undefined}
+              aria-describedby={
+                errors.command !== undefined ? 'mcp-command-error' : undefined
+              }
             />
             {errors.command !== undefined && (
-              <p className="mt-1 text-[11px] text-warning">{errors.command}</p>
+              <p id="mcp-command-error" className="mt-1 text-[11px] text-warning">
+                {errors.command}
+              </p>
             )}
           </div>
           <div>
@@ -143,8 +153,11 @@ function Editor({
               onChange={(e) => onPatch({ argsText: e.target.value })}
               placeholder={'-y\n@modelcontextprotocol/server-filesystem\n.'}
               className={FIELD_AREA}
+              aria-describedby="mcp-args-help"
             />
-            <p className="mt-1 text-[11px] text-muted-foreground">One argument per line.</p>
+            <p id="mcp-args-help" className="mt-1 text-[11px] text-muted-foreground">
+              One argument per line.
+            </p>
           </div>
           <div>
             <label className={FIELD_LABEL} htmlFor="mcp-env">
@@ -157,8 +170,9 @@ function Editor({
               onChange={(e) => onPatch({ envText: e.target.value })}
               placeholder="API_TOKEN=secret"
               className={FIELD_AREA}
+              aria-describedby="mcp-env-help"
             />
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            <p id="mcp-env-help" className="mt-1 text-[11px] text-muted-foreground">
               <span className="font-mono">KEY=value</span> per line. Existing values are
               masked — retype to change.
             </p>
@@ -177,9 +191,12 @@ function Editor({
               placeholder="https://example.com/mcp"
               className={`${FIELD_INPUT} font-mono`}
               aria-invalid={errors.url !== undefined}
+              aria-describedby={errors.url !== undefined ? 'mcp-url-error' : undefined}
             />
             {errors.url !== undefined && (
-              <p className="mt-1 text-[11px] text-warning">{errors.url}</p>
+              <p id="mcp-url-error" className="mt-1 text-[11px] text-warning">
+                {errors.url}
+              </p>
             )}
           </div>
           <div>
@@ -193,8 +210,9 @@ function Editor({
               onChange={(e) => onPatch({ headersText: e.target.value })}
               placeholder="Authorization: Bearer token"
               className={FIELD_AREA}
+              aria-describedby="mcp-headers-help"
             />
-            <p className="mt-1 text-[11px] text-muted-foreground">
+            <p id="mcp-headers-help" className="mt-1 text-[11px] text-muted-foreground">
               <span className="font-mono">Header: value</span> per line. Existing values
               are masked — retype to change.
             </p>
@@ -202,6 +220,7 @@ function Editor({
         </>
       )}
 
+      {/* eslint-disable-next-line jsx-a11y/label-has-associated-control -- wraps a custom role=switch button (a labelable element that forwards label clicks); the switch carries its own accessible name */}
       <label className="flex items-center gap-2.5 text-[13px] text-foreground">
         <RowToggle
           on={draft.enabled}

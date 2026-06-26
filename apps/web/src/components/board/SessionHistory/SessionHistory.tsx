@@ -115,6 +115,7 @@ function SessionRow({
           <span className="min-w-0 flex-1">
             {renaming ? (
               <input
+                // eslint-disable-next-line jsx-a11y/no-autofocus -- focus the inline rename field the moment it opens (a deliberate, user-initiated action, not a page-load autofocus)
                 autoFocus
                 value={draft}
                 aria-label="Session title"
