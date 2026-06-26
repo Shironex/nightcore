@@ -58,6 +58,27 @@ export type {
   AnalysisScope,
   EffortLevel,
 } from '@nightcore/contracts';
+// Harness (codebase convention auditor) persisted shapes (ts-rs from `store/harness.rs`).
+export type { HarnessRun } from './generated/HarnessRun';
+export type { StoredConventionFinding } from './generated/StoredConventionFinding';
+export type { StoredProposedArtifact } from './generated/StoredProposedArtifact';
+export type { StoredRepoProfile } from './generated/StoredRepoProfile';
+export type { StoredRepoPackage } from './generated/StoredRepoPackage';
+export type { HarnessUsage } from './generated/HarnessUsage';
+// The harness convention taxonomy + proposed-artifact shapes come from the zod
+// contract (the engine's wire shape); the generated `Stored*` types keep the
+// enum-ish fields as `string`, so the Harness view casts to these unions.
+export type {
+  ConventionCategory,
+  ConventionKind,
+  ConventionFinding,
+  RepoProfile,
+  RepoPackage,
+  WorkspaceTool,
+  ArtifactKind,
+  ArtifactWriteMode,
+  ProposedArtifact,
+} from '@nightcore/contracts';
 
 /** The kind preset a task runs under (M4) and the four UI permission modes are
  *  now generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
@@ -90,10 +111,12 @@ import type { SessionInfo } from './generated/SessionInfo';
 import type { SessionMessage } from './generated/SessionMessage';
 import type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
 import type { InsightRun } from './generated/InsightRun';
+import type { HarnessRun } from './generated/HarnessRun';
 import type {
   AnalysisScope,
   FindingCategory,
   EffortLevel,
+  ConventionCategory,
 } from '@nightcore/contracts';
 
 /** True when running inside the Tauri webview (vs. a plain browser preview). */
@@ -920,6 +943,173 @@ export async function onInsightEvent(
   if (!isTauri()) return () => {};
   return listen<unknown>('nc:insight', (event) => {
     const parsed = parseInsightEvent(event.payload);
+    if (parsed !== null) handler(parsed);
+  });
+}
+
+// --- Harness (codebase convention auditor) --------------------------------
+
+/** The Harness scan event family streamed over `nc:harness`, narrowed from the
+ *  authoritative `NightcoreEvent` union. Mirrors `AnalysisEvent`, with the two
+ *  extra hops Harness adds (`harness-profile-ready`, `harness-proposals-ready`). */
+export type HarnessScanEvent = Extract<
+  NcEvent,
+  {
+    type:
+      | 'harness-scan-started'
+      | 'harness-profile-ready'
+      | 'harness-category-started'
+      | 'harness-category-completed'
+      | 'harness-proposals-ready'
+      | 'harness-scan-completed'
+      | 'harness-scan-failed';
+  }
+>;
+
+/** A non-`NightcoreEvent` notice the Rust core emits on `nc:harness` when an
+ *  artifact is written to disk, so the open Harness view can mark it applied in
+ *  place. */
+export interface ArtifactAppliedEvent {
+  type: 'artifact-applied';
+  runId: string;
+  artifactId: string;
+  /** The repo-relative path the artifact was written to. */
+  path: string;
+}
+
+/** Everything that arrives on the `nc:harness` channel. */
+export type HarnessEvent = HarnessScanEvent | ArtifactAppliedEvent;
+
+/** Start a Harness scan over the active project. Returns the `runId` the
+ *  `harness-*` events correlate by. Rejects outside Tauri (no active project). */
+export async function startHarnessScan(
+  categories: ConventionCategory[],
+  options: { model?: string | null; effort?: EffortLevel | null } = {},
+): Promise<string> {
+  return invoke<string>('start_harness_scan', {
+    categories,
+    model: options.model ?? null,
+    effort: options.effort ?? null,
+  });
+}
+
+/** Cancel an in-flight Harness scan (aborts every lens pass). No-op outside Tauri. */
+export async function cancelHarnessScan(runId: string): Promise<void> {
+  await tauriInvoke<void>('cancel_harness_scan', { runId }, undefined);
+}
+
+/** All Harness runs for the active project, newest first. `[]` outside Tauri. */
+export async function listHarnessRuns(): Promise<HarnessRun[]> {
+  return tauriInvoke<HarnessRun[]>('list_harness_runs', {}, []);
+}
+
+/** One Harness run by id, or `null`. `null` outside Tauri. */
+export async function getHarnessRun(runId: string): Promise<HarnessRun | null> {
+  return tauriInvoke<HarnessRun | null>('get_harness_run', { runId }, null);
+}
+
+/** Delete a Harness run and its file. No-op outside Tauri. */
+export async function deleteHarnessRun(runId: string): Promise<void> {
+  await tauriInvoke<void>('delete_harness_run', { runId }, undefined);
+}
+
+/** Mark a convention finding dismissed (it stays dismissed across future
+ *  re-scans). Returns the updated run. No-op (`null`) outside Tauri. */
+export async function dismissHarnessFinding(
+  runId: string,
+  findingId: string,
+): Promise<HarnessRun | null> {
+  return tauriInvoke<HarnessRun | null>(
+    'dismiss_harness_finding',
+    { runId, findingId },
+    null,
+  );
+}
+
+/** Restore a dismissed convention finding back to open. Returns the updated run. */
+export async function restoreHarnessFinding(
+  runId: string,
+  findingId: string,
+): Promise<HarnessRun | null> {
+  return tauriInvoke<HarnessRun | null>(
+    'restore_harness_finding',
+    { runId, findingId },
+    null,
+  );
+}
+
+/** Mark a proposed artifact dismissed (it stays dismissed across future
+ *  re-scans). Returns the updated run. No-op (`null`) outside Tauri. */
+export async function dismissHarnessArtifact(
+  runId: string,
+  artifactId: string,
+): Promise<HarnessRun | null> {
+  return tauriInvoke<HarnessRun | null>(
+    'dismiss_harness_artifact',
+    { runId, artifactId },
+    null,
+  );
+}
+
+/** Restore a dismissed proposed artifact back to proposed. Returns the updated run. */
+export async function restoreHarnessArtifact(
+  runId: string,
+  artifactId: string,
+): Promise<HarnessRun | null> {
+  return tauriInvoke<HarnessRun | null>(
+    'restore_harness_artifact',
+    { runId, artifactId },
+    null,
+  );
+}
+
+/** Apply a proposed artifact into the project — WRITES to disk. `create` refuses
+ *  to overwrite an existing file; `merge-section` updates a managed block. Returns
+ *  the updated run, or rejects with the write error (surfaced inline). Rejects
+ *  outside Tauri (no active project). */
+export async function applyHarnessArtifact(
+  runId: string,
+  artifactId: string,
+): Promise<HarnessRun> {
+  return invoke<HarnessRun>('apply_harness_artifact', { runId, artifactId });
+}
+
+/** Narrow an unknown `nc:harness` payload to a `HarnessEvent`. The `harness-*`
+ *  events are validated against the authoritative `NightcoreEventSchema`; the
+ *  `artifact-applied` notice (not a `NightcoreEvent`) is shape-checked. */
+function parseHarnessEvent(value: unknown): HarnessEvent | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (v.type === 'artifact-applied') {
+    if (
+      typeof v.runId === 'string' &&
+      typeof v.artifactId === 'string' &&
+      typeof v.path === 'string'
+    ) {
+      return {
+        type: 'artifact-applied',
+        runId: v.runId,
+        artifactId: v.artifactId,
+        path: v.path,
+      };
+    }
+    return null;
+  }
+  const parsed = NightcoreEventSchema.safeParse(value);
+  if (parsed.success && parsed.data.type.startsWith('harness-')) {
+    return parsed.data as HarnessScanEvent;
+  }
+  return null;
+}
+
+/** Subscribe to `nc:harness` streamed scan events. Returns an unlisten function
+ *  (a no-op outside Tauri). */
+export async function onHarnessEvent(
+  handler: (event: HarnessEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<unknown>('nc:harness', (event) => {
+    const parsed = parseHarnessEvent(event.payload);
     if (parsed !== null) handler(parsed);
   });
 }
