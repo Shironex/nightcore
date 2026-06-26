@@ -236,6 +236,7 @@ function TaskCardImpl({
         )}
       </button>
 
+      {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions -- non-interactive wrapper; onClick only stops the real action buttons' clicks from bubbling to the card/drag container */}
       <div className="mt-3 flex gap-1.5" onClick={stop}>
         {task.status === 'backlog' || task.status === 'ready' ? (
           <>

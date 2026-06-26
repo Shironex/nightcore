@@ -14,6 +14,8 @@ import type { NewTaskFormProps } from './NewTaskForm.types';
 
 const INPUT_CLASS =
   'w-full rounded-[10px] border border-border bg-black/20 px-3 py-2.5 text-sm text-foreground outline-none placeholder:text-muted-foreground/70 focus:border-primary';
+const LABEL_CLASS =
+  'font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground';
 
 /** The create-task dialog reached from the board's "New task" affordance. */
 export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
@@ -59,39 +61,42 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
           </IconButton>
         </div>
         <div className="flex min-h-0 flex-col gap-3 overflow-y-auto p-5">
-          <input
-            id="nt-title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="Task title"
-            aria-label="Task title"
-            className={INPUT_CLASS}
-          />
-          <textarea
-            value={description}
-            onChange={(e) => setDescription(e.target.value)}
-            onKeyDown={onDescKeyDown}
-            rows={4}
-            placeholder="Describe what you want built…"
-            aria-label="Task description"
-            className={`resize-none ${INPUT_CLASS}`}
-          />
           <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-              Kind
-            </span>
+            <label htmlFor="nt-title" className={LABEL_CLASS}>
+              Title
+            </label>
+            <input
+              id="nt-title"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="Task title"
+              className={INPUT_CLASS}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <label htmlFor="nt-description" className={LABEL_CLASS}>
+              Description
+            </label>
+            <textarea
+              id="nt-description"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              onKeyDown={onDescKeyDown}
+              rows={4}
+              placeholder="Describe what you want built…"
+              className={`resize-none ${INPUT_CLASS}`}
+            />
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className={LABEL_CLASS}>Kind</span>
             <KindPicker value={kind} onChange={setKind} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-              Run mode
-            </span>
+            <span className={LABEL_CLASS}>Run mode</span>
             <WorkModePicker value={runMode} onChange={setRunMode} />
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-              Permission mode
-            </span>
+            <span className={LABEL_CLASS}>Permission mode</span>
             <PermissionModePicker value={permissionMode} onChange={setPermissionMode} />
           </div>
           <ModelEffortPicker
@@ -102,10 +107,11 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
           />
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+              <label htmlFor="nt-max-turns" className={LABEL_CLASS}>
                 Max turns
-              </span>
+              </label>
               <input
+                id="nt-max-turns"
                 type="number"
                 inputMode="numeric"
                 min={1}
@@ -113,15 +119,15 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
                 value={maxTurns}
                 onChange={(e) => setMaxTurns(e.target.value)}
                 placeholder="Inherit"
-                aria-label="Max turns"
                 className={INPUT_CLASS}
               />
             </div>
             <div className="flex flex-col gap-1.5">
-              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+              <label htmlFor="nt-max-budget" className={LABEL_CLASS}>
                 Max budget (USD)
-              </span>
+              </label>
               <input
+                id="nt-max-budget"
                 type="number"
                 inputMode="decimal"
                 min={0}
@@ -129,7 +135,6 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
                 value={maxBudget}
                 onChange={(e) => setMaxBudget(e.target.value)}
                 placeholder="Inherit"
-                aria-label="Max budget in USD"
                 className={INPUT_CLASS}
               />
             </div>

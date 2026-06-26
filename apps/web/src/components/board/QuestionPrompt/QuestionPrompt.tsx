@@ -24,6 +24,7 @@ export function QuestionPrompt({ prompt, onAnswer }: QuestionPromptProps) {
   };
 
   return (
+    // eslint-disable-next-line jsx-a11y/no-noninteractive-element-interactions -- form-level Cmd/Ctrl+Enter shortcut; native submit (Send / Enter-in-input) is the primary path
     <form
       className="rounded-lg border border-info/45 bg-info/[0.08] p-3"
       onSubmit={(e) => {

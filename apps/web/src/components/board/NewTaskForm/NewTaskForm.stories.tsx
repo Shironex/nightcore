@@ -27,11 +27,11 @@ export const CreatesTask: Story = {
     await expect(create).toBeDisabled();
 
     await userEvent.type(
-      canvas.getByLabelText('Task title'),
+      canvas.getByLabelText('Title'),
       'Add a settings panel',
     );
     await userEvent.type(
-      canvas.getByLabelText('Task description'),
+      canvas.getByLabelText('Description'),
       'Build the settings surface.',
     );
     await expect(create).toBeEnabled();
@@ -53,7 +53,7 @@ export const CreatesTask: Story = {
 export const CreatesResearchTask: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByLabelText('Task title'), 'Survey caching options');
+    await userEvent.type(canvas.getByLabelText('Title'), 'Survey caching options');
     await userEvent.click(canvas.getByRole('radio', { name: /research/i }));
     await userEvent.click(canvas.getByRole('button', { name: /create task/i }));
 
@@ -73,7 +73,7 @@ export const CreatesResearchTask: Story = {
 export const CreatesWorktreeTask: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByLabelText('Task title'), 'Isolate the risky refactor');
+    await userEvent.type(canvas.getByLabelText('Title'), 'Isolate the risky refactor');
     await userEvent.click(canvas.getByRole('radio', { name: 'Worktree' }));
     await userEvent.click(canvas.getByRole('button', { name: /create task/i }));
 
@@ -94,7 +94,7 @@ export const CreatesWorktreeTask: Story = {
 export const CreatesWithOverrides: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByLabelText('Task title'), 'Apply a migration');
+    await userEvent.type(canvas.getByLabelText('Title'), 'Apply a migration');
     await userEvent.click(canvas.getByRole('radio', { name: /^plan$/i }));
     const models = within(canvas.getByRole('radiogroup', { name: /model/i }));
     await userEvent.click(models.getByRole('radio', { name: /sonnet/i }));
@@ -119,9 +119,9 @@ export const CreatesWithOverrides: Story = {
 export const CreatesWithLimits: Story = {
   play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
-    await userEvent.type(canvas.getByLabelText('Task title'), 'Bounded autonomous run');
+    await userEvent.type(canvas.getByLabelText('Title'), 'Bounded autonomous run');
     await userEvent.type(canvas.getByLabelText('Max turns'), '40');
-    await userEvent.type(canvas.getByLabelText('Max budget in USD'), '2.5');
+    await userEvent.type(canvas.getByLabelText('Max budget (USD)'), '2.5');
     await userEvent.click(canvas.getByRole('button', { name: /create task/i }));
 
     await waitFor(() =>

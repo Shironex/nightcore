@@ -13,7 +13,7 @@ test('gates create on a non-empty title, then fires onCreate', async () => {
   const create = screen.getByRole('button', { name: /create task/i });
   await expect.element(create).toBeDisabled();
 
-  await userEvent.type(screen.getByLabelText('Task title').element(), 'Add a panel');
+  await userEvent.type(screen.getByLabelText('Title').element(), 'Add a panel');
   await expect.element(create).toBeEnabled();
   await create.click();
 
@@ -30,7 +30,7 @@ test('threads an explicit max-turns ceiling through onCreate', async () => {
   const onCreate = vi.fn(async () => {});
   const screen = render(<Default onCreate={onCreate} />);
 
-  await userEvent.type(screen.getByLabelText('Task title').element(), 'Bounded run');
+  await userEvent.type(screen.getByLabelText('Title').element(), 'Bounded run');
   await userEvent.type(screen.getByLabelText('Max turns').element(), '40');
   await screen.getByRole('button', { name: /create task/i }).click();
 

@@ -2,6 +2,7 @@
 import eslint from '@eslint/js';
 import tseslint from 'typescript-eslint';
 import nightcore from '@nightcore/eslint-plugin';
+import jsxA11y from 'eslint-plugin-jsx-a11y';
 import { layerRules } from './tools/lint-meta/index.mjs';
 
 // The folder-per-component convention (Tier C) is enforced on every component
@@ -181,6 +182,17 @@ export default tseslint.config(
     rules: {
       'nightcore/no-cross-feature-imports': 'off',
     },
+  },
+  // Accessibility gate (a11y). Enforces accessible-name, keyboard-handler, and
+  // role/ARIA invariants on the React surface in CI — so a future raw clickable
+  // div, an unlabelled control, or a custom interactive missing keyboard support
+  // is caught mechanically rather than relying on author discipline + review.
+  // Scoped to apps/web JSX only (the sole React surface); the recommended set is
+  // the industry-standard baseline and composes with the nightcore plugin above.
+  {
+    files: ['apps/web/**/*.tsx'],
+    ignores: ['apps/web/**/*.{stories,test}.tsx'],
+    ...jsxA11y.flatConfigs.recommended,
   },
   // Frontend layer boundaries (single Tauri seam, components/ui purity).
   ...layerRules,
