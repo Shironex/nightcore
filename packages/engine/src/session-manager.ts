@@ -15,6 +15,7 @@ import { SessionStore } from '@nightcore/storage';
 import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionRunner } from './session-runner.js';
 import { AnalysisManager } from './analysis-manager.js';
+import { HarnessManager } from './harness-manager.js';
 import { resolveKindPreset } from './kind-presets.js';
 import type { ModelInfo } from './sdk-adapter.js';
 import { SessionApi, type SDKSessionInfo, type SessionMessage } from './session-api.js';
@@ -102,6 +103,7 @@ export class SessionManager {
   private readonly sessionApi: SessionApi;
   private readonly providerConfig: ProviderConfigReader;
   private readonly analysis: AnalysisManager;
+  private readonly harness: HarnessManager;
 
   constructor(
     private readonly config: Config,
@@ -118,6 +120,12 @@ export class SessionManager {
       apiKeyFallback: this.apiKeyFallback,
       emit: (event) => this.emit(event),
       ...(logger !== undefined ? { logger: logger.child('analysis') } : {}),
+    });
+    this.harness = new HarnessManager({
+      config,
+      apiKeyFallback: this.apiKeyFallback,
+      emit: (event) => this.emit(event),
+      ...(logger !== undefined ? { logger: logger.child('harness') } : {}),
     });
     // Seed the id counter past the highest persisted id so a restart never
     // reuses an id and clobbers a prior record (the SessionStore collapses by id,
@@ -151,6 +159,18 @@ export class SessionManager {
     }
     if (command.type === 'cancel-analysis') {
       this.analysis.cancel(command.runId);
+      return;
+    }
+    // Harness convention scans are also keyed by `runId` (not a session id) and are
+    // owned by the HarnessManager, which detects the repo profile, fans out its own
+    // read-only convention passes + a synthesis pass, and emits the `harness-*`
+    // event family.
+    if (command.type === 'start-harness-scan') {
+      this.harness.start(command);
+      return;
+    }
+    if (command.type === 'cancel-harness-scan') {
+      this.harness.cancel(command.runId);
       return;
     }
 
