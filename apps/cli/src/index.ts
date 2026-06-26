@@ -18,7 +18,7 @@ interface ParsedArgs {
   help: boolean;
 }
 
-function parseArgs(argv: string[]): ParsedArgs {
+export function parseArgs(argv: string[]): ParsedArgs {
   const args: ParsedArgs = { prompt: '', help: false };
   const positional: string[] = [];
   for (let i = 0; i < argv.length; i++) {
@@ -155,4 +155,6 @@ async function main(): Promise<void> {
   process.exit(exitCode);
 }
 
-void main();
+if (import.meta.main) {
+  void main();
+}
