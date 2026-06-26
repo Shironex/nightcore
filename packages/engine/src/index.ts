@@ -39,6 +39,35 @@ export {
 } from './analysis-presets.js';
 export type { AnalysisPreset } from './analysis-presets.js';
 
+// The Harness (codebase convention auditor) orchestrator + its pure helpers: the
+// deterministic repo profiler, the parse/ground/dedup convention helpers, the
+// per-lens presets, and the artifact synthesis pass. SDK stays confined to the
+// SessionRunner the manager spins.
+export { HarnessManager } from './harness-manager.js';
+export type {
+  HarnessManagerDeps,
+  HarnessRunnerFactory,
+  HarnessSessionRunner,
+} from './harness-manager.js';
+export { detectRepoProfile } from './repo-profile.js';
+export {
+  parseConventionFindings,
+  groundConventionFindings,
+  dedupeConventionFindings,
+  conventionFingerprint,
+} from './harness-findings.js';
+export {
+  harnessPreset,
+  conventionOutputContract,
+} from './harness-presets.js';
+export type { HarnessPreset } from './harness-presets.js';
+export { synthesizeHarness, parseProposedArtifacts } from './harness-synthesis.js';
+export type {
+  SynthesizeHarnessArgs,
+  SynthesizeHarnessResult,
+} from './harness-synthesis.js';
+export { HARNESS_REFERENCE } from './harness-reference.js';
+
 // The SDK session store surface (list/read/rename/tag of past sessions), behind a
 // thin degrade-not-throw façade. The SDK itself stays confined to `sdk-adapter`.
 export { SessionApi } from './session-api.js';
