@@ -58,6 +58,18 @@ export type {
   AnalysisScope,
   EffortLevel,
 } from '@nightcore/contracts';
+// Readiness Scorecard (Profile) persisted shapes (ts-rs from `store/scorecard.rs`).
+export type { ScorecardRun } from './generated/ScorecardRun';
+export type { StoredReading } from './generated/StoredReading';
+export type { ScorecardEvidence } from './generated/ScorecardEvidence';
+// The Scorecard taxonomy comes from the zod contract (the engine's wire shape); the
+// generated `StoredReading` keeps `dimension`/`grade` as `string`, so the Scorecard
+// view casts to these unions.
+export type {
+  ScorecardDimension,
+  ScorecardGrade,
+  ScorecardReading,
+} from '@nightcore/contracts';
 // Harness (codebase convention auditor) persisted shapes (ts-rs from `store/harness.rs`).
 export type { HarnessRun } from './generated/HarnessRun';
 export type { StoredConventionFinding } from './generated/StoredConventionFinding';
@@ -111,12 +123,14 @@ import type { SessionInfo } from './generated/SessionInfo';
 import type { SessionMessage } from './generated/SessionMessage';
 import type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
 import type { InsightRun } from './generated/InsightRun';
+import type { ScorecardRun } from './generated/ScorecardRun';
 import type { HarnessRun } from './generated/HarnessRun';
 import type {
   AnalysisScope,
   FindingCategory,
   EffortLevel,
   ConventionCategory,
+  ScorecardDimension,
 } from '@nightcore/contracts';
 
 /** True when running inside the Tauri webview (vs. a plain browser preview). */
@@ -943,6 +957,116 @@ export async function onInsightEvent(
   if (!isTauri()) return () => {};
   return listen<unknown>('nc:insight', (event) => {
     const parsed = parseInsightEvent(event.payload);
+    if (parsed !== null) handler(parsed);
+  });
+}
+
+// --- Readiness Scorecard (Profile) ----------------------------------------
+
+/** The Scorecard event family streamed over `nc:scorecard`, narrowed from the
+ *  authoritative `NightcoreEvent` union. */
+export type ScorecardWireEvent = Extract<
+  NcEvent,
+  {
+    type:
+      | 'scorecard-started'
+      | 'scorecard-dimension-started'
+      | 'scorecard-dimension-completed'
+      | 'scorecard-completed'
+      | 'scorecard-failed';
+  }
+>;
+
+/** A non-`NightcoreEvent` notice the Rust core emits on `nc:scorecard` when a reading
+ *  is hardened into a board task, so the open Scorecard view can update in place. */
+export interface ReadingConvertedEvent {
+  type: 'reading-converted';
+  runId: string;
+  readingId: string;
+  taskId: string;
+}
+
+/** Everything that arrives on the `nc:scorecard` channel. */
+export type ScorecardEvent = ScorecardWireEvent | ReadingConvertedEvent;
+
+/** Start a Readiness Scorecard run over the active project. Returns the `runId` the
+ *  `scorecard-*` events correlate by. Rejects outside Tauri (no active project). */
+export async function startScorecard(
+  dimensions: ScorecardDimension[],
+  options: { model?: string | null; effort?: EffortLevel | null } = {},
+): Promise<string> {
+  return invoke<string>('start_scorecard', {
+    dimensions,
+    model: options.model ?? null,
+    effort: options.effort ?? null,
+  });
+}
+
+/** Cancel an in-flight scorecard run (aborts every dimension pass). No-op outside Tauri. */
+export async function cancelScorecard(runId: string): Promise<void> {
+  await tauriInvoke<void>('cancel_scorecard', { runId }, undefined);
+}
+
+/** All scorecard runs for the active project, newest first. `[]` outside Tauri. */
+export async function listScorecardRuns(): Promise<ScorecardRun[]> {
+  return tauriInvoke<ScorecardRun[]>('list_scorecard_runs', {}, []);
+}
+
+/** One scorecard run by id, or `null`. `null` outside Tauri. */
+export async function getScorecardRun(runId: string): Promise<ScorecardRun | null> {
+  return tauriInvoke<ScorecardRun | null>('get_scorecard_run', { runId }, null);
+}
+
+/** Convert a reading into a board Build task that hardens that dimension
+ *  (idempotent). Returns the created task. */
+export async function convertReadingToTask(
+  runId: string,
+  readingId: string,
+): Promise<Task> {
+  return invoke<Task>('convert_reading_to_task', { runId, readingId });
+}
+
+/** Delete a scorecard run and its file. No-op outside Tauri. */
+export async function deleteScorecardRun(runId: string): Promise<void> {
+  await tauriInvoke<void>('delete_scorecard_run', { runId }, undefined);
+}
+
+/** Narrow an unknown `nc:scorecard` payload to a `ScorecardEvent`. The `scorecard-*`
+ *  events are validated against the authoritative `NightcoreEventSchema`; the
+ *  `reading-converted` notice (not a `NightcoreEvent`) is shape-checked. */
+function parseScorecardEvent(value: unknown): ScorecardEvent | null {
+  if (typeof value !== 'object' || value === null) return null;
+  const v = value as Record<string, unknown>;
+  if (v.type === 'reading-converted') {
+    if (
+      typeof v.runId === 'string' &&
+      typeof v.readingId === 'string' &&
+      typeof v.taskId === 'string'
+    ) {
+      return {
+        type: 'reading-converted',
+        runId: v.runId,
+        readingId: v.readingId,
+        taskId: v.taskId,
+      };
+    }
+    return null;
+  }
+  const parsed = NightcoreEventSchema.safeParse(value);
+  if (parsed.success && parsed.data.type.startsWith('scorecard-')) {
+    return parsed.data as ScorecardWireEvent;
+  }
+  return null;
+}
+
+/** Subscribe to `nc:scorecard` streamed events. Returns an unlisten function (a
+ *  no-op outside Tauri). */
+export async function onScorecardEvent(
+  handler: (event: ScorecardEvent) => void,
+): Promise<UnlistenFn> {
+  if (!isTauri()) return () => {};
+  return listen<unknown>('nc:scorecard', (event) => {
+    const parsed = parseScorecardEvent(event.payload);
     if (parsed !== null) handler(parsed);
   });
 }

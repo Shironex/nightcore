@@ -10,6 +10,7 @@ import {
   GearIcon,
   InsightIcon,
   LayersIcon,
+  PerfIcon,
   VerifiedIcon,
 } from '@/components/ui';
 import { Sidebar } from '../Sidebar';
@@ -33,6 +34,9 @@ const SettingsView = lazy(() =>
 const InsightView = lazy(() =>
   import('@/components/insight').then((m) => ({ default: m.InsightView })),
 );
+const ScorecardView = lazy(() =>
+  import('@/components/scorecard').then((m) => ({ default: m.ScorecardView })),
+);
 const HarnessView = lazy(() =>
   import('@/components/harness').then((m) => ({ default: m.HarnessView })),
 );
@@ -55,6 +59,7 @@ const NAV: NavItem[] = [
   { view: 'projects', label: 'Projects', hint: 'P', icon: <LayersIcon size={16} /> },
   { view: 'board', label: 'Kanban Board', hint: 'K', icon: <BoardIcon size={16} /> },
   { view: 'insight', label: 'Insight', hint: 'I', icon: <InsightIcon size={16} /> },
+  { view: 'scorecard', label: 'Scorecard', hint: 'R', icon: <PerfIcon size={16} /> },
   { view: 'harness', label: 'Harness', hint: 'H', icon: <VerifiedIcon size={16} /> },
   { view: 'settings', label: 'Settings', hint: 'S', icon: <GearIcon size={16} /> },
 ];
@@ -199,6 +204,16 @@ export function AppShell() {
         {view === 'insight' && (
           <Suspense fallback={<RouteFallback />}>
             <InsightView
+              projectPath={active?.path ?? null}
+              projectName={active?.name ?? null}
+              onGotoBoard={() => routing.goto('board')}
+            />
+          </Suspense>
+        )}
+
+        {view === 'scorecard' && (
+          <Suspense fallback={<RouteFallback />}>
+            <ScorecardView
               projectPath={active?.path ?? null}
               projectName={active?.name ?? null}
               onGotoBoard={() => routing.goto('board')}
