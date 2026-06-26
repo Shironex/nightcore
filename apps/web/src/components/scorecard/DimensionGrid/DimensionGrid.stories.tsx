@@ -1,0 +1,60 @@
+import type { Meta, StoryObj } from '@storybook/react-vite';
+import { fn } from 'storybook/test';
+import { DimensionGrid } from './DimensionGrid';
+import type { DimensionRow } from './DimensionGrid.types';
+import type { ScorecardReadingView } from '../scorecard.types';
+
+function reading(over: Partial<ScorecardReadingView>): ScorecardReadingView {
+  return {
+    id: 'security-1',
+    dimension: 'security',
+    grade: 'C',
+    title: 'Input validation is inconsistent',
+    summary: 'Auth is solid but several handlers trust unvalidated bodies.',
+    rationale: null,
+    location: null,
+    suggestion: null,
+    affectedFiles: [],
+    tags: [],
+    findings: [],
+    confidence: null,
+    fingerprint: 'fp',
+    status: 'open',
+    linkedTaskId: null,
+    ...over,
+  };
+}
+
+const ROWS: DimensionRow[] = [
+  {
+    dimension: 'architecture',
+    state: 'done',
+    reading: reading({ dimension: 'architecture', grade: 'A', title: 'Clean boundaries' }),
+  },
+  { dimension: 'tests', state: 'running', reading: null },
+  {
+    dimension: 'security',
+    state: 'done',
+    reading: reading({ dimension: 'security', grade: 'F', title: 'Exploitable holes', status: 'converted' }),
+  },
+  { dimension: 'performance', state: 'pending', reading: null },
+  { dimension: 'types', state: 'error', reading: null },
+];
+
+const meta = {
+  title: 'Scorecard/DimensionGrid',
+  component: DimensionGrid,
+  parameters: { layout: 'fullscreen' },
+  args: {
+    rows: ROWS,
+    emptyMessage: 'Grade the codebase to see per-dimension scores.',
+    onOpen: fn(),
+  },
+} satisfies Meta<typeof DimensionGrid>;
+
+export default meta;
+type Story = StoryObj<typeof meta>;
+
+export const Default: Story = {};
+
+export const Empty: Story = { args: { rows: [] } };
