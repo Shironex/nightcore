@@ -41,6 +41,7 @@ fn export_all_bindings() {
     };
     use crate::sidecar::{ProviderConfigSnapshotView, SessionInfoView, SessionMessageView};
     use crate::store::insight::{FindingLocation, InsightRun, InsightUsage, StoredFinding};
+    use crate::store::scorecard::{ScorecardEvidence, ScorecardRun, StoredReading};
     use crate::task::{PermissionMode, RunMode, Task, TaskKind, TaskPatch, TaskStatus};
 
     // `export_all` writes the type AND all of its `TS` dependencies, so exporting
@@ -85,6 +86,12 @@ fn export_all_bindings() {
         StoredFinding,
         FindingLocation,
         InsightUsage,
+        // Readiness Scorecard (Profile) persisted shapes. `export_all` on ScorecardRun
+        // writes its nested StoredReading / ScorecardEvidence too (FindingLocation /
+        // InsightUsage are shared with Insight).
+        ScorecardRun,
+        StoredReading,
+        ScorecardEvidence,
     );
 }
 

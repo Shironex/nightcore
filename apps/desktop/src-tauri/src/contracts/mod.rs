@@ -78,8 +78,8 @@ mod tests {
             .expect("fixtures.commands is an object");
         assert_eq!(
             commands.len(),
-            11,
-            "all 11 SurfaceCommand variants must have a fixture"
+            13,
+            "all 13 SurfaceCommand variants must have a fixture"
         );
         for (tag, wire) in commands {
             let cmd: SurfaceCommand = serde_json::from_value(wire.clone())
@@ -136,8 +136,8 @@ mod tests {
             .expect("fixtures.events is an object");
         assert_eq!(
             events.len(),
-            25,
-            "all 25 NightcoreEvent variants must have a fixture"
+            30,
+            "all 30 NightcoreEvent variants must have a fixture"
         );
         for (tag, wire) in events {
             let event: NightcoreEvent = serde_json::from_value(wire.clone())

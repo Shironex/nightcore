@@ -284,6 +284,15 @@ export function reduce(view: SessionView, event: ViewAction): SessionView {
     case 'harness-scan-completed':
     case 'harness-scan-failed':
       return view;
+
+    // Readiness Scorecard events are owned by the desktop board's Scorecard view;
+    // the TUI ignores them.
+    case 'scorecard-started':
+    case 'scorecard-dimension-started':
+    case 'scorecard-dimension-completed':
+    case 'scorecard-completed':
+    case 'scorecard-failed':
+      return view;
   }
 }
 

@@ -11,6 +11,10 @@ import {
   ProposedArtifactSchema,
   RepoProfileSchema,
 } from './harness.js';
+import {
+  ScorecardDimensionSchema,
+  ScorecardReadingSchema,
+} from './scorecard.js';
 import { ProviderConfigSnapshotSchema } from './provider-config.js';
 import { SessionStatusSchema } from './session.js';
 import { ToolRiskSchema } from './tools.js';
@@ -447,6 +451,65 @@ export const HarnessScanFailedEvent = z.object({
   message: z.string(),
 });
 
+/**
+ * Readiness Scorecard events (the Profile twin of the `analysis-*` family). Like
+ * `analysis-*` they carry no `sessionId` and correlate by `runId`; the Rust reader
+ * routes the whole `scorecard-*` family to the `nc:scorecard` channel and persists
+ * the run on `scorecard-completed`. Each dimension pass emits ONE grounded reading
+ * (an A–F grade plus evidence) rather than a batch of severity-ranked findings.
+ */
+
+/** A run started. Echoes the resolved dimensions/model for the UI header. */
+export const ScorecardStartedEvent = z.object({
+  type: z.literal('scorecard-started'),
+  runId: z.string(),
+  dimensions: z.array(ScorecardDimensionSchema),
+  model: z.string(),
+});
+
+/** A dimension pass began grading (the UI shows a skeleton row for it). */
+export const ScorecardDimensionStartedEvent = z.object({
+  type: z.literal('scorecard-dimension-started'),
+  runId: z.string(),
+  dimension: ScorecardDimensionSchema,
+});
+
+/** A dimension pass finished: its single grounded reading streams in, plus the
+ *  pass's own token usage and cost so the UI can show per-dimension spend. */
+export const ScorecardDimensionCompletedEvent = z.object({
+  type: z.literal('scorecard-dimension-completed'),
+  runId: z.string(),
+  dimension: ScorecardDimensionSchema,
+  /** The graded reading; absent when the pass itself failed (parse/abort). */
+  reading: ScorecardReadingSchema.optional(),
+  usage: TokenUsageSchema.optional(),
+  costUsd: z.number().default(0),
+  /** Set when the pass itself failed (parse/abort): `reading` is then absent and the
+   *  UI marks the dimension errored rather than "ungraded". */
+  error: z.string().optional(),
+});
+
+/** The whole run finished: the final per-dimension readings plus run totals. The
+ *  Rust reader persists from THIS event (authoritative). */
+export const ScorecardCompletedEvent = z.object({
+  type: z.literal('scorecard-completed'),
+  runId: z.string(),
+  readings: z.array(ScorecardReadingSchema),
+  dimensionsRun: z.array(ScorecardDimensionSchema),
+  costUsd: z.number(),
+  durationMs: z.number().nonnegative().default(0),
+  usage: TokenUsageSchema.optional(),
+});
+
+/** The run failed before completing (could not start, or aborted). Reuses the same
+ *  reason set as `analysis-failed` (collapses to one generated Rust enum). */
+export const ScorecardFailedEvent = z.object({
+  type: z.literal('scorecard-failed'),
+  runId: z.string(),
+  reason: z.enum(['aborted', 'runner-crash', 'unknown']),
+  message: z.string(),
+});
+
 export const NightcoreEventSchema = z.discriminatedUnion('type', [
   SessionStartedEvent,
   SessionReadyEvent,
@@ -473,6 +536,11 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   HarnessProposalsReadyEvent,
   HarnessScanCompletedEvent,
   HarnessScanFailedEvent,
+  ScorecardStartedEvent,
+  ScorecardDimensionStartedEvent,
+  ScorecardDimensionCompletedEvent,
+  ScorecardCompletedEvent,
+  ScorecardFailedEvent,
 ]);
 export type NightcoreEvent = z.infer<typeof NightcoreEventSchema>;
 

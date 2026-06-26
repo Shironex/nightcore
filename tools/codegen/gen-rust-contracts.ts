@@ -298,6 +298,11 @@ const ENUM_NAMES: Record<string, string> = {
   'trivial|small|medium|large': 'FindingEffort',
   'repo|diff': 'AnalysisScope',
   'aborted|runner-crash|unknown': 'AnalysisFailedReason',
+  // Readiness Scorecard (Profile) enums. `AnalysisFailedReason` (above) is reused
+  // for the `scorecard-failed` reason.
+  'architecture|tests|security|error-handling|observability|dependencies|performance|types|a11y|docs-ci':
+    'ScorecardDimension',
+  'A|B|C|D|E|F': 'ScorecardGrade',
   // Harness (codebase convention auditor) enums. `FindingSeverity` (above) is
   // reused for `ConventionFinding.severity`; `AnalysisFailedReason` for the
   // `harness-scan-failed` reason.
@@ -763,6 +768,18 @@ const COMMAND_INPUTS: Record<string, unknown> = {
     maxBudgetUsdPerCategory: 2,
   },
   'cancel-harness-scan': { type: 'cancel-harness-scan', runId: 'run-h1' },
+  'start-scorecard': {
+    type: 'start-scorecard',
+    runId: 'run-s1',
+    projectPath: '/proj',
+    dimensions: ['architecture', 'tests', 'security'],
+    model: 'claude-opus-4-8',
+    effort: 'high',
+    maxConcurrency: 3,
+    maxTurnsPerDimension: 40,
+    maxBudgetUsdPerDimension: 2,
+  },
+  'cancel-scorecard': { type: 'cancel-scorecard', runId: 'run-s1' },
 };
 
 /** A representative raw input per query variant (the request/reply stream). */
@@ -1142,6 +1159,83 @@ const EVENT_INPUTS: Record<string, unknown> = {
   'harness-scan-failed': {
     type: 'harness-scan-failed',
     runId: 'run-h1',
+    reason: 'aborted',
+    message: 'cancelled by user',
+  },
+  'scorecard-started': {
+    type: 'scorecard-started',
+    runId: 'run-s1',
+    dimensions: ['architecture', 'tests', 'security'],
+    model: 'claude-opus-4-8',
+  },
+  'scorecard-dimension-started': {
+    type: 'scorecard-dimension-started',
+    runId: 'run-s1',
+    dimension: 'security',
+  },
+  'scorecard-dimension-completed': {
+    type: 'scorecard-dimension-completed',
+    runId: 'run-s1',
+    dimension: 'security',
+    reading: {
+      id: 'security-abc',
+      dimension: 'security',
+      grade: 'C',
+      title: 'Input validation is inconsistent',
+      summary:
+        'Auth is solid but several handlers trust unvalidated request bodies.',
+      rationale: 'Add zod validation at every server-fn boundary to reach a B.',
+      location: { file: 'src/fn/user.ts', startLine: 12, endLine: 20 },
+      suggestion: 'Validate request bodies with zod before use.',
+      affectedFiles: ['src/fn/user.ts'],
+      tags: ['cwe-20'],
+      findings: [
+        {
+          detail: 'updateUser trusts req.body.id without an ownership check.',
+          location: { file: 'src/fn/user.ts', startLine: 14 },
+        },
+      ],
+      confidence: 0.7,
+      fingerprint: 'security:input-validation-is-inconsistent',
+    },
+    usage: {
+      inputTokens: 4000,
+      outputTokens: 800,
+      cacheReadTokens: 100,
+      cacheCreationTokens: 50,
+    },
+    costUsd: 0.04,
+  },
+  'scorecard-completed': {
+    type: 'scorecard-completed',
+    runId: 'run-s1',
+    readings: [
+      {
+        id: 'security-abc',
+        dimension: 'security',
+        grade: 'C',
+        title: 'Input validation is inconsistent',
+        summary:
+          'Auth is solid but several handlers trust unvalidated request bodies.',
+        affectedFiles: ['src/fn/user.ts'],
+        tags: ['cwe-20'],
+        findings: [],
+        fingerprint: 'security:input-validation-is-inconsistent',
+      },
+    ],
+    dimensionsRun: ['architecture', 'tests', 'security'],
+    costUsd: 0.12,
+    durationMs: 45000,
+    usage: {
+      inputTokens: 5000,
+      outputTokens: 1500,
+      cacheReadTokens: 200,
+      cacheCreationTokens: 100,
+    },
+  },
+  'scorecard-failed': {
+    type: 'scorecard-failed',
+    runId: 'run-s1',
     reason: 'aborted',
     message: 'cancelled by user',
   },

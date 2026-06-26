@@ -68,6 +68,24 @@ export type {
 } from './harness-synthesis.js';
 export { HARNESS_REFERENCE } from './harness-reference.js';
 
+// The Readiness Scorecard (Profile) orchestrator + its pure parse/ground helpers
+// and per-dimension presets. SDK stays confined to the SessionRunner the manager
+// spins. Mirrors the Insight orchestrator tier-for-tier.
+export { ScorecardManager } from './scorecard-manager.js';
+export type {
+  ScorecardManagerDeps,
+  ScorecardRunnerFactory,
+  ScorecardSessionRunner,
+} from './scorecard-manager.js';
+export { parseReading, groundReading } from './scorecard-readings.js';
+export {
+  scorecardPreset,
+  readingOutputContract,
+  SCORECARD_ALLOWED_TOOLS,
+  SCORECARD_DISALLOWED_TOOLS,
+} from './scorecard-presets.js';
+export type { ScorecardPreset } from './scorecard-presets.js';
+
 // The SDK session store surface (list/read/rename/tag of past sessions), behind a
 // thin degrade-not-throw façade. The SDK itself stays confined to `sdk-adapter`.
 export { SessionApi } from './session-api.js';

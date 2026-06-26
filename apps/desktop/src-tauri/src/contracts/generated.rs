@@ -101,6 +101,24 @@ pub enum SurfaceCommand {
     },
     #[serde(rename_all = "camelCase")]
     CancelHarnessScan { run_id: String },
+    #[serde(rename_all = "camelCase")]
+    StartScorecard {
+        run_id: String,
+        project_path: String,
+        dimensions: Vec<ScorecardDimension>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        model: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        effort: Option<EffortLevel>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_concurrency: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_turns_per_dimension: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max_budget_usd_per_dimension: Option<f64>,
+    },
+    #[serde(rename_all = "camelCase")]
+    CancelScorecard { run_id: String },
 }
 
 // === Surface → engine queries (Rust SERIALIZES these; replies arrive as the
@@ -372,6 +390,47 @@ pub enum NightcoreEvent {
     },
     #[serde(rename_all = "camelCase")]
     HarnessScanFailed {
+        run_id: String,
+        reason: AnalysisFailedReason,
+        message: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    ScorecardStarted {
+        run_id: String,
+        dimensions: Vec<ScorecardDimension>,
+        model: String,
+    },
+    #[serde(rename_all = "camelCase")]
+    ScorecardDimensionStarted {
+        run_id: String,
+        dimension: ScorecardDimension,
+    },
+    #[serde(rename_all = "camelCase")]
+    ScorecardDimensionCompleted {
+        run_id: String,
+        dimension: ScorecardDimension,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        reading: Option<ScorecardDimensionCompletedReading>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<SessionCompletedUsage>,
+        #[serde(default)]
+        cost_usd: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ScorecardCompleted {
+        run_id: String,
+        readings: Vec<ScorecardDimensionCompletedReading>,
+        dimensions_run: Vec<ScorecardDimension>,
+        cost_usd: f64,
+        #[serde(default)]
+        duration_ms: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<SessionCompletedUsage>,
+    },
+    #[serde(rename_all = "camelCase")]
+    ScorecardFailed {
         run_id: String,
         reason: AnalysisFailedReason,
         message: String,
@@ -751,6 +810,70 @@ pub struct RepoProfile {
     pub has_agent_docs: bool,
     #[serde(default)]
     pub existing_plugins: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScorecardDimension {
+    Architecture,
+    Tests,
+    Security,
+    ErrorHandling,
+    Observability,
+    Dependencies,
+    Performance,
+    Types,
+    A11y,
+    DocsCi,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScorecardDimensionCompletedReading {
+    pub id: String,
+    pub dimension: ScorecardDimension,
+    pub grade: ScorecardGrade,
+    pub title: String,
+    pub summary: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<FindingLocation>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub suggestion: Option<String>,
+    #[serde(default)]
+    pub affected_files: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+    #[serde(default)]
+    pub findings: Vec<ScorecardDimensionCompletedReadingFindingsItem>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScorecardDimensionCompletedReadingFindingsItem {
+    pub detail: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub location: Option<FindingLocation>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ScorecardGrade {
+    #[serde(rename = "A")]
+    A,
+    #[serde(rename = "B")]
+    B,
+    #[serde(rename = "C")]
+    C,
+    #[serde(rename = "D")]
+    D,
+    #[serde(rename = "E")]
+    E,
+    #[serde(rename = "F")]
+    F,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
