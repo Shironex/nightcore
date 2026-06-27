@@ -510,6 +510,9 @@ pub fn now_ms() -> u64 {
 /// engine's `@nightcore/config` default).
 #[derive(Debug, Default)]
 struct CreateInputs {
+    /// M4: the kind picked in the create dialog. `None` ⇒ the `Build` default
+    /// (`TaskKind::default()`), preserving the pre-M4 create shape.
+    kind: Option<TaskKind>,
     run_mode: Option<RunMode>,
     model: Option<String>,
     effort: Option<String>,
@@ -538,6 +541,10 @@ fn build_new_task(
         .run_mode
         .unwrap_or_else(|| settings.default_run_mode(pid));
     let mut task = Task::new(title, description).with_run_mode(run_mode);
+    // M4: stamp the picked kind (Build default when the create call omits it) so a
+    // Decompose/Research/TDD selection in the dialog survives create — without this,
+    // every new task fell back to `TaskKind::default()` regardless of the picker.
+    task.kind = inputs.kind.unwrap_or_default();
     // P0: an explicit per-task model/effort wins; absent ⇒ stamp the resolved
     // Settings default (an SDK long id) so changing "Default model" in Settings
     // actually affects new runs. `permission_mode` stays lazily resolved at launch
@@ -585,6 +592,7 @@ pub fn create_task(
     projects: State<'_, crate::project::ProjectStore>,
     title: String,
     description: String,
+    kind: Option<TaskKind>,
     run_mode: Option<RunMode>,
     model: Option<String>,
     effort: Option<String>,
@@ -603,6 +611,7 @@ pub fn create_task(
         title,
         description,
         CreateInputs {
+            kind,
             run_mode,
             model,
             effort,
@@ -1538,6 +1547,41 @@ mod tests {
         );
         assert_eq!(task.max_turns, Some(7));
         assert_eq!(task.max_budget_usd, Some(0.5));
+    }
+
+    #[test]
+    fn build_new_task_stamps_the_picked_kind() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+
+        // An explicit kind from the create dialog survives — this is the bug the
+        // create path had: `kind` was never threaded, so every new task became Build.
+        let task = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Decompose),
+                ..Default::default()
+            },
+        );
+        assert_eq!(task.kind, TaskKind::Decompose, "the picked kind is stamped");
+
+        // Omitted kind falls back to the Build default (pre-M4 create shape).
+        let defaulted = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert_eq!(
+            defaulted.kind,
+            TaskKind::Build,
+            "an omitted kind defaults to Build"
+        );
     }
 
     #[test]
