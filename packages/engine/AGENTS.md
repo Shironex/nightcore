@@ -4,17 +4,16 @@ The engine is the ONLY package allowed to depend on the Claude Agent SDK, and th
 
 ## SDK containment
 - Runtime/value use of `@anthropic-ai/claude-agent-sdk` (the `query()` runtime) lives ONLY in `src/sdk-adapter.ts`. Type-only `import type` of SDK shapes is allowed in engine internals (e.g. `permission-layer.ts`, `question-layer.ts`, `hook-bus.ts`); never add a value/runtime SDK import outside `sdk-adapter.ts`. Surfaces and capability packages stay fully SDK-free and reach the model through the engine façade.
-- Capability packages (`packages/skills`, peers) are pulled in by the engine via dependency inversion; the engine imports them, never the reverse.
+- Capability packages (SDK-free peers) are pulled in by the engine via dependency inversion; the engine imports them, never the reverse.
 
 ## Session semantics — degrade, don't throw
 - `SessionManager`/`SessionRunner` surface failures as `session-failed` events. `run()` MUST translate errors into events and return — it must never reject.
 - Session ids are monotonic and single-use: late events from a torn-down runner are dropped, and a session id is never reused. Numeric Nightcore id is `sessionId` (number); the SDK UUID is `sdkSessionId` (string) — never name an SDK UUID `sessionId`.
 
-## Agent presets
-- An agent's stable identity (persona, toolset, permission mode) lives in an engine preset and is injected via `appendSystemPrompt`/`Options`; per-run instructions are appended by the caller, never inlined into preset persona text.
-- Built-in agent presets ride `Options.agents` so they survive strict isolation; `settingSources` is purely the ambient-context (skills/commands/CLAUDE.md) loader and an empty list means strict isolation.
-- A read-only persona MUST be backed by `disallowedTools` covering all write/exec tools AND a non-prompting permission mode — prose alone never enforces read-only. Add a test asserting read-only presets deny the write-tool set.
-- Preset tool lists use native SDK tool names (Read/Glob/Grep/Write/Edit/Bash), never the removed `mcp__nightcore__*` tools.
+## Agents — native tools only, no built-in subagent presets
+- The main session does NOT register `Options.agents`. Registering built-in subagent presets exposes the SDK `Agent` (Task) tool to the main model, which then delegates shell work (e.g. `bun run … build`/test) to a subagent instead of calling `Bash` directly — surfacing as confusing `Agent`/`subagent_type` entries in the logs and board transcript. Keep the main session on native SDK tools (Read/Glob/Grep/Write/Edit/Bash), matching the Claude-Code mental model. `settingSources` is purely the ambient-context (skills/commands/CLAUDE.md) loader and an empty list means strict isolation; the user's own filesystem-discovered agents come through it, not from in-code presets.
+- An agent's stable identity (persona, permission mode) is injected via `appendSystemPrompt`/`Options`; per-run instructions are appended by the caller, never inlined into persona text.
+- A read-only persona MUST be backed by `disallowedTools` covering all write/exec tools AND a non-prompting permission mode — prose alone never enforces read-only.
 - Prompts and machine-output contracts are authored as fragment arrays joined with `.join(' ')` (prose) or `.join('\n')` (structured), not free-form template literals.
 
 ## Secrets

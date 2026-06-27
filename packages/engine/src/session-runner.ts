@@ -30,7 +30,6 @@ import { ToolRegistry } from './tool-registry.js';
 import { HookBus } from './hook-bus.js';
 import { resolveClaudeBinary } from './resolve-claude-binary.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
-import { nightcoreAgents } from './agent-presets.js';
 
 /**
  * A streaming input that yields NO user message and parks until `signal` aborts.
@@ -643,10 +642,15 @@ export class SessionRunner {
       // skills/commands/CLAUDE.md, not permission rules. Dropping `'user'` would
       // strip the user's own skills/commands (which the config contract wants to
       // "just work") without strengthening governance, so it stays config-driven.
-      // `nightcoreAgents` is passed via `Options.agents` below, so it survives
-      // even when `settingSources` is `[]` (strict isolation).
       settingSources: this.cfg.settingSources,
-      agents: nightcoreAgents,
+      // No `agents` key: we deliberately do NOT register built-in subagent
+      // presets on the main session. Registering them exposes the SDK `Agent`
+      // (Task) tool to the main model, which then delegates shell work (e.g.
+      // `bun run … build`/test) to a subagent instead of calling `Bash`
+      // directly — surfacing as confusing `Agent`/`subagent_type` entries in the
+      // logs and board transcript. Native tools only, matching the Claude-Code
+      // mental model. The user's own filesystem-discovered agents (via
+      // `settingSources`) are unaffected.
       // The task/todo feature has no run-`Options` key in the pinned SDK; it is
       // toggled via the `CLAUDE_CODE_ENABLE_TASKS` env var the bundled CLI reads.
       // `Options.env` REPLACES the subprocess environment wholesale. We do NOT

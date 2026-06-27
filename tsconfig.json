@@ -6,7 +6,6 @@
     { "path": "./packages/shared" },
     { "path": "./packages/config" },
     { "path": "./packages/storage" },
-    { "path": "./packages/skills" },
     { "path": "./packages/engine" },
     { "path": "./apps/cli" },
     { "path": "./apps/tui" },
