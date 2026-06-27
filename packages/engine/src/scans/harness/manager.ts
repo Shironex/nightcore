@@ -23,18 +23,18 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
-import { SessionRunner } from './session-runner.js';
+import { SessionRunner } from '../../session/session-runner.js';
 import type {
   AnalysisRunnerFactory,
   AnalysisSessionRunner,
-} from './analysis-manager.js';
+} from '../shared/manager.js';
 import {
   buildRepoInventory,
   fmtCost,
   fmtElapsed,
   fmtSecs,
   makeHeartbeat,
-} from './analysis-manager.js';
+} from '../shared/manager.js';
 import {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
@@ -42,14 +42,14 @@ import {
   conventionOutputContract,
   harnessPreset,
   type HarnessPreset,
-} from './harness-presets.js';
+} from './presets.js';
 import {
   dedupeConventionFindings,
   groundConventionFindings,
   parseConventionFindings,
-} from './harness-findings.js';
+} from './findings.js';
 import { detectRepoProfile } from './repo-profile.js';
-import { summarizeProfile, synthesizeHarness } from './harness-synthesis.js';
+import { summarizeProfile, synthesizeHarness } from './synthesis.js';
 
 /** The `start-harness-scan` command variant (the zod schema is exported as a value,
  *  so the engine narrows the union for the type). */

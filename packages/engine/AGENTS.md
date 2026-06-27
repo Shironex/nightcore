@@ -2,8 +2,17 @@
 
 The engine is the ONLY package allowed to depend on the Claude Agent SDK, and the façade every surface reaches the model through.
 
+## Package layout
+`src/` is layered; nothing depends upward, and `index.ts` is the sole external contract (consumers import only from `@nightcore/engine`):
+- `util/` — pure cross-cutting helpers (`field-extract`), depended on by everything.
+- `session/` — the kernel that runs Claude SDK sessions: `session-manager` (composition root + `SurfaceCommand` dispatch), `session-runner`, `sdk-adapter` (the SDK boundary), `session-api`, `resolve-claude-binary`, `subprocess-env`, `kind-presets`.
+- `policy/` — the guard layer: `permission-layer`, `question-layer`, `hook-bus`, `tool-deny-policy`, `tool-registry`.
+- `scans/` — AI codebase-analyzer feature slices over a shared base: `shared/` (`manager`/`findings`/`presets` — the reusable scan toolkit, currently also the Insight orchestrator), `harness/`, `scorecard/`. A new analyzer is a new `scans/<name>/` folder importing `../shared`.
+- `providers/` — read-only `provider-config` inspector.
+Tests are colocated (`*.test.ts` next to the file under test).
+
 ## SDK containment
-- Runtime/value use of `@anthropic-ai/claude-agent-sdk` (the `query()` runtime) lives ONLY in `src/sdk-adapter.ts`. Type-only `import type` of SDK shapes is allowed in engine internals (e.g. `permission-layer.ts`, `question-layer.ts`, `hook-bus.ts`); never add a value/runtime SDK import outside `sdk-adapter.ts`. Surfaces and capability packages stay fully SDK-free and reach the model through the engine façade.
+- Runtime/value use of `@anthropic-ai/claude-agent-sdk` (the `query()` runtime) lives ONLY in `src/session/sdk-adapter.ts`. Type-only `import type` of SDK shapes is allowed in engine internals (e.g. `policy/permission-layer.ts`, `policy/question-layer.ts`, `policy/hook-bus.ts`); never add a value/runtime SDK import outside `session/sdk-adapter.ts`. Surfaces and capability packages stay fully SDK-free and reach the model through the engine façade.
 - Capability packages (SDK-free peers) are pulled in by the engine via dependency inversion; the engine imports them, never the reverse.
 
 ## Session semantics — degrade, don't throw

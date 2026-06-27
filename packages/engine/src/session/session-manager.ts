@@ -14,13 +14,13 @@ import type {
 import { SessionStore } from '@nightcore/storage';
 import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionRunner } from './session-runner.js';
-import { AnalysisManager } from './analysis-manager.js';
-import { HarnessManager } from './harness-manager.js';
-import { ScorecardManager } from './scorecard-manager.js';
+import { AnalysisManager } from '../scans/shared/manager.js';
+import { HarnessManager } from '../scans/harness/manager.js';
+import { ScorecardManager } from '../scans/scorecard/manager.js';
 import { resolveKindPreset } from './kind-presets.js';
 import type { ModelInfo } from './sdk-adapter.js';
 import { SessionApi, type SDKSessionInfo, type SessionMessage } from './session-api.js';
-import { ProviderConfigReader } from './provider-config.js';
+import { ProviderConfigReader } from '../providers/provider-config.js';
 
 /**
  * Map an SDK `ModelInfo` to a contract `ModelDescriptor`. Pure so it can be

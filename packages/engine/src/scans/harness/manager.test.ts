@@ -7,8 +7,8 @@ import {
   type NightcoreEvent,
   type SurfaceCommand,
 } from '@nightcore/contracts';
-import { HarnessManager, type HarnessRunnerFactory } from './harness-manager.js';
-import type { SessionRunnerConfig } from './session-runner.js';
+import { HarnessManager, type HarnessRunnerFactory } from './manager.js';
+import type { SessionRunnerConfig } from '../../session/session-runner.js';
 
 type StartHarnessScan = Extract<SurfaceCommand, { type: 'start-harness-scan' }>;
 

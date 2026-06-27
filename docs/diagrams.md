@@ -201,9 +201,9 @@ flowchart TD
 | Web IPC boundary | `apps/web/src/lib/bridge.ts` |
 | Rust core / orchestration | `apps/desktop/src-tauri/src/{lib.rs, m2/*, store/*, workflow/*}` |
 | Sidecar bridge | `apps/sidecar/src/index.ts` |
-| Supervisor & runner | `packages/engine/src/{session-manager,session-runner}.ts` |
-| SDK boundary | `packages/engine/src/sdk-adapter.ts` |
-| Permission & risk | `packages/engine/src/{permission-layer,tool-registry}.ts` |
+| Supervisor & runner | `packages/engine/src/session/{session-manager,session-runner}.ts` |
+| SDK boundary | `packages/engine/src/session/sdk-adapter.ts` |
+| Permission & risk | `packages/engine/src/policy/{permission-layer,tool-registry}.ts` |
 | Spine (unions) | `packages/contracts/src/{events,commands,config}.ts` |
 | zod → Rust codegen | `tools/codegen/gen-rust-contracts.ts` → `src-tauri/src/contracts/generated.rs` |
 | Rust → web codegen | ts-rs (`cargo test`) → `apps/web/src/lib/generated/` |

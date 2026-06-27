@@ -20,7 +20,7 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
-import { SessionRunner } from './session-runner.js';
+import { SessionRunner } from '../../session/session-runner.js';
 import {
   buildRepoInventory,
   fmtCost,
@@ -29,16 +29,16 @@ import {
   makeHeartbeat,
   type AnalysisRunnerFactory,
   type AnalysisSessionRunner,
-} from './analysis-manager.js';
-import { ANALYZER_PERSONA } from './analysis-presets.js';
+} from '../shared/manager.js';
+import { ANALYZER_PERSONA } from '../shared/presets.js';
 import {
   readingOutputContract,
   scorecardPreset,
   SCORECARD_ALLOWED_TOOLS,
   SCORECARD_DISALLOWED_TOOLS,
   type ScorecardPreset,
-} from './scorecard-presets.js';
-import { groundReading, parseReading } from './scorecard-readings.js';
+} from './presets.js';
+import { groundReading, parseReading } from './readings.js';
 
 /** The `start-scorecard` command variant (the zod schema is exported as a value,
  *  so the engine narrows the union for the type). */

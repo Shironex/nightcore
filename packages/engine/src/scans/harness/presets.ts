@@ -16,7 +16,7 @@ export {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
   ANALYZER_PERSONA,
-} from './analysis-presets.js';
+} from '../shared/presets.js';
 
 export interface HarnessPreset {
   category: ConventionCategory;

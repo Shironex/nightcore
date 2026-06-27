@@ -24,10 +24,10 @@ import {
   type SDKUserMessage,
   type SlashCommand,
 } from './sdk-adapter.js';
-import { PermissionLayer, type ApprovalDecision } from './permission-layer.js';
-import { QuestionLayer, ASK_USER_QUESTION_DIALOG } from './question-layer.js';
-import { ToolRegistry } from './tool-registry.js';
-import { HookBus } from './hook-bus.js';
+import { PermissionLayer, type ApprovalDecision } from '../policy/permission-layer.js';
+import { QuestionLayer, ASK_USER_QUESTION_DIALOG } from '../policy/question-layer.js';
+import { ToolRegistry } from '../policy/tool-registry.js';
+import { HookBus } from '../policy/hook-bus.js';
 import { resolveClaudeBinary } from './resolve-claude-binary.js';
 import { buildSubprocessEnv } from './subprocess-env.js';
 

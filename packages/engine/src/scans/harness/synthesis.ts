@@ -27,19 +27,19 @@ import {
   type ConventionFinding,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
-import { extractJson } from './analysis-findings.js';
-import { getNumber, getString, getStringArray } from './field-extract.js';
+import { extractJson } from '../shared/findings.js';
+import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
 import {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
   ANALYZER_PERSONA,
-} from './harness-presets.js';
-import { HARNESS_REFERENCE } from './harness-reference.js';
+} from './presets.js';
+import { HARNESS_REFERENCE } from './reference.js';
 import type {
   AnalysisRunnerFactory,
   AnalysisSessionRunner,
-} from './analysis-manager.js';
-import { makeHeartbeat } from './analysis-manager.js';
+} from '../shared/manager.js';
+import { makeHeartbeat } from '../shared/manager.js';
 
 type StartHarnessScan = Extract<SurfaceCommand, { type: 'start-harness-scan' }>;
 
