@@ -116,6 +116,22 @@ describe('SessionRunner — Claude CLI preflight', () => {
     );
     expect(cliMissing).toBeUndefined();
   });
+
+  test('does NOT register built-in subagent presets on the main session', async () => {
+    // Regression: registering `Options.agents` exposes the SDK `Agent` (Task)
+    // tool to the main model, which then delegates shell work (e.g.
+    // `bun run … build`/test) to a subagent instead of calling `Bash` directly —
+    // surfacing as confusing `Agent`/`subagent_type` log entries. The main
+    // session must run with native tools only, so `agents` must be absent.
+    resolvedClaudePath = '/usr/local/bin/claude';
+    queryCalls = 0;
+
+    await makeRunner(() => {}).run();
+
+    expect(queryCalls).toBe(1);
+    expect(lastQueryOptions).toBeDefined();
+    expect(lastQueryOptions).not.toHaveProperty('agents');
+  });
 });
 
 describe('toSdkMcpServers — contract → SDK Options.mcpServers', () => {

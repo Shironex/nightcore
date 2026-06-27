@@ -7,8 +7,8 @@
  * append, the allowed/denied toolset, and the default permission mode that the
  * `SessionRunner` threads into the SDK `Options`.
  *
- * Keeping agent identity engine-side mirrors `agent-presets.ts`; the core never
- * reaches into a preset and the engine never decides orchestration.
+ * Agent identity is kept engine-side: the core never reaches into a preset and
+ * the engine never decides orchestration.
  */
 import type { PermissionMode, TaskKind } from '@nightcore/contracts';
 

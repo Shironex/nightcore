@@ -129,7 +129,6 @@
         "@anthropic-ai/claude-agent-sdk": "~0.3.190",
         "@nightcore/contracts": "workspace:*",
         "@nightcore/shared": "workspace:*",
-        "@nightcore/skills": "workspace:*",
         "@nightcore/storage": "workspace:*",
       },
     },
@@ -164,13 +163,6 @@
     "packages/shared": {
       "name": "@nightcore/shared",
       "version": "0.0.0",
-    },
-    "packages/skills": {
-      "name": "@nightcore/skills",
-      "version": "0.0.0",
-      "dependencies": {
-        "@nightcore/contracts": "workspace:*",
-      },
     },
     "packages/storage": {
       "name": "@nightcore/storage",
@@ -365,8 +357,6 @@
     "@nightcore/shared": ["@nightcore/shared@workspace:packages/shared"],
 
     "@nightcore/sidecar": ["@nightcore/sidecar@workspace:apps/sidecar"],
-
-    "@nightcore/skills": ["@nightcore/skills@workspace:packages/skills"],
 
     "@nightcore/storage": ["@nightcore/storage@workspace:packages/storage"],
 

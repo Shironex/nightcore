@@ -19,9 +19,6 @@
     },
     {
       "path": "../shared"
-    },
-    {
-      "path": "../skills"
     }
   ],
   "exclude": [
