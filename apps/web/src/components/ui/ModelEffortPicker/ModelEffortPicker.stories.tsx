@@ -27,6 +27,13 @@ export const Inherit: Story = {};
 
 export const OpusHigh: Story = { args: { model: 'claude-opus-4-8', effort: 'high' } };
 
+/** Opus is the premium tier — it unlocks the higher effort levels (Extra high / Max)
+ *  and shows the adaptive-reasoning hint. */
+export const OpusUnlocksMax: Story = { args: { model: 'claude-opus-4-8', effort: 'max' } };
+
+/** Haiku is the speed tier — only the base effort levels are offered. */
+export const HaikuBaseEfforts: Story = { args: { model: 'claude-haiku-4-5', effort: 'low' } };
+
 export const LegacyModelId: Story = { args: { model: 'sonnet-4.6', effort: 'medium' } };
 
 export const Disabled: Story = { args: { model: 'claude-haiku-4-5', disabled: true } };
@@ -48,5 +55,18 @@ export const PicksEffort: Story = {
     const efforts = within(canvas.getByRole('radiogroup', { name: /reasoning effort/i }));
     await userEvent.click(efforts.getByRole('radio', { name: /^high$/i }));
     await expect(args.onChangeEffort).toHaveBeenCalledWith('high');
+  },
+};
+
+/** Play test: switching from Opus (effort=max) to Haiku — which can't honor `max` —
+ *  reconciles the pinned effort back to Inherit. */
+export const SwitchingModelResetsUnsupportedEffort: Story = {
+  args: { model: 'claude-opus-4-8', effort: 'max' },
+  play: async ({ args, canvasElement }) => {
+    const canvas = within(canvasElement);
+    const models = within(canvas.getByRole('radiogroup', { name: /model/i }));
+    await userEvent.click(models.getByRole('radio', { name: /haiku/i }));
+    await expect(args.onChangeModel).toHaveBeenCalledWith('claude-haiku-4-5');
+    await expect(args.onChangeEffort).toHaveBeenCalledWith(null);
   },
 };

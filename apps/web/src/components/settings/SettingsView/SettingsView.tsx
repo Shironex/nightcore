@@ -15,7 +15,12 @@ import {
   SlidersIcon,
   SparkIcon,
 } from '@/components/ui';
-import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
+import {
+  effortOptionsForModel,
+  isEffortSupported,
+  modelOptionFor,
+  MODEL_OPTIONS,
+} from '@/lib/models';
 import { parseNumericCommit } from '@/lib/numeric-field';
 import { ConstitutionCard } from '../ConstitutionCard';
 import { McpServersCard } from '../McpServersCard';
@@ -36,9 +41,22 @@ const MODELS: [value: string, label: string][] = MODEL_OPTIONS.map((m) => [
   m.id,
   m.label.split(' ')[0] ?? m.label,
 ]);
-const EFFORTS: [value: string, label: string][] = EFFORT_OPTIONS.filter(
-  (e) => e.id !== 'none',
-).map((e) => [e.id, e.label]);
+
+/** The effort levels to offer in Settings, model-aware: the default model decides
+ *  which levels apply (the premium tier unlocks the higher levels). The `none`
+ *  sentinel is a per-task affordance, not a global default, so it is excluded. */
+function effortChoices(model: string): [value: string, label: string][] {
+  return effortOptionsForModel(model)
+    .filter((e) => e.id !== 'none')
+    .map((e) => [e.id, e.label]);
+}
+
+/** The highest effort level a model offers — the clamp target when the default
+ *  model changes to one that can't honor the currently-stored effort. */
+function highestEffortFor(model: string): string {
+  const choices = effortChoices(model);
+  return choices.at(-1)?.[0] ?? 'high';
+}
 const CONCURRENCY: [value: string, label: string][] = [
   ['1', '1'],
   ['2', '2'],
@@ -61,13 +79,7 @@ const RUN_MODES: [value: string, label: string][] = [
  *  family so the segmented control highlights the right chip. Falls back to the
  *  raw value when unrecognized. */
 function resolveModelValue(model: string): string {
-  if (MODELS.some(([v]) => v === model)) return model;
-  const family = model.toLowerCase();
-  const match = MODEL_OPTIONS.find((o) => {
-    const f = o.label.toLowerCase().split(' ')[0] ?? '';
-    return f.length > 0 && family.includes(f);
-  });
-  return match?.id ?? model;
+  return modelOptionFor(model)?.id ?? model;
 }
 
 /** A segmented selector. `disabled` renders it visible-but-inert (roadmap). */
@@ -467,7 +479,15 @@ function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardProps[] {
                 <Segmented
                   options={MODELS}
                   value={resolveModelValue(effective.defaultModel)}
-                  onChange={(v) => patchScoped({ defaultModel: v })}
+                  onChange={(v) =>
+                    patchScoped(
+                      // Reconcile the stored effort when the new model can't honor
+                      // it (e.g. a premium-only level after switching to Haiku).
+                      isEffortSupported(v, effective.defaultEffort)
+                        ? { defaultModel: v }
+                        : { defaultModel: v, defaultEffort: highestEffortFor(v) },
+                    )
+                  }
                 />
               ),
             },
@@ -476,7 +496,7 @@ function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardProps[] {
               hint: 'Thinking budget per turn',
               control: (
                 <Segmented
-                  options={EFFORTS}
+                  options={effortChoices(effective.defaultModel)}
                   value={effective.defaultEffort}
                   onChange={(v) => patchScoped({ defaultEffort: v })}
                 />
