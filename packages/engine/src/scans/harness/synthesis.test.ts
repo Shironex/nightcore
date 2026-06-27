@@ -1,6 +1,6 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
-import { parseProposedArtifacts } from './harness-synthesis.js';
+import { parseProposedArtifacts } from './synthesis.js';
 
 /**
  * Focused coverage for the synthesis parse/ground helper — specifically the new

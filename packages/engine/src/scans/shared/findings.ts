@@ -16,7 +16,7 @@ import {
   type FindingCategory,
   type FindingSeverity,
 } from '@nightcore/contracts';
-import { getNumber, getString, getStringArray } from './field-extract.js';
+import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
 
 /** Severity ordering for ranking/merge (low → high). */
 const SEVERITY_RANK: Record<FindingSeverity, number> = {

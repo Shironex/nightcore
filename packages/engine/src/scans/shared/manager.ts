@@ -18,7 +18,7 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
-import { SessionRunner, type SessionRunnerConfig } from './session-runner.js';
+import { SessionRunner, type SessionRunnerConfig } from '../../session/session-runner.js';
 import {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
@@ -26,12 +26,12 @@ import {
   analysisPreset,
   outputContract,
   type AnalysisPreset,
-} from './analysis-presets.js';
+} from './presets.js';
 import {
   dedupeFindings,
   groundFindings,
   parseFindings,
-} from './analysis-findings.js';
+} from './findings.js';
 
 /** The `start-analysis` command variant (the zod schema is exported as a value,
  *  so the engine narrows the union for the type). */

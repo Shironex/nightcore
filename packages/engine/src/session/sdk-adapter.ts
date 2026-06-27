@@ -35,7 +35,7 @@ import {
   tagSession,
 } from '@anthropic-ai/claude-agent-sdk';
 import type { NightcoreEvent } from '@nightcore/contracts';
-import { getBoolean, getObject, getString } from './field-extract.js';
+import { getBoolean, getObject, getString } from '../util/field-extract.js';
 
 export type {
   AgentDefinition,

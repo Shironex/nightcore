@@ -99,8 +99,8 @@ export default tseslint.config(
   },
   {
     // Engine-internal SDK confinement: the SDK *runtime* (query() and the
-    // session-store functions) may be imported only in sdk-adapter.ts — the one
-    // boundary file that translates SDKMessage → NightcoreEvent. Every other
+    // session-store functions) may be imported only in session/sdk-adapter.ts —
+    // the one boundary file that translates SDKMessage → NightcoreEvent. Every other
     // engine module may import SDK *types* (`import type`) but never a runtime
     // value, so the SDK's drift-prone runtime API surface stays in one place.
     // The `apps/**` block above keeps surfaces fully SDK-free; this is its
@@ -110,7 +110,7 @@ export default tseslint.config(
     // they stub the SDK boundary via mock.module() / await import().
     files: ['packages/engine/src/**/*.ts'],
     ignores: [
-      'packages/engine/src/sdk-adapter.ts',
+      'packages/engine/src/session/sdk-adapter.ts',
       'packages/engine/src/**/*.test.ts',
     ],
     rules: {
@@ -122,7 +122,7 @@ export default tseslint.config(
               name: '@anthropic-ai/claude-agent-sdk',
               allowTypeImports: true,
               message:
-                'The SDK runtime API is confined to packages/engine/src/sdk-adapter.ts. Other engine modules may import SDK *types* only (`import type`). Route runtime calls through sdk-adapter.',
+                'The SDK runtime API is confined to packages/engine/src/session/sdk-adapter.ts. Other engine modules may import SDK *types* only (`import type`). Route runtime calls through sdk-adapter.',
             },
           ],
         },

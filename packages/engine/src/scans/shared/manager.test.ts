@@ -10,8 +10,8 @@ import {
 import {
   AnalysisManager,
   type AnalysisRunnerFactory,
-} from './analysis-manager.js';
-import type { SessionRunnerConfig } from './session-runner.js';
+} from './manager.js';
+import type { SessionRunnerConfig } from '../../session/session-runner.js';
 
 type StartAnalysis = Extract<SurfaceCommand, { type: 'start-analysis' }>;
 

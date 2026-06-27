@@ -15,8 +15,8 @@ import {
   type ScorecardGrade,
   type ScorecardReading,
 } from '@nightcore/contracts';
-import { extractJson, fingerprintOf } from './analysis-findings.js';
-import { getNumber, getString, getStringArray } from './field-extract.js';
+import { extractJson, fingerprintOf } from '../shared/findings.js';
+import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
 
 /** The valid grade letters, for coercion. */
 const GRADES: readonly ScorecardGrade[] = ['A', 'B', 'C', 'D', 'E', 'F'];

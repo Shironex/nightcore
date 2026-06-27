@@ -8,7 +8,7 @@ import {
   dedupeConventionFindings,
   groundConventionFindings,
   parseConventionFindings,
-} from './harness-findings.js';
+} from './findings.js';
 import type { ConventionFinding } from '@nightcore/contracts';
 
 describe('parseConventionFindings', () => {

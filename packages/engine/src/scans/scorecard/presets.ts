@@ -16,7 +16,7 @@ import type { ScorecardDimension } from '@nightcore/contracts';
 export {
   ANALYSIS_ALLOWED_TOOLS as SCORECARD_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS as SCORECARD_DISALLOWED_TOOLS,
-} from './analysis-presets.js';
+} from '../shared/presets.js';
 
 export interface ScorecardPreset {
   dimension: ScorecardDimension;

@@ -10,7 +10,7 @@ import {
   groundFindings,
   parseFindings,
   severityRank,
-} from './analysis-findings.js';
+} from './findings.js';
 import type { Finding } from '@nightcore/contracts';
 
 describe('extractJson', () => {

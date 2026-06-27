@@ -10,7 +10,7 @@ import {
 import {
   ScorecardManager,
   type ScorecardRunnerFactory,
-} from './scorecard-manager.js';
+} from './manager.js';
 
 type StartScorecard = Extract<SurfaceCommand, { type: 'start-scorecard' }>;
 
