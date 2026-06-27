@@ -145,9 +145,9 @@ export function TaskDetail({
               <h3 className="mb-1.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
                 Description
               </h3>
-              <p className="whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+              <Markdown className="text-sm leading-relaxed text-foreground/90">
                 {task.description}
-              </p>
+              </Markdown>
             </section>
           )}
           <SessionCard task={task} kindEditable={kindEditable} actions={actions} />
