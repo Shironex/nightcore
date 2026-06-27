@@ -166,6 +166,43 @@ pub fn read_transcript(store: State<'_, TaskStore>, task_id: String) -> Result<V
     Ok(read_events(&store.tasks_dir(), &task_id))
 }
 
+/// A compact, bounded plain-text digest of a task's transcript for commit-message
+/// context (M-commit): the assistant's prose (`text` fields) and the names of the
+/// tools it used (`toolName`), in order, joined and tail-capped to `max_chars` (the
+/// recent window is the most relevant to the final diff). Returns an empty string
+/// when the task has no transcript yet — the caller treats that as "no extra
+/// context" and leans on the diff alone. Best-effort and lossy by design: it is one
+/// of several inputs to the generator, never the source of truth.
+pub(crate) fn digest(store: &TaskStore, task_id: &str, max_chars: usize) -> String {
+    let events = read_events(&store.tasks_dir(), task_id);
+    let mut parts: Vec<String> = Vec::new();
+    for ev in &events {
+        if let Some(text) = ev.get("text").and_then(Value::as_str) {
+            let text = text.trim();
+            if !text.is_empty() {
+                parts.push(text.to_string());
+            }
+        } else if let Some(name) = ev.get("toolName").and_then(Value::as_str) {
+            parts.push(format!("[{name}]"));
+        }
+    }
+    let joined = parts.join(" ");
+    if joined.chars().count() <= max_chars {
+        return joined;
+    }
+    // Keep the LAST `max_chars` characters (char-safe), prefixed with an ellipsis so
+    // the reader knows the head was elided.
+    let tail: String = joined
+        .chars()
+        .rev()
+        .take(max_chars)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    format!("…{tail}")
+}
+
 /// Delete a task's transcript directory (best-effort). Called when a task is
 /// removed so a deleted task leaves no orphaned transcript behind.
 pub fn remove_transcript(app: &tauri::AppHandle, task_id: &str) {
@@ -216,6 +253,49 @@ mod tests {
         let (store, _tmp) = temp_store();
         // A task that never ran has no transcript file → an empty vec, never an err.
         assert!(read_events(&store.tasks_dir(), "ghost").is_empty());
+    }
+
+    #[test]
+    fn digest_summarizes_text_and_tool_names() {
+        let (store, _tmp) = temp_store();
+        let task = Task::new("t".into(), String::new());
+        store.upsert(&task).expect("upsert");
+        append_event(
+            &store,
+            &task.id,
+            &serde_json::json!({"type":"assistant-text","text":"Implemented login"}),
+        );
+        append_event(
+            &store,
+            &task.id,
+            &serde_json::json!({"type":"tool-use-requested","toolName":"Write"}),
+        );
+        let d = digest(&store, &task.id, 1_000);
+        assert!(d.contains("Implemented login"), "includes assistant prose: {d}");
+        assert!(d.contains("[Write]"), "includes the tool name: {d}");
+    }
+
+    #[test]
+    fn digest_caps_to_the_tail_with_an_ellipsis() {
+        let (store, _tmp) = temp_store();
+        let task = Task::new("t".into(), String::new());
+        store.upsert(&task).expect("upsert");
+        append_event(
+            &store,
+            &task.id,
+            &serde_json::json!({"type":"assistant-text","text":"abcdefghij"}),
+        );
+        let capped = digest(&store, &task.id, 4);
+        assert!(capped.starts_with('…'), "capped digest is ellipsis-prefixed: {capped:?}");
+        // The ellipsis plus exactly `max_chars` trailing characters.
+        assert_eq!(capped.chars().count(), 5, "ellipsis + max_chars tail: {capped:?}");
+        assert!(capped.ends_with("ghij"), "keeps the most recent characters: {capped:?}");
+    }
+
+    #[test]
+    fn digest_of_missing_transcript_is_empty() {
+        let (store, _tmp) = temp_store();
+        assert_eq!(digest(&store, "ghost", 100), "");
     }
 
     #[test]

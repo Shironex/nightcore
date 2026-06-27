@@ -189,6 +189,33 @@ pub fn commit_in(dir: &Path, message: &str) -> Result<bool, String> {
     Ok(true)
 }
 
+/// Stage everything in `dir` (`git add -A`). The first half of the
+/// stage→message→commit flow used by the commit button (M-commit): staging is split
+/// from committing so the message generator can read the staged diff between them.
+pub fn stage_all(dir: &Path) -> Result<(), String> {
+    git(dir, &["add", "-A"]).map(|_| ())
+}
+
+/// Whether `dir` has staged changes to commit (`git diff --cached --quiet` exits
+/// non-zero when something is staged). Call after [`stage_all`] to surface a clean
+/// tree as "nothing to commit" before spending a message-generation pass.
+pub fn has_staged_changes(dir: &Path) -> bool {
+    !git_status_success(dir, &["diff", "--cached", "--quiet"])
+}
+
+/// The staged diff text in `dir` (`git diff --cached`). Fed (capped) to the commit-
+/// message generator as the primary signal for the Conventional Commits subject.
+pub fn staged_diff(dir: &Path) -> Result<String, String> {
+    git(dir, &["diff", "--cached"])
+}
+
+/// Commit already-staged changes in `dir` with `message`. The commit half of the
+/// split flow — assumes [`stage_all`] already ran (and [`has_staged_changes`]
+/// returned true), so it never re-stages and never reports "nothing to commit".
+pub fn commit_staged(dir: &Path, message: &str) -> Result<(), String> {
+    git(dir, &["commit", "-m", message]).map(|_| ())
+}
+
 /// Merge a task's `nc/<taskId>` branch into the project's base branch. Operates on
 /// the project's main checkout but ONLY via `git merge` (never `--force`, never a
 /// reset). On a merge conflict the merge is aborted and `Ok(MergeOutcome::Conflict)`
@@ -498,6 +525,40 @@ mod tests {
         assert!(
             !is_worktree_clean(&repo).expect("status"),
             "an uncommitted edit makes the tree dirty"
+        );
+    }
+
+    #[test]
+    fn stage_diff_commit_split_helpers_round_trip() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        // A clean tree stages nothing.
+        stage_all(&repo).expect("stage");
+        assert!(!has_staged_changes(&repo), "clean tree has nothing staged");
+
+        // Introduce a change, stage it, and see it through the diff helpers — this is
+        // the window the commit-message generator reads between staging and committing.
+        std::fs::write(repo.join("feature.txt"), "new feature\n").expect("write");
+        stage_all(&repo).expect("stage");
+        assert!(has_staged_changes(&repo), "the new file is staged");
+        let diff = staged_diff(&repo).expect("diff");
+        assert!(
+            diff.contains("feature.txt"),
+            "the staged diff names the file: {diff}"
+        );
+
+        // Commit the already-staged change; the tree goes clean and the message lands.
+        commit_staged(&repo, "feat: add feature").expect("commit");
+        assert!(!has_staged_changes(&repo), "post-commit tree is clean");
+        let log = Command::new("git")
+            .args(["log", "-1", "--pretty=%s"])
+            .current_dir(&repo)
+            .output()
+            .expect("git log");
+        assert_eq!(
+            String::from_utf8_lossy(&log.stdout).trim(),
+            "feat: add feature"
         );
     }
 
