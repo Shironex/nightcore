@@ -29,6 +29,7 @@ export type {
   RunProgressUsage,
 } from './RunProgress';
 export { Skeleton } from './Skeleton';
+export { Spinner } from './Spinner';
 export { StatusDot } from './StatusDot';
 export { ToastProvider, useToast } from './Toast';
 export type { Toast, ToastApi, ToastTone } from './Toast';

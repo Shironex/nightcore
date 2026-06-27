@@ -7,6 +7,7 @@ import {
   IconButton,
   Markdown,
   RefineIcon,
+  Spinner,
 } from '@/components/ui';
 import { formatCost, STATUS_LABEL, STATUS_TEXT } from '../status';
 import { TaskStatusDot } from '../TaskStatusDot';
@@ -191,16 +192,21 @@ export function TaskDetail({
       <footer className="flex items-center gap-2 border-t border-border bg-card px-4 py-3">
         {planParked ? (
           <>
-            <Button onClick={() => actions.onApprove?.(task.id)} disabled={pending('approve')}>
-              <CheckIcon size={14} />
+            <Button
+              onClick={() => actions.onApprove?.(task.id)}
+              disabled={pending('approve')}
+              aria-busy={pending('approve')}
+            >
+              {pending('approve') ? <Spinner /> : <CheckIcon size={14} />}
               {pending('approve') ? 'Approving…' : 'Approve'}
             </Button>
             <Button
               variant="secondary"
               onClick={() => actions.onRefine?.(task.id)}
               disabled={pending('refine')}
+              aria-busy={pending('refine')}
             >
-              <RefineIcon size={14} />
+              {pending('refine') ? <Spinner /> : <RefineIcon size={14} />}
               {pending('refine') ? 'Refining…' : 'Refine'}
             </Button>
             <span className="flex-1" />
@@ -208,7 +214,9 @@ export function TaskDetail({
               variant="danger"
               onClick={() => actions.onReject?.(task.id)}
               disabled={pending('reject')}
+              aria-busy={pending('reject')}
             >
+              {pending('reject') ? <Spinner /> : null}
               {pending('reject') ? 'Rejecting…' : 'Reject'}
             </Button>
           </>
@@ -240,18 +248,23 @@ export function TaskDetail({
               <Button
                 onClick={() => actions.onMerge?.(task.id)}
                 disabled={!mergeable || pending('merge')}
+                aria-busy={pending('merge')}
                 title={
                   mergeable
                     ? undefined
                     : 'Merge needs a verified task and a passing gauntlet — run the checks first'
                 }
               >
-                <BranchIcon size={14} />
+                {pending('merge') ? <Spinner /> : <BranchIcon size={14} />}
                 {pending('merge') ? 'Merging…' : 'Merge'}
               </Button>
             ) : (
-              <Button onClick={() => actions.onCommit?.(task.id)} disabled={pending('commit')}>
-                <CommitIcon size={14} />
+              <Button
+                onClick={() => actions.onCommit?.(task.id)}
+                disabled={pending('commit')}
+                aria-busy={pending('commit')}
+              >
+                {pending('commit') ? <Spinner /> : <CommitIcon size={14} />}
                 {pending('commit') ? 'Committing…' : 'Commit'}
               </Button>
             )}
@@ -270,8 +283,10 @@ export function TaskDetail({
               <Button
                 onClick={() => actions.onRun(task.id)}
                 disabled={anyRunning || pending('run')}
+                aria-busy={pending('run')}
                 title={anyRunning ? 'Another task is already running' : undefined}
               >
+                {pending('run') ? <Spinner /> : null}
                 {pending('run') ? 'Starting…' : 'Run'}
               </Button>
             )}
