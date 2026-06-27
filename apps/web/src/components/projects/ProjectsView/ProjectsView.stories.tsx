@@ -53,6 +53,7 @@ const tasks: Task[] = [
     structureLockResult: null,
     maxTurns: null,
     maxBudgetUsd: null,
+    attachments: [],
   },
   {
     seq: 0,
@@ -84,6 +85,7 @@ const tasks: Task[] = [
     structureLockResult: null,
     maxTurns: null,
     maxBudgetUsd: null,
+    attachments: [],
   },
 ];
 

@@ -6,6 +6,7 @@ import type {
   PermissionPolicy,
   QuestionAnswer,
   SettingSource,
+  WireImage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 import {
@@ -113,9 +114,46 @@ export function toSdkMcpServers(
   return Object.keys(servers).length > 0 ? servers : undefined;
 }
 
+/** Map a contract image `format` token to the SDK base64 source `media_type`. The
+ *  contract uses bare tokens (codegen-clean Rust enum variants); the SDK wants the
+ *  full MIME type. */
+const WIRE_IMAGE_MEDIA_TYPE: Record<
+  WireImage['format'],
+  'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
+> = {
+  png: 'image/png',
+  jpeg: 'image/jpeg',
+  webp: 'image/webp',
+  gif: 'image/gif',
+};
+
+/** Build the SDK user-message content for a prompt + optional image attachments.
+ *  Text-only stays a plain string (byte-identical to the pre-image shape); with
+ *  attachments it becomes a content-block array — a text block followed by one
+ *  base64 image block per attachment. `MessageParam.content` accepts both shapes.
+ *  Exported for unit testing the block assembly. */
+export function buildUserMessageContent(text: string, images: WireImage[] = []) {
+  if (images.length === 0) return text;
+  return [
+    { type: 'text' as const, text },
+    ...images.map((image) => ({
+      type: 'image' as const,
+      source: {
+        type: 'base64' as const,
+        media_type: WIRE_IMAGE_MEDIA_TYPE[image.format],
+        data: image.data,
+      },
+    })),
+  ];
+}
+
 export interface SessionRunnerConfig {
   sessionId: number;
   prompt: string;
+  /** Image attachments to include on the FIRST user message as SDK image content
+   *  blocks (alongside the prompt text). Absent/empty ⇒ a text-only message
+   *  (byte-identical to the pre-feature shape). */
+  images?: WireImage[];
   model: string;
   /** Reasoning effort for the session. Fixed at query construction — the SDK has
    *  no live `setEffort()`, so a surface's effort choice applies to the next
@@ -294,7 +332,7 @@ export class SessionRunner {
       return;
     }
 
-    this.enqueueInput(this.cfg.prompt);
+    this.enqueueInput(this.cfg.prompt, this.cfg.images);
 
     const options: Options = {
       ...this.baseOptions(),
@@ -636,11 +674,11 @@ export class SessionRunner {
 
   // --- streaming input internals ---------------------------------------------
 
-  private enqueueInput(text: string): void {
+  private enqueueInput(text: string, images: WireImage[] = []): void {
     if (this.inputClosed) return;
     this.inputQueue.push({
       type: 'user',
-      message: { role: 'user', content: text },
+      message: { role: 'user', content: buildUserMessageContent(text, images) },
       parent_tool_use_id: null,
       session_id: '',
     });

@@ -40,6 +40,8 @@ pub enum SurfaceCommand {
         mcp_servers: Option<Vec<McpServerEntry>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         append_context_pack: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        images: Option<Vec<WireImage>>,
     },
     #[serde(rename_all = "camelCase")]
     SendInput { session_id: u64, text: String },
@@ -618,6 +620,15 @@ pub enum FindingSeverity {
     Critical,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ImageFormat {
+    Png,
+    Jpeg,
+    Webp,
+    Gif,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerEntry {
@@ -998,6 +1009,13 @@ pub enum ToolRisk {
     Safe,
     Mutating,
     Dangerous,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WireImage {
+    pub format: ImageFormat,
+    pub data: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

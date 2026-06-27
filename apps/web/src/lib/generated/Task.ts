@@ -2,6 +2,7 @@
 import type { PermissionMode } from "./PermissionMode";
 import type { RunMode } from "./RunMode";
 import type { StructureLockResult } from "./StructureLockResult";
+import type { TaskAttachment } from "./TaskAttachment";
 import type { TaskKind } from "./TaskKind";
 import type { TaskStatus } from "./TaskStatus";
 
@@ -139,4 +140,11 @@ sdkSessionId: string | null,
  * a greater `seq` than the prior one. Additive: legacy task JSON with no `seq`
  * loads as `0`, and the next persist re-stamps it.
  */
-seq: number, };
+seq: number, 
+/**
+ * Image attachments for this task's run, persisted to OS app-data (NOT the repo
+ * or a worktree) and loaded as SDK image content blocks at launch. Set at create
+ * and editable pre-run. Serde-additive: a legacy task without it loads as an
+ * empty list.
+ */
+attachments: Array<TaskAttachment>, };

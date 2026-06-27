@@ -121,6 +121,23 @@ pub enum PermissionMode {
     Plan,
 }
 
+/// One image attached to a task, persisted to OS app-data (see
+/// [`crate::store::attachments`]). The on-disk file is
+/// `<app-data>/attachments/<taskId>/<id>.<format>`; this ref stores the
+/// server-minted `id`, the original `filename` (a display label only — never used
+/// to build a path), the image `format` token (`png`/`jpeg`/`webp`/`gif`, stored as
+/// a free string per the codebase convention), and the byte `size`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "TaskAttachment.ts"))]
+pub struct TaskAttachment {
+    pub id: String,
+    pub filename: String,
+    pub format: String,
+    pub size: u64,
+}
+
 /// One unit of orchestrated work. Field names mirror the M1 contract exactly and
 /// serialize camelCase for the TS bridge and the on-disk JSON.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -239,6 +256,12 @@ pub struct Task {
     /// loads as `0`, and the next persist re-stamps it.
     #[serde(default)]
     pub seq: u64,
+    /// Image attachments for this task's run, persisted to OS app-data (NOT the repo
+    /// or a worktree) and loaded as SDK image content blocks at launch. Set at create
+    /// and editable pre-run. Serde-additive: a legacy task without it loads as an
+    /// empty list.
+    #[serde(default)]
+    pub attachments: Vec<TaskAttachment>,
 }
 
 impl Task {
@@ -276,6 +299,7 @@ impl Task {
             sdk_session_id: None,
             // Stamped by the store on the first persist; 0 until then.
             seq: 0,
+            attachments: Vec::new(),
         }
     }
 
@@ -482,12 +506,13 @@ pub fn create_task(
     permission_mode: Option<String>,
     max_turns: Option<u32>,
     max_budget_usd: Option<f64>,
+    attachments: Vec<crate::store::attachments::NewAttachment>,
 ) -> Result<Task, String> {
     // Resolve every default once against the active project (per-project override →
     // global), mirroring how `default_run_mode` is applied — so the Settings
     // defaults are authoritative for a new task without the web having to seed them.
     let project_id = projects.active().map(|p| p.id);
-    let task = build_new_task(
+    let mut task = build_new_task(
         &settings,
         project_id.as_deref(),
         title,
@@ -501,6 +526,19 @@ pub fn create_task(
             max_budget_usd,
         },
     );
+    // Persist any attached images to app-data under the freshly-minted task id BEFORE
+    // the task is stored. A validation failure (bad format/oversize/too many) aborts
+    // the create with nothing persisted; clean up any files written before a later
+    // disk-write error so a failed create leaves no orphan dir.
+    if !attachments.is_empty() {
+        match crate::store::attachments::persist(&app, &task.id, &[], attachments) {
+            Ok(refs) => task.attachments = refs,
+            Err(e) => {
+                crate::store::attachments::remove_all(&app, &task.id);
+                return Err(e);
+            }
+        }
+    }
     // Persist + stamp the monotonic seq; emit the STORED snapshot so the `nc:task`
     // on the wire carries the assigned `seq`, not the unstamped local task.
     let task = store.upsert(&task)?;
@@ -544,9 +582,81 @@ pub fn delete_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> R
     let task = store.get(&id);
     store.remove(&id)?;
     crate::transcript::remove_transcript(&app, &id);
+    crate::store::attachments::remove_all(&app, &id);
     cleanup_task_worktree(&app, &id, task.as_ref());
     tracing::info!(target: "nightcore", task_id = %id, "task deleted");
     Ok(())
+}
+
+/// Add image attachments to an existing task (pre-run, from the detail drawer).
+/// Persists the files to app-data, appends the refs, and emits `nc:task`. The
+/// per-task count is enforced over the existing + incoming set. Errors if the id is
+/// unknown.
+#[tauri::command]
+pub fn add_task_attachments(
+    app: AppHandle,
+    store: State<'_, TaskStore>,
+    id: String,
+    attachments: Vec<crate::store::attachments::NewAttachment>,
+) -> Result<Task, String> {
+    let existing = store.get(&id).ok_or_else(|| format!("no task with id {id}"))?;
+    let new_refs = crate::store::attachments::persist(&app, &id, &existing.attachments, attachments)?;
+    // Commit the refs; if the task vanished between the read and the write, delete the
+    // files we just persisted so a failed add leaves no orphans (mirrors create_task).
+    let to_commit = new_refs.clone();
+    let result = store.mutate(&id, move |task| task.attachments.extend(to_commit));
+    let task = match result {
+        Ok(task) => task,
+        Err(e) => {
+            for att in &new_refs {
+                let _ = crate::store::attachments::remove_one(&app, &id, att);
+            }
+            return Err(e);
+        }
+    };
+    tracing::debug!(target: "nightcore", task_id = %id, "task attachments added");
+    let _ = app.emit(TASK_EVENT, &task);
+    Ok(task)
+}
+
+/// Remove one image attachment from a task by its id: delete the file, drop the ref,
+/// and emit `nc:task`. Idempotent on a missing file/ref so a double-remove is safe.
+#[tauri::command]
+pub fn remove_task_attachment(
+    app: AppHandle,
+    store: State<'_, TaskStore>,
+    id: String,
+    attachment_id: String,
+) -> Result<Task, String> {
+    let task = store.get(&id).ok_or_else(|| format!("no task with id {id}"))?;
+    if let Some(att) = task.attachments.iter().find(|a| a.id == attachment_id) {
+        crate::store::attachments::remove_one(&app, &id, att)?;
+    }
+    let task = store.mutate(&id, move |task| {
+        task.attachments.retain(|a| a.id != attachment_id)
+    })?;
+    tracing::debug!(target: "nightcore", task_id = %id, "task attachment removed");
+    let _ = app.emit(TASK_EVENT, &task);
+    Ok(task)
+}
+
+/// Read one attachment's bytes as base64 (no `data:` prefix) for display in the
+/// detail drawer. The web builds the data URL from the ref's `format`. Errors if the
+/// task or attachment id is unknown.
+#[tauri::command]
+pub fn read_task_attachment(
+    app: AppHandle,
+    store: State<'_, TaskStore>,
+    id: String,
+    attachment_id: String,
+) -> Result<String, String> {
+    let task = store.get(&id).ok_or_else(|| format!("no task with id {id}"))?;
+    let att = task
+        .attachments
+        .iter()
+        .find(|a| a.id == attachment_id)
+        .ok_or_else(|| format!("no attachment with id {attachment_id}"))?;
+    crate::store::attachments::read_base64(&app, &id, att)
 }
 
 /// Best-effort cleanup of a deleted task's `nc/<id>` worktree + branch (C8). Only
@@ -714,6 +824,39 @@ mod tests {
             "sessionId":null,"summary":null,"error":null,"costUsd":null}"#;
         let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
         assert!(back.plan.is_none() && !back.committed && !back.merged && !back.conflict);
+    }
+
+    #[test]
+    fn attachments_default_and_round_trip() {
+        let task = Task::new("t".into(), String::new());
+        assert!(task.attachments.is_empty(), "attachments default to empty");
+
+        // The camelCase key is present on serialize.
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        assert!(value.as_object().unwrap().contains_key("attachments"));
+
+        // A legacy task JSON written before the field existed still loads (serde
+        // default → empty list), so existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.attachments.is_empty(), "missing attachments → empty list");
+
+        // A populated attachments list round-trips field-for-field.
+        let mut populated = Task::new("t".into(), String::new());
+        populated.attachments = vec![TaskAttachment {
+            id: "img-1".into(),
+            filename: "shot.png".into(),
+            format: "png".into(),
+            size: 2048,
+        }];
+        let json = serde_json::to_string(&populated).unwrap();
+        let restored: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.attachments.len(), 1);
+        assert_eq!(restored.attachments[0].id, "img-1");
+        assert_eq!(restored.attachments[0].format, "png");
+        assert_eq!(restored.attachments[0].size, 2048);
     }
 
     #[test]

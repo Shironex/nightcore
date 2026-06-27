@@ -51,6 +51,12 @@
             "headers": {}
           }
         }
+      ],
+      "images": [
+        {
+          "format": "png",
+          "data": "iVBORw0KGgo="
+        }
       ]
     },
     "send-input": {

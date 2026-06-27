@@ -436,6 +436,7 @@ export class SessionManager {
       {
         sessionId: id,
         prompt: command.prompt,
+        images: command.images,
         model,
         effort,
         permissionMode,
