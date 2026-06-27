@@ -451,6 +451,11 @@ pub(crate) async fn submit_run(
     // enabled MCP servers. The reviewer/fix sub-runs are fresh prompts and never
     // resume.
     let guardrails = crate::sidecar::build_guardrails(app, &task);
+    // Load the task's image attachments from app-data into wire blocks. An
+    // unreadable file is skipped (logged) inside the loader, so a missing
+    // attachment never blocks the run; no attachments ⇒ an empty list ⇒ a
+    // text-only user message (byte-identical to the pre-feature path).
+    let images = crate::store::attachments::load_wire_images(app, task_id, &task.attachments);
     if let Err(e) = orch
         .provider
         .start_session(
@@ -461,6 +466,7 @@ pub(crate) async fn submit_run(
             cwd,
             permission_mode,
             task.kind.as_wire(),
+            images,
             guardrails,
         )
         .await

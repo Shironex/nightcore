@@ -36,6 +36,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use crate::contracts::{
     AnswerQuestionAnswerUnion, EffortLevel, PermissionDecision as WirePermissionDecision,
     PermissionMode as WirePermissionMode, SurfaceCommand, SurfaceQuery, TaskKind as WireTaskKind,
+    WireImage,
 };
 use crate::platform::resolve_bun_program;
 
@@ -86,6 +87,7 @@ pub trait Provider: Send + Sync {
         cwd: Option<PathBuf>,
         permission_mode: Option<String>,
         kind: &str,
+        images: Vec<WireImage>,
         guardrails: Guardrails,
     ) -> Result<(), String>;
 
@@ -560,6 +562,7 @@ impl Provider for SidecarProvider {
         cwd: Option<PathBuf>,
         permission_mode: Option<String>,
         kind: &str,
+        images: Vec<WireImage>,
         guardrails: Guardrails,
     ) -> Result<(), String> {
         // M4.7 §E: `effort` is now forwarded; the engine already threads
@@ -599,6 +602,10 @@ impl Provider for SidecarProvider {
             // compose into the SDK `appendSystemPrompt`. `None` serializes as an
             // OMITTED field — byte-identical to the pre-feature `start-session`.
             append_context_pack: guardrails.append_context_pack,
+            // Task image attachments → SDK image content blocks. An empty list
+            // serializes as an OMITTED field — byte-identical to the pre-feature
+            // `start-session` (a text-only user message).
+            images: (!images.is_empty()).then_some(images),
         };
         let command = serde_json::to_value(&command).map_err(|e| e.to_string())?;
 

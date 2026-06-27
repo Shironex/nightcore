@@ -19,6 +19,29 @@ import { ConventionCategorySchema } from './harness.js';
  * future GUI).
  */
 
+/**
+ * The image formats a task attachment may carry. Bare format tokens (NOT MIME
+ * strings) so the contract codegen emits clean Rust enum variants — the engine
+ * maps `format` → the SDK base64 `media_type` (`image/<format>`) at the SDK
+ * boundary. The set mirrors the Claude SDK's `Base64ImageSource.media_type`
+ * (`image/jpeg|png|gif|webp`) and the web picker's accepted types.
+ */
+export const ImageFormatSchema = z.enum(['png', 'jpeg', 'webp', 'gif']);
+export type ImageFormat = z.infer<typeof ImageFormatSchema>;
+
+/**
+ * One image attached to a task run, carried inline on `start-session`. `data` is
+ * the raw base64 of the image bytes (NO `data:` URL prefix). The Rust core loads
+ * these from the persisted app-data files at launch; the engine turns each into an
+ * SDK image content block on the user message. Never logged (the bytes are user
+ * content).
+ */
+export const WireImageSchema = z.object({
+  format: ImageFormatSchema,
+  data: z.string(),
+});
+export type WireImage = z.infer<typeof WireImageSchema>;
+
 /** Start a new session. The engine assigns the monotonic id and echoes it back
  *  via a `session-started` event. */
 export const StartSessionCommand = z.object({
@@ -66,6 +89,11 @@ export const StartSessionCommand = z.object({
    *  so it stays TRUSTED Nightcore content (unlike the repo's own auto-loaded
    *  `CLAUDE.md`). Absent ⇒ no pack injected (the pre-feature shape). */
   appendContextPack: z.string().optional(),
+  /** Image attachments to include on the user message as SDK image content blocks.
+   *  The Rust core loads these from the task's persisted app-data files at launch.
+   *  Absent/empty ⇒ a text-only message (byte-identical to the pre-feature shape).
+   *  Carries user-content bytes — never logged at info/telemetry. */
+  images: z.array(WireImageSchema).optional(),
 });
 
 const sessionTarget = {

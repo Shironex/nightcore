@@ -170,6 +170,7 @@ mod tests {
             resume_session_id: None,
             mcp_servers: None,
             append_context_pack: None,
+            images: None,
         };
         let wire = serde_json::to_value(&cmd).expect("serializes");
         let obj = wire.as_object().expect("an object");
@@ -189,6 +190,7 @@ mod tests {
             "resumeSessionId",
             "mcpServers",
             "appendContextPack",
+            "images",
         ] {
             assert!(
                 !obj.contains_key(absent),

@@ -383,6 +383,9 @@ async fn dispatch_reviewer(
             // The review preset's `dontAsk` default applies (no explicit override).
             None,
             TaskKind::Review.as_wire(),
+            // Image attachments ride the MAIN build session only; the reviewer judges
+            // the resulting diff, not the original images.
+            Vec::new(),
             // SDK-guardrails: a reviewer is a fresh, peer sub-run — it inherits the
             // task's ceilings but is NEVER resumed (it has its own prompt/identity).
             // It runs in the same project, so it injects the same enabled MCP servers.
@@ -426,6 +429,9 @@ async fn dispatch_fix(
             Some(worktree_dir.to_path_buf()),
             permission_mode,
             TaskKind::Build.as_wire(),
+            // Image attachments ride the MAIN build session only; the fix-build works
+            // from the reviewer's change list over the existing diff.
+            Vec::new(),
             // SDK-guardrails: a fix-build is a fresh sub-run over the same worktree
             // with a new prompt — inherit the ceilings but never resume. Injects the
             // same project's enabled MCP servers.

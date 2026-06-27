@@ -252,6 +252,8 @@ const UNION_NAMES: Record<string, string> = {
 const STRUCT_NAMES: Record<string, string> = {
   // One user-configured external MCP server entry (carried on `start-session`).
   'config|enabled|id|name': 'McpServerEntry',
+  // One image attachment carried inline on `start-session` (base64 + format).
+  'data|format': 'WireImage',
   'createdAt|customTitle|cwd|fileSize|firstPrompt|gitBranch|lastModified|sdkSessionId|summary|tag':
     'SessionInfo',
   'message|parentToolUseId|sessionId|type|uuid': 'SessionMessage',
@@ -282,6 +284,7 @@ const STRUCT_NAMES: Record<string, string> = {
 const ENUM_NAMES: Record<string, string> = {
   // value-set signature → canonical Rust name (verified against the zod source)
   'low|medium|high|xhigh|max': 'EffortLevel',
+  'png|jpeg|webp|gif': 'ImageFormat',
   'default|acceptEdits|bypassPermissions|plan|dontAsk|auto': 'PermissionMode',
   'build|research|review|decompose': 'TaskKind',
   'safe|mutating|dangerous': 'ToolRisk',
@@ -718,6 +721,7 @@ const COMMAND_INPUTS: Record<string, unknown> = {
         },
       },
     ],
+    images: [{ format: 'png', data: 'iVBORw0KGgo=' }],
   },
   'send-input': { type: 'send-input', sessionId: 1, text: 'more input' },
   interrupt: { type: 'interrupt', sessionId: 2 },
