@@ -15,8 +15,8 @@
     "@nightcore/config": "workspace:*",
     "@nightcore/session-fold": "workspace:*",
     "@nightcore/shared": "workspace:*",
-    "@opentui/core": "0.4.1",
-    "@opentui/react": "0.4.1",
+    "@opentui/core": "0.4.2",
+    "@opentui/react": "0.4.2",
     "react": "^19.2.0",
     "ws": "^8.18.0"
   },
