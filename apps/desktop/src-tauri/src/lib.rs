@@ -12,6 +12,7 @@
 //! at a time runs through a single long-lived sidecar, streaming its events to
 //! the board and transitioning to `done`/`failed` on completion.
 
+mod commands;
 mod contracts;
 mod infra;
 mod orchestration;
@@ -128,17 +129,17 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
-            task::list_tasks,
-            task::create_task,
-            task::convert_subtask,
-            task::convert_all_subtasks,
-            task::update_task,
-            task::delete_task,
-            task::add_task_attachments,
-            task::remove_task_attachment,
-            task::read_task_attachment,
-            task::move_task,
-            task::blocked_task_ids,
+            commands::task::list_tasks,
+            commands::task::create_task,
+            commands::task::convert_subtask,
+            commands::task::convert_all_subtasks,
+            commands::task::update_task,
+            commands::task::delete_task,
+            commands::task::add_task_attachments,
+            commands::task::remove_task_attachment,
+            commands::task::read_task_attachment,
+            commands::task::move_task,
+            commands::task::blocked_task_ids,
             sidecar::run_task,
             sidecar::cancel_task,
             sidecar::respond_permission,

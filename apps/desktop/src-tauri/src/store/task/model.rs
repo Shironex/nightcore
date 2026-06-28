@@ -503,16 +503,16 @@ pub fn now_ms() -> u64 {
 /// back to the resolved Settings default (per-project override → global → the
 /// engine's `@nightcore/config` default).
 #[derive(Debug, Default)]
-pub(super) struct CreateInputs {
+pub(crate) struct CreateInputs {
     /// M4: the kind picked in the create dialog. `None` ⇒ the `Build` default
     /// (`TaskKind::default()`), preserving the pre-M4 create shape.
-    pub(super) kind: Option<TaskKind>,
-    pub(super) run_mode: Option<RunMode>,
-    pub(super) model: Option<String>,
-    pub(super) effort: Option<String>,
-    pub(super) permission_mode: Option<String>,
-    pub(super) max_turns: Option<u32>,
-    pub(super) max_budget_usd: Option<f64>,
+    pub(crate) kind: Option<TaskKind>,
+    pub(crate) run_mode: Option<RunMode>,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
+    pub(crate) permission_mode: Option<String>,
+    pub(crate) max_turns: Option<u32>,
+    pub(crate) max_budget_usd: Option<f64>,
 }
 
 /// Build a fresh backlog task, stamping the resolved Settings defaults for any
@@ -524,7 +524,7 @@ pub(super) struct CreateInputs {
 /// has a non-optional default for them). The guardrail ceilings stay `None` when
 /// Settings has no value either, so the engine's `@nightcore/config` default
 /// (maxTurns 200, budget uncapped) applies at launch.
-pub(super) fn build_new_task(
+pub(crate) fn build_new_task(
     settings: &crate::settings::SettingsStore,
     pid: Option<&str>,
     title: String,
@@ -560,4 +560,649 @@ pub(super) fn build_new_task(
         .max_budget_usd
         .or_else(|| settings.default_max_budget_usd(pid));
     task
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_serializes_snake_case() {
+        // The TS bridge and on-disk JSON depend on these exact wire strings.
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::InProgress).unwrap(),
+            "\"in_progress\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::WaitingApproval).unwrap(),
+            "\"waiting_approval\""
+        );
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Backlog).unwrap(),
+            "\"backlog\""
+        );
+        // M4: the verification phase status.
+        assert_eq!(
+            serde_json::to_string(&TaskStatus::Verifying).unwrap(),
+            "\"verifying\""
+        );
+    }
+
+    #[test]
+    fn status_round_trips_through_serde() {
+        for status in [
+            TaskStatus::Backlog,
+            TaskStatus::Ready,
+            TaskStatus::InProgress,
+            TaskStatus::Verifying,
+            TaskStatus::WaitingApproval,
+            TaskStatus::Done,
+            TaskStatus::Failed,
+        ] {
+            let json = serde_json::to_string(&status).unwrap();
+            let back: TaskStatus = serde_json::from_str(&json).unwrap();
+            assert_eq!(status, back, "status must survive a serde round-trip");
+        }
+    }
+
+    #[test]
+    fn task_serializes_camel_case() {
+        // Field names must be camelCase for the TS bridge / contract.
+        let task = Task::new("t".into(), String::new());
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in [
+            "createdAt",
+            "updatedAt",
+            "sessionId",
+            "costUsd",
+            "branch",
+            "parentTaskId",
+            "proposedSubtasks",
+        ] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+    }
+
+    #[test]
+    fn m3_fields_default_and_round_trip() {
+        let task = Task::new("t".into(), String::new());
+        assert!(task.plan.is_none(), "plan defaults to None");
+        assert!(
+            !task.committed && !task.merged && !task.conflict,
+            "flags default false"
+        );
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in ["plan", "committed", "merged", "conflict"] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+
+        // An older on-disk task without the M3 flags still deserializes (serde
+        // default), so existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.plan.is_none() && !back.committed && !back.merged && !back.conflict);
+    }
+
+    #[test]
+    fn attachments_default_and_round_trip() {
+        let task = Task::new("t".into(), String::new());
+        assert!(task.attachments.is_empty(), "attachments default to empty");
+
+        // The camelCase key is present on serialize.
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        assert!(value.as_object().unwrap().contains_key("attachments"));
+
+        // A legacy task JSON written before the field existed still loads (serde
+        // default → empty list), so existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.attachments.is_empty(), "missing attachments → empty list");
+
+        // A populated attachments list round-trips field-for-field.
+        let mut populated = Task::new("t".into(), String::new());
+        populated.attachments = vec![TaskAttachment {
+            id: "img-1".into(),
+            filename: "shot.png".into(),
+            format: "png".into(),
+            size: 2048,
+        }];
+        let json = serde_json::to_string(&populated).unwrap();
+        let restored: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.attachments.len(), 1);
+        assert_eq!(restored.attachments[0].id, "img-1");
+        assert_eq!(restored.attachments[0].format, "png");
+        assert_eq!(restored.attachments[0].size, 2048);
+    }
+
+    #[test]
+    fn m4_fields_default_and_round_trip() {
+        let task = Task::new("t".into(), String::new());
+        assert_eq!(task.kind, TaskKind::Build, "kind defaults to Build");
+        assert!(!task.verified, "verified defaults false");
+        assert!(task.review.is_none(), "review defaults None");
+        assert_eq!(task.fix_attempts, 0, "fix_attempts defaults 0");
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in ["kind", "verified", "review", "fixAttempts"] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+        assert_eq!(
+            obj["kind"],
+            serde_json::json!("build"),
+            "kind serializes snake_case"
+        );
+
+        // A legacy (pre-M4) task without any of the four new fields still loads,
+        // defaulting each — existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert_eq!(back.kind, TaskKind::Build);
+        assert!(!back.verified && back.review.is_none() && back.fix_attempts == 0);
+    }
+
+    #[test]
+    fn run_mode_defaults_to_main_and_is_serde_additive() {
+        // A fresh task and the enum default are `main` (worktrees are opt-in).
+        let task = Task::new("t".into(), String::new());
+        assert_eq!(task.run_mode, RunMode::Main, "run_mode defaults to Main");
+        assert!(!task.run_mode.is_worktree());
+        assert_eq!(RunMode::default(), RunMode::Main);
+
+        // It serializes camelCase + snake_case wire (`runMode: "main"`).
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        assert!(obj.contains_key("runMode"), "missing camelCase key runMode");
+        assert_eq!(obj["runMode"], serde_json::json!("main"));
+
+        // A legacy task (M4-era, no `run_mode` at all) loads as `main` — serde
+        // default — so existing task files aren't broken (the pinning guarantee).
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false,
+            "kind":"build","verified":false,"review":null,"fixAttempts":0}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert_eq!(
+            back.run_mode,
+            RunMode::Main,
+            "a task with no run_mode loads as Main"
+        );
+    }
+
+    #[test]
+    fn run_mode_round_trips_and_is_snake_case() {
+        for mode in [RunMode::Main, RunMode::Worktree] {
+            let json = serde_json::to_string(&mode).unwrap();
+            let back: RunMode = serde_json::from_str(&json).unwrap();
+            assert_eq!(mode, back, "run_mode must survive a serde round-trip");
+        }
+        assert_eq!(serde_json::to_string(&RunMode::Main).unwrap(), "\"main\"");
+        assert_eq!(
+            serde_json::to_string(&RunMode::Worktree).unwrap(),
+            "\"worktree\""
+        );
+    }
+
+    #[test]
+    fn patch_sets_run_mode_when_present() {
+        let mut task = Task::new("t".into(), String::new());
+        assert_eq!(task.run_mode, RunMode::Main);
+        let patch: TaskPatch = serde_json::from_str(r#"{"runMode":"worktree"}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.run_mode, RunMode::Worktree);
+    }
+
+    #[test]
+    fn with_run_mode_sets_the_mode() {
+        let task = Task::new("t".into(), String::new()).with_run_mode(RunMode::Worktree);
+        assert_eq!(task.run_mode, RunMode::Worktree);
+    }
+
+    #[test]
+    fn task_kind_round_trips_and_is_snake_case() {
+        for kind in [
+            TaskKind::Build,
+            TaskKind::Research,
+            TaskKind::Review,
+            TaskKind::Decompose,
+            TaskKind::Tdd,
+        ] {
+            let json = serde_json::to_string(&kind).unwrap();
+            assert_eq!(json, format!("\"{}\"", kind.as_wire()));
+            let back: TaskKind = serde_json::from_str(&json).unwrap();
+            assert_eq!(kind, back, "kind must survive a serde round-trip");
+        }
+        // The new test-first kind wires as `tdd`.
+        assert_eq!(TaskKind::Tdd.as_wire(), "tdd");
+    }
+
+    #[test]
+    fn decompose_fields_default_and_are_serde_additive() {
+        // A fresh task carries no parent and no proposed sub-tasks.
+        let task = Task::new("t".into(), String::new());
+        assert!(task.parent_task_id.is_none(), "parent_task_id defaults None");
+        assert!(
+            task.proposed_subtasks.is_empty(),
+            "proposed_subtasks defaults empty"
+        );
+
+        // A legacy task JSON written before these fields existed still loads,
+        // defaulting both — existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false,
+            "kind":"build","verified":false,"review":null,"fixAttempts":0}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.parent_task_id.is_none() && back.proposed_subtasks.is_empty());
+
+        // A populated proposal round-trips field-for-field with camelCase keys.
+        let mut populated = Task::new("d".into(), String::new());
+        populated.kind = TaskKind::Decompose;
+        populated.proposed_subtasks = vec![ProposedSubtask {
+            id: "s-1".into(),
+            title: "Add the widget".into(),
+            prompt: "Build the widget component".into(),
+            status: SubtaskStatus::Converted,
+            linked_task_id: Some("child-9".into()),
+        }];
+        let value = serde_json::to_value(&populated).unwrap();
+        let sub = &value["proposedSubtasks"][0];
+        assert_eq!(sub["id"], serde_json::json!("s-1"));
+        assert_eq!(sub["status"], serde_json::json!("converted"));
+        assert_eq!(sub["linkedTaskId"], serde_json::json!("child-9"));
+        let restored: Task = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.proposed_subtasks[0].status, SubtaskStatus::Converted);
+        assert_eq!(
+            restored.proposed_subtasks[0].linked_task_id.as_deref(),
+            Some("child-9")
+        );
+    }
+
+    #[test]
+    fn patch_sets_kind_when_present() {
+        let mut task = Task::new("t".into(), String::new());
+        assert_eq!(task.kind, TaskKind::Build);
+        let patch: TaskPatch = serde_json::from_str(r#"{"kind":"research"}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.kind, TaskKind::Research);
+    }
+
+    #[test]
+    fn branch_defaults_to_none_and_round_trips() {
+        let mut task = Task::new("t".into(), String::new());
+        assert!(task.branch.is_none(), "branch defaults to None");
+
+        task.branch = Some("nc/abc-123".into());
+        let json = serde_json::to_string(&task).unwrap();
+        assert!(
+            json.contains("\"branch\":\"nc/abc-123\""),
+            "branch serializes camelCase"
+        );
+        let back: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.branch.as_deref(), Some("nc/abc-123"));
+    }
+
+    #[test]
+    fn new_task_defaults_to_backlog() {
+        let task = Task::new("title".into(), "desc".into());
+        assert_eq!(task.status, TaskStatus::Backlog);
+        assert_eq!(task.created_at, task.updated_at);
+        assert!(task.dependencies.is_empty());
+        assert!(task.model.is_none());
+        assert!(task.session_id.is_none());
+    }
+
+    #[test]
+    fn prompt_omits_blank_description() {
+        let task = Task::new("just a title".into(), String::new());
+        assert_eq!(task.prompt(), "just a title");
+    }
+
+    #[test]
+    fn prompt_joins_title_and_description() {
+        let task = Task::new("title".into(), "body".into());
+        assert_eq!(task.prompt(), "title\n\nbody");
+    }
+
+    #[test]
+    fn patch_applies_only_present_fields() {
+        let mut task = Task::new("orig".into(), "orig-desc".into());
+        let patch = TaskPatch {
+            title: Some("new".into()),
+            status: Some(TaskStatus::Ready),
+            ..Default::default()
+        };
+        patch.apply(&mut task);
+
+        assert_eq!(task.title, "new");
+        assert_eq!(task.status, TaskStatus::Ready);
+        // Untouched fields keep their original values.
+        assert_eq!(task.description, "orig-desc");
+        assert!(task.dependencies.is_empty());
+    }
+
+    #[test]
+    fn m4_7_fields_default_and_round_trip() {
+        // M4.7 §A4/§E: `effort` + `permission_mode` default to None and are
+        // serde-additive — a legacy task without them still loads.
+        let task = Task::new("t".into(), String::new());
+        assert!(task.effort.is_none(), "effort defaults to None");
+        assert!(
+            task.permission_mode.is_none(),
+            "permission_mode defaults to None"
+        );
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in ["effort", "permissionMode"] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+
+        // A task file from before M4.7 (no `effort`/`permissionMode`) still loads,
+        // defaulting both to None — existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false,
+            "kind":"build","runMode":"main","verified":false,"review":null,"fixAttempts":0}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.effort.is_none() && back.permission_mode.is_none());
+    }
+
+    #[test]
+    fn patch_sets_effort_and_permission_mode_when_present() {
+        let mut task = Task::new("t".into(), String::new());
+        let patch: TaskPatch =
+            serde_json::from_str(r#"{"effort":"high","permissionMode":"ask"}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.effort.as_deref(), Some("high"));
+        assert_eq!(task.permission_mode.as_deref(), Some("ask"));
+
+        // An absent field leaves the prior value untouched (same as `model`).
+        let absent: TaskPatch = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
+        absent.apply(&mut task);
+        assert_eq!(task.effort.as_deref(), Some("high"));
+        assert_eq!(task.permission_mode.as_deref(), Some("ask"));
+    }
+
+    #[test]
+    fn guardrail_fields_default_and_round_trip() {
+        // SDK-guardrails: `max_turns`/`max_budget_usd`/`sdk_session_id` default to
+        // None and are serde-additive — a legacy task without them still loads.
+        let task = Task::new("t".into(), String::new());
+        assert!(task.max_turns.is_none(), "max_turns defaults to None");
+        assert!(
+            task.max_budget_usd.is_none(),
+            "max_budget_usd defaults to None"
+        );
+        assert!(
+            task.sdk_session_id.is_none(),
+            "sdk_session_id defaults to None"
+        );
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        for key in ["maxTurns", "maxBudgetUsd", "sdkSessionId"] {
+            assert!(obj.contains_key(key), "missing camelCase key {key}");
+        }
+
+        // A task file from before the guardrails work (no `maxTurns`/`maxBudgetUsd`/
+        // `sdkSessionId`) still loads, defaulting each to None — the pinning
+        // guarantee, so existing task files aren't broken.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false,
+            "kind":"build","runMode":"main","verified":false,"review":null,"fixAttempts":0,
+            "effort":null,"permissionMode":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.max_turns.is_none());
+        assert!(back.max_budget_usd.is_none());
+        assert!(back.sdk_session_id.is_none());
+
+        // A full round-trip preserves explicitly-set ceilings + a captured SDK id.
+        let mut bounded = Task::new("t".into(), String::new());
+        bounded.max_turns = Some(42);
+        bounded.max_budget_usd = Some(7.5);
+        bounded.sdk_session_id = Some("sdk-uuid".into());
+        let json = serde_json::to_string(&bounded).unwrap();
+        let restored: Task = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.max_turns, Some(42));
+        assert_eq!(restored.max_budget_usd, Some(7.5));
+        assert_eq!(restored.sdk_session_id.as_deref(), Some("sdk-uuid"));
+    }
+
+    #[test]
+    fn structure_lock_result_defaults_none_and_is_serde_additive() {
+        // Feature #3: the structure-lock result defaults to None and is omitted-safe
+        // — a legacy task without it still loads.
+        let task = Task::new("t".into(), String::new());
+        assert!(
+            task.structure_lock_result.is_none(),
+            "structure_lock_result defaults to None"
+        );
+
+        let value: serde_json::Value = serde_json::to_value(&task).unwrap();
+        let obj = value.as_object().unwrap();
+        assert!(
+            obj.contains_key("structureLockResult"),
+            "serializes the camelCase key"
+        );
+
+        // A task file from before feature #3 (no `structureLockResult`) still loads,
+        // defaulting it to None — the pinning guarantee.
+        let legacy = r#"{"id":"x","title":"t","description":"","status":"backlog",
+            "dependencies":[],"model":null,"branch":null,"createdAt":1,"updatedAt":1,
+            "sessionId":null,"summary":null,"error":null,"costUsd":null,
+            "plan":null,"committed":false,"merged":false,"conflict":false,
+            "kind":"build","runMode":"main","verified":false,"review":null,"fixAttempts":0,
+            "effort":null,"permissionMode":null,"maxTurns":null,"maxBudgetUsd":null,
+            "sdkSessionId":null}"#;
+        let back: Task = serde_json::from_str(legacy).expect("legacy task deserializes");
+        assert!(back.structure_lock_result.is_none());
+
+        // A full round-trip preserves a stored result.
+        let mut gated = Task::new("t".into(), String::new());
+        gated.structure_lock_result = Some(crate::gauntlet_project::empty_pass());
+        let json = serde_json::to_string(&gated).unwrap();
+        let restored: Task = serde_json::from_str(&json).unwrap();
+        assert!(restored.structure_lock_result.is_some());
+        assert!(restored.structure_lock_result.unwrap().passed);
+    }
+
+    #[test]
+    fn patch_sets_guardrail_ceilings_when_present() {
+        let mut task = Task::new("t".into(), String::new());
+        let patch: TaskPatch =
+            serde_json::from_str(r#"{"maxTurns":10,"maxBudgetUsd":1.5}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.max_turns, Some(10));
+        assert_eq!(task.max_budget_usd, Some(1.5));
+
+        // An absent field leaves the prior override untouched (same as `model`).
+        let absent: TaskPatch = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
+        absent.apply(&mut task);
+        assert_eq!(task.max_turns, Some(10));
+        assert_eq!(task.max_budget_usd, Some(1.5));
+    }
+
+    #[test]
+    fn build_new_task_inherits_guardrails_from_settings_when_unset() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        // A global Settings ceiling is set; the project has its own tighter override.
+        settings
+            .update_for_test(
+                serde_json::from_str(r#"{"maxTurns":150,"maxBudgetUsd":9.0}"#).unwrap(),
+            )
+            .expect("global ceiling");
+        settings
+            .update_for_test(serde_json::from_str(r#"{"projectId":"p1","maxTurns":50}"#).unwrap())
+            .expect("project override");
+
+        // No explicit per-task ceilings → stamp the resolved Settings defaults.
+        let task = build_new_task(
+            &settings,
+            Some("p1"),
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert_eq!(
+            task.max_turns,
+            Some(50),
+            "per-project override wins for max_turns"
+        );
+        assert_eq!(
+            task.max_budget_usd,
+            Some(9.0),
+            "max_budget_usd has no project override → global"
+        );
+
+        // Another project with no override falls back to the global ceiling.
+        let other = build_new_task(
+            &settings,
+            Some("other"),
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert_eq!(other.max_turns, Some(150));
+        assert_eq!(other.max_budget_usd, Some(9.0));
+    }
+
+    #[test]
+    fn build_new_task_explicit_ceilings_win_over_settings() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        settings
+            .update_for_test(
+                serde_json::from_str(r#"{"maxTurns":150,"maxBudgetUsd":9.0}"#).unwrap(),
+            )
+            .expect("global ceiling");
+
+        // An explicit per-task value always overrides the Settings default.
+        let task = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                max_turns: Some(7),
+                max_budget_usd: Some(0.5),
+                ..Default::default()
+            },
+        );
+        assert_eq!(task.max_turns, Some(7));
+        assert_eq!(task.max_budget_usd, Some(0.5));
+    }
+
+    #[test]
+    fn build_new_task_stamps_the_picked_kind() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+
+        // An explicit kind from the create dialog survives — this is the bug the
+        // create path had: `kind` was never threaded, so every new task became Build.
+        let task = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Decompose),
+                ..Default::default()
+            },
+        );
+        assert_eq!(task.kind, TaskKind::Decompose, "the picked kind is stamped");
+
+        // Omitted kind falls back to the Build default (pre-M4 create shape).
+        let defaulted = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert_eq!(
+            defaulted.kind,
+            TaskKind::Build,
+            "an omitted kind defaults to Build"
+        );
+    }
+
+    #[test]
+    fn build_new_task_leaves_guardrails_none_when_settings_unset() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        // No Settings ceiling and no explicit input → None, so the engine's config
+        // default (maxTurns 200, budget uncapped) applies at launch.
+        let task = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert!(task.max_turns.is_none());
+        assert!(task.max_budget_usd.is_none());
+        // The P0 model/effort defaults are still stamped concretely.
+        assert_eq!(task.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(task.effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn patch_sets_model_when_present() {
+        let mut task = Task::new("t".into(), String::new());
+        assert!(task.model.is_none());
+        let patch: TaskPatch = serde_json::from_str(r#"{"model":"claude-opus-4-8"}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.model.as_deref(), Some("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn patch_leaves_model_untouched_when_absent() {
+        // `Option<String>` flattens an explicit `null` and an absent field to the
+        // same `None`, so a patch can SET a model but cannot distinguish "clear
+        // it" from "don't touch it" — an absent (or null) `model` is a no-op.
+        let mut task = Task::new("t".into(), String::new());
+        task.model = Some("claude-opus-4-8".into());
+
+        let absent: TaskPatch = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
+        absent.apply(&mut task);
+        assert_eq!(task.model.as_deref(), Some("claude-opus-4-8"));
+
+        let explicit_null: TaskPatch = serde_json::from_str(r#"{"model":null}"#).unwrap();
+        explicit_null.apply(&mut task);
+        assert_eq!(
+            task.model.as_deref(),
+            Some("claude-opus-4-8"),
+            "explicit null is indistinguishable from absent; model is unchanged"
+        );
+    }
+
+    #[test]
+    fn patch_deserializes_camel_case_keys() {
+        let patch: TaskPatch =
+            serde_json::from_str(r#"{"status":"in_progress","dependencies":["a"]}"#).unwrap();
+        assert_eq!(patch.status, Some(TaskStatus::InProgress));
+        assert_eq!(patch.dependencies, Some(vec!["a".to_string()]));
+        assert!(patch.title.is_none());
+    }
 }
