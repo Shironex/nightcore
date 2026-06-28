@@ -16,6 +16,7 @@ mod commands;
 mod contracts;
 mod infra;
 mod orchestration;
+mod provider;
 mod sidecar;
 mod store;
 mod sync;

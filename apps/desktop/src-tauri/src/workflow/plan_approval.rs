@@ -10,7 +10,7 @@
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::orchestration::coordinator::Orchestrator;
-use crate::orchestration::provider::{PermissionDecision, Provider};
+use crate::provider::{PermissionDecision, Provider};
 use crate::store::TaskStore;
 use crate::task::{Task, TaskStatus, TASK_EVENT};
 

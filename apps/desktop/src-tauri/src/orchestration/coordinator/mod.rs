@@ -42,7 +42,7 @@ use tokio::sync::Notify;
 use ts_rs::TS;
 
 use crate::orchestration::breaker::CircuitBreaker;
-use crate::orchestration::provider::SidecarProvider;
+use crate::provider::SidecarProvider;
 use crate::orchestration::slots::SlotManager;
 use crate::orchestration::worktree;
 use crate::project::ProjectStore;
@@ -177,7 +177,7 @@ impl Orchestrator {
     /// then emit `session-failed (aborted)`, which releases their slots via the
     /// reader. Also aborts any attached driver task as bookkeeping.
     pub async fn interrupt_all(&self) {
-        use crate::orchestration::provider::Provider;
+        use crate::provider::Provider;
         for sid in self.provider.live_sessions() {
             // Fail-closed: deny any parked permission request for this run before
             // interrupting, so a session waiting on approval doesn't hang.
@@ -199,7 +199,7 @@ impl Orchestrator {
     /// id is best-effort — once the run is torn down the binding may already be
     /// gone, in which case the engine's own teardown (`failAllPending`) denies it.
     pub async fn deny_parked_permissions(&self, task_id: &str) {
-        use crate::orchestration::provider::{PermissionDecision, Provider};
+        use crate::provider::{PermissionDecision, Provider};
         let request_ids = self.permissions.drain_task(task_id);
         if request_ids.is_empty() {
             return;

@@ -4,8 +4,9 @@
 //! in `docs/arch/2026-06-21-m2-design.md`: the auto-loop [`coordinator`] (the single
 //! stateful driver), the [`slots`] manager (lease-based concurrency + abort
 //! handles), git [`worktree`] isolation, [`deps`] dependency ordering, the
-//! failure [`breaker`] (consecutive-failure circuit breaker), and the [`provider`]
-//! trait seam (the sidecar process boundary).
+//! failure [`breaker`] (consecutive-failure circuit breaker). The provider seam
+//! (the sidecar process boundary) lives in the top-level [`crate::provider`] module,
+//! a peer both the engine and the bridge depend on.
 //!
 //! The [`coordinator::Orchestrator`] is registered in `lib.rs` as managed state and
 //! drives the auto-loop commands (`start_auto_loop` / `stop_auto_loop` /
@@ -16,6 +17,5 @@
 pub mod breaker;
 pub mod coordinator;
 pub mod deps;
-pub mod provider;
 pub mod slots;
 pub mod worktree;

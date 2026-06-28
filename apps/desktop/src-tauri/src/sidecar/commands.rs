@@ -8,7 +8,7 @@ use tauri::{AppHandle, Manager, State};
 
 use crate::contracts::AnswerQuestionAnswerUnion;
 use crate::orchestration::coordinator::{self, Orchestrator};
-use crate::orchestration::provider::{PermissionDecision, Provider};
+use crate::provider::{PermissionDecision, Provider};
 use crate::project::ProjectStore;
 use crate::store::TaskStore;
 use crate::task::Task;
@@ -52,8 +52,8 @@ pub fn resolve_permission_mode(app: &AppHandle, task_override: Option<&str>) -> 
 /// instead of starting cold, and the resolved enabled external MCP servers
 /// (`resolve_mcp_servers`). Reviewer/fix sub-runs build their own [`Guardrails`]
 /// inline (ceilings inherited, never resumed) but resolve the SAME MCP list.
-pub fn build_guardrails(app: &AppHandle, task: &Task) -> crate::orchestration::provider::Guardrails {
-    crate::orchestration::provider::Guardrails {
+pub fn build_guardrails(app: &AppHandle, task: &Task) -> crate::provider::Guardrails {
+    crate::provider::Guardrails {
         max_turns: task.max_turns,
         max_budget_usd: task.max_budget_usd,
         resume_session_id: task.sdk_session_id.clone(),
