@@ -15,7 +15,7 @@ use super::TASK_EVENT;
 
 /// Mint one child task from a proposed sub-task and atomically mark the proposal
 /// converted. Shared by [`convert_subtask`] and [`convert_all_subtasks`].
-pub(super) fn convert_one(
+pub(crate) fn convert_one(
     app: &AppHandle,
     store: &TaskStore,
     settings: &crate::settings::SettingsStore,
@@ -112,7 +112,7 @@ pub(super) fn parse_status(raw: &str) -> Result<TaskStatus, String> {
 
 /// The status validation + persistence behind [`move_task`], factored out so the
 /// guards are unit-testable without a live `AppHandle`.
-pub(super) fn move_task_inner(store: &TaskStore, id: &str, status: &str) -> Result<Task, String> {
+pub(crate) fn move_task_inner(store: &TaskStore, id: &str, status: &str) -> Result<Task, String> {
     let status = parse_status(status)?;
     if status == TaskStatus::InProgress {
         return Err("cannot move a task into In Progress — run it instead".to_string());
@@ -130,4 +130,92 @@ pub(super) fn move_task_inner(store: &TaskStore, id: &str, status: &str) -> Resu
         },
         |task| task.status = status,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A store rooted at a fresh temp dir, for command-logic tests.
+    fn temp_store() -> (TaskStore, tempfile::TempDir) {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let store = TaskStore::load_from(tmp.path().join("tasks"));
+        (store, tmp)
+    }
+
+    fn seed(store: &TaskStore, status: TaskStatus, deps: &[&str]) -> String {
+        let mut t = Task::new("seed".into(), String::new());
+        t.status = status;
+        t.dependencies = deps.iter().map(|s| s.to_string()).collect();
+        let id = t.id.clone();
+        store.upsert(&t).expect("seed upsert");
+        id
+    }
+
+    #[test]
+    fn parse_status_accepts_verifying() {
+        assert_eq!(parse_status("verifying").unwrap(), TaskStatus::Verifying);
+    }
+
+    #[test]
+    fn parse_status_accepts_wire_strings_and_rejects_unknown() {
+        assert_eq!(parse_status("backlog").unwrap(), TaskStatus::Backlog);
+        assert_eq!(parse_status("ready").unwrap(), TaskStatus::Ready);
+        assert_eq!(parse_status("in_progress").unwrap(), TaskStatus::InProgress);
+        assert_eq!(parse_status("done").unwrap(), TaskStatus::Done);
+        let err = parse_status("nope").expect_err("unknown status must error");
+        assert!(err.contains("nope"), "error names the bad status");
+    }
+
+    #[test]
+    fn move_task_inner_sets_status_and_persists() {
+        let (store, _tmp) = temp_store();
+        let id = seed(&store, TaskStatus::Backlog, &[]);
+
+        let moved = move_task_inner(&store, &id, "ready").expect("move");
+        assert_eq!(moved.status, TaskStatus::Ready);
+        // Persisted, not just returned.
+        assert_eq!(store.get(&id).expect("get").status, TaskStatus::Ready);
+    }
+
+    #[test]
+    fn move_task_inner_rejects_into_in_progress() {
+        let (store, _tmp) = temp_store();
+        let id = seed(&store, TaskStatus::Ready, &[]);
+
+        let err = move_task_inner(&store, &id, "in_progress").expect_err("must reject");
+        assert!(err.contains("In Progress"), "error explains the guard");
+        // The task is untouched.
+        assert_eq!(store.get(&id).expect("get").status, TaskStatus::Ready);
+    }
+
+    #[test]
+    fn move_task_inner_rejects_moving_a_running_task() {
+        // A live run (in-flight / verifying) can't be dragged between columns — that
+        // transition belongs to the coordinator. The guard shares the write lock.
+        for status in [TaskStatus::InProgress, TaskStatus::Verifying] {
+            let (store, _tmp) = temp_store();
+            let id = seed(&store, status, &[]);
+            let err = move_task_inner(&store, &id, "backlog").expect_err("must reject");
+            assert!(
+                err.contains("running"),
+                "error explains the running-task guard: {err}"
+            );
+            assert_eq!(
+                store.get(&id).expect("get").status,
+                status,
+                "task untouched"
+            );
+        }
+    }
+
+    #[test]
+    fn move_task_inner_rejects_unknown_status() {
+        let (store, _tmp) = temp_store();
+        let id = seed(&store, TaskStatus::Ready, &[]);
+
+        let err = move_task_inner(&store, &id, "garbage").expect_err("must reject");
+        assert!(err.contains("garbage"), "error names the bad status");
+        assert_eq!(store.get(&id).expect("get").status, TaskStatus::Ready);
+    }
 }
