@@ -7,8 +7,6 @@
     { "path": "./packages/config" },
     { "path": "./packages/storage" },
     { "path": "./packages/engine" },
-    { "path": "./apps/cli" },
-    { "path": "./apps/tui" },
     { "path": "./apps/sidecar" }
   ]
 }

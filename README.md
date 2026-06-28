@@ -16,11 +16,6 @@ monolithic daemon.
 > Local-first, single-user, Claude-first. No server, no database, no accounts.
 > State lives under `~/.nightcore/` and per-project `.nightcore/`.
 
-> **Heads up — this is a pivot.** Nightcore began as a thin Claude CLI/TUI
-> harness. That codebase is archived at the `v0-ts-harness` git tag. The current
-> direction is the desktop studio described here; the old TypeScript surfaces
-> (`apps/cli`, `apps/tui`) are legacy and no longer the product.
-
 ## Architecture
 
 Three tiers with hard boundaries — orchestration is native Rust, the SDK is
@@ -126,8 +121,7 @@ apps/
   desktop/   Tauri 2 shell + src-tauri/ — the Rust orchestration core
   web/       React 19 + Vite + Tailwind v4 — the Kanban board UI
   sidecar/   Bun NDJSON server wrapping the Claude Agent SDK
-  cli/ tui/  LEGACY TS surfaces from the v0 harness (preserved at tag v0-ts-harness)
-packages/    the sidecar's "brain" — retained from the harness era
+packages/    shared TS packages used by the sidecar and the core
   contracts/ the spine — Zod schemas + types (the wire protocol + shared types)
   shared/    logger, Result<T,E>, monotonic ids, path helpers
   config/    layered config resolver (defaults → ~/.nightcore → ./.nightcore)
