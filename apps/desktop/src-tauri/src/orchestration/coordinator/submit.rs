@@ -94,7 +94,7 @@ pub(crate) async fn submit_run(
         "launching task"
     );
 
-    use crate::orchestration::provider::Provider;
+    use crate::provider::Provider;
     let permission_mode =
         crate::sidecar::resolve_permission_mode(app, task.permission_mode.as_deref());
     // SDK-guardrails: forward the per-task autonomy ceilings and, when a prior SDK

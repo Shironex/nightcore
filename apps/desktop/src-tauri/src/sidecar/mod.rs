@@ -59,7 +59,7 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 use crate::contracts::SurfaceQuery;
 use crate::orchestration::coordinator::{self, Orchestrator};
-use crate::orchestration::provider::{parse_line, Provider};
+use crate::provider::{parse_line, Provider};
 use crate::store::TaskStore;
 use crate::task::{Task, TaskStatus, TASK_EVENT};
 
@@ -111,7 +111,7 @@ pub async fn ensure_reader(app: &AppHandle) -> Result<(), String> {
         return Ok(()); // already running
     };
     tracing::info!(target: "sidecar", "sidecar spawned (bun)");
-    let crate::orchestration::provider::SidecarStreams { stdout, stderr } = streams;
+    let crate::provider::SidecarStreams { stdout, stderr } = streams;
 
     // The reader outlives every individual run: it streams the single persistent
     // sidecar's stdout for the whole app lifetime, correlating each event to its

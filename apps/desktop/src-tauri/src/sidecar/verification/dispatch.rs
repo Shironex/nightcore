@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Manager};
 
 use crate::orchestration::coordinator::Orchestrator;
-use crate::orchestration::provider::Provider;
+use crate::provider::Provider;
 use crate::orchestration::worktree;
 use crate::project::ProjectStore;
 use crate::store::TaskStore;
@@ -67,7 +67,7 @@ pub(crate) async fn dispatch_reviewer(
             // SDK-guardrails: a reviewer is a fresh, peer sub-run — it inherits the
             // task's ceilings but is NEVER resumed (it has its own prompt/identity).
             // It runs in the same project, so it injects the same enabled MCP servers.
-            crate::orchestration::provider::Guardrails {
+            crate::provider::Guardrails {
                 max_turns: task.max_turns,
                 max_budget_usd: task.max_budget_usd,
                 resume_session_id: None,
@@ -113,7 +113,7 @@ pub(crate) async fn dispatch_fix(
             // SDK-guardrails: a fix-build is a fresh sub-run over the same worktree
             // with a new prompt — inherit the ceilings but never resume. Injects the
             // same project's enabled MCP servers.
-            crate::orchestration::provider::Guardrails {
+            crate::provider::Guardrails {
                 max_turns: task.max_turns,
                 max_budget_usd: task.max_budget_usd,
                 resume_session_id: None,
