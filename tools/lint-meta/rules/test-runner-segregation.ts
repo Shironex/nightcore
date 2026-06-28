@@ -2,8 +2,8 @@
 import type { IMetaRule, IViolation } from '../types';
 
 /**
- * Test runner is segregated by workspace: node/TS packages + apps/{cli,sidecar,
- * tui} use `bun:test`; apps/web and packages/eslint-plugin use Vitest. Never mix
+ * Test runner is segregated by workspace: node/TS packages + apps/sidecar
+ * use `bun:test`; apps/web and packages/eslint-plugin use Vitest. Never mix
  * runners in one package. bun-side files must import `bun:test` and never
  * `vitest`; vitest-side files must never import `bun:test` (they may import via
  * shared test-utils that re-export Vitest, so a direct `vitest` import is not
@@ -14,7 +14,7 @@ export const testRunnerSegregationRule: IMetaRule = {
   category: 'testing',
   ciCritical: true,
   description:
-    'bun:test for node/TS packages + apps/{cli,sidecar,tui}; Vitest for apps/web + packages/eslint-plugin. Never mix runners.',
+    'bun:test for node/TS packages + apps/sidecar; Vitest for apps/web + packages/eslint-plugin. Never mix runners.',
   run(ctx) {
     const violations: IViolation[] = [];
     const VITEST_DIRS = ['apps/web', 'packages/eslint-plugin'];
@@ -23,9 +23,7 @@ export const testRunnerSegregationRule: IMetaRule = {
       .map((p) => p.replace(/\/package\.json$/, ''));
     const bunDirs = [
       ...pkgDirs.filter((d) => !VITEST_DIRS.includes(d)),
-      'apps/cli',
       'apps/sidecar',
-      'apps/tui',
     ];
     const testsIn = (dir: string) => [
       ...ctx.glob(`${dir}/**/*.test.ts`),

@@ -1,24 +1,20 @@
 /**
  * @nightcore/session-fold — the view-neutral core of the session fold.
  *
- * Both the desktop board (`apps/web` `foldSession`/`foldTranscript`, producing a
- * `SessionStream` of interleaved text/tool/task entries) and the TUI
- * (`apps/tui` `reduce`, producing a `SessionView` with a `transcript` array and a
- * `tasks` map) fold the SAME `NightcoreEvent` stream with the SAME assistant
- * partial-dedup + turn-sealing invariant — but into genuinely different view
- * models with different entry shapes, id schemes, and surface-only events.
+ * The desktop board (`apps/web` `foldSession`/`foldTranscript`) produces a
+ * `SessionStream` of interleaved text/tool/task entries by folding the
+ * `NightcoreEvent` stream with the assistant partial-dedup + turn-sealing
+ * invariant.
  *
- * This package owns ONLY the part that is identical across both: the assistant
- * partial-vs-whole-message dedup decision and the `streamedPartial` flag
- * arithmetic (M0's dedup, mirrored by the CLI). Each surface keeps a thin
- * adapter that maps the neutral decision onto its own entry container, its own
- * id scheme, its turn-open policy, and its surface-specific events
- * (web's `closed`/timeline tools+tasks; the TUI's `tool-result`,
- * `permission-required`, `question-required`, and `ui-*` actions).
+ * This package owns ONLY the shared dedup decision: the assistant
+ * partial-vs-whole-message dedup logic and the `streamedPartial` flag
+ * arithmetic. The surface keeps a thin adapter that maps the neutral decision
+ * onto its own entry container, id scheme, turn-open policy, and
+ * surface-specific events (web's `closed`/timeline tools+tasks).
  *
- * Sharing only the decision keeps reseed parity intact in both apps: the same
- * recorded event sequence yields the same decisions, and each adapter
- * materializes them deterministically.
+ * Owning only the decision keeps reseed parity intact: the same recorded event
+ * sequence yields the same decisions, and the adapter materializes them
+ * deterministically.
  */
 
 /**
@@ -40,8 +36,8 @@ export interface AssistantDeltaDecision {
 
 /** Inputs to the dedup decision — each surface supplies its own notion of
  *  "is there an assistant turn currently open to append to". (Web reads "the last
- *  timeline entry is an unsealed text turn"; the TUI reads "activeAssistantId is
- *  set".) The decision itself is identical given these. */
+ *  timeline entry is an unsealed text turn".) The decision itself is identical
+ *  given these. */
 export interface AssistantDeltaInput {
   /** True when this delta is an incremental stream chunk; false for the
    *  whole-message fallback block the SDK re-emits at end of turn. */
@@ -61,8 +57,8 @@ export interface AssistantDeltaInput {
  *    fresh turn and leaves `streamedPartial` false.
  *
  * Pure. Whether a freshly-opened turn stays "open" for a later delta is a
- * view-specific policy the adapter owns (the web board keeps a kept whole-message
- * turn open; the TUI closes it), so it is deliberately NOT decided here.
+ * view-specific policy the adapter owns (the web board keeps a whole-message
+ * turn open), so it is deliberately NOT decided here.
  */
 export function decideAssistantDelta(
   input: AssistantDeltaInput,
@@ -84,8 +80,7 @@ export function decideAssistantDelta(
  * The `streamedPartial` flag after a turn-ending boundary (a tool use, a new
  * subagent step, or the session completing): the turn is sealed, so the next
  * whole-message block prints again rather than being suppressed. Each adapter
- * pairs this with its own seal of the open entry (web closes the text turn; the
- * TUI clears `activeAssistantId`).
+ * pairs this with its own seal of the open entry (web closes the text turn).
  */
 export function streamedPartialAfterBoundary(): boolean {
   return false;

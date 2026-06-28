@@ -28,9 +28,7 @@ export const testWorkspaceEnrollmentRule: IMetaRule = {
     const violations: IViolation[] = [];
     const dirs = [
       ...ctx.glob('packages/*/package.json').map((p) => p.replace(/\/package\.json$/, '')),
-      'apps/cli',
       'apps/sidecar',
-      'apps/tui',
     ];
     for (const dir of dirs) {
       if (VITEST.has(dir)) continue;
