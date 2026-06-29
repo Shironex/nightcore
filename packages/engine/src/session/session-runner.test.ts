@@ -57,8 +57,11 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
 }));
 
 // Imported AFTER the mocks are registered so the runner picks up the stubs.
-const { SessionRunner, toSdkMcpServers, composeAppendSystemPrompt, CONTEXT_PACK_MAX_CHARS } =
-  await import('./session-runner.js');
+const { SessionRunner } = await import('./session-runner.js');
+// The pure option-composition helpers now live in `session-options.ts` (extracted
+// from the runner so they are testable without spinning a query).
+const { toSdkMcpServers, composeAppendSystemPrompt, CONTEXT_PACK_MAX_CHARS } =
+  await import('./session-options.js');
 
 const policy: PermissionPolicy = { allow: [], deny: [], mode: 'default' };
 const settingSources: SettingSource[] = [];

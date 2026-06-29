@@ -1,19 +1,14 @@
 /**
  * Drives a single Claude Agent SDK `query()` loop for one Nightcore session:
- * builds the SDK `Options` (auth, env allowlist, kind preset, context pack,
- * autonomy ceilings, MCP servers), translates each `SDKMessage` into
- * `NightcoreEvent`s, proxies control requests (interrupt/setModel/permissions),
- * and degrades crashes into `session-failed` events rather than throwing.
+ * delegates SDK `Options` construction to [`SessionOptionsBuilder`], translates
+ * each `SDKMessage` into `NightcoreEvent`s (via `translateMessage`), proxies
+ * control requests (interrupt/setModel/permissions/questions), and degrades
+ * crashes into `session-failed` events rather than throwing.
  */
 import type {
-  EffortLevel,
-  McpServerEntry,
   NightcoreEvent,
   PermissionMode,
-  PermissionPolicy,
   QuestionAnswer,
-  SettingSource,
-  TaskKind,
   WireImage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
@@ -21,10 +16,8 @@ import {
   query,
   translateMessage,
   type AgentInfo,
-  type McpServerConfig,
   type McpServerStatus,
   type ModelInfo,
-  type Options,
   type Query,
   type RewindFilesResult,
   type SDKControlGetContextUsageResponse,
@@ -32,12 +25,23 @@ import {
   type SDKUserMessage,
   type SlashCommand,
 } from './sdk-adapter.js';
+import {
+  SessionOptionsBuilder,
+  buildUserMessageContent,
+  type SessionRunnerConfig,
+} from './session-options.js';
 import { PermissionLayer, type ApprovalDecision } from '../policy/permission-layer.js';
 import { QuestionLayer, ASK_USER_QUESTION_DIALOG } from '../policy/question-layer.js';
 import { ToolRegistry } from '../policy/tool-registry.js';
 import { HookBus } from '../policy/hook-bus.js';
 import { resolveClaudeBinary } from './resolve-claude-binary.js';
-import { buildSubprocessEnv } from './subprocess-env.js';
+
+// The option-composition surface (`SessionOptionsBuilder` + the pure compose
+// helpers) lives in `session-options.ts` so it is unit-testable without spinning a
+// query. `SessionRunnerConfig` is re-exported here because the engine façade
+// (`index.ts`) and the scan managers import it from this module — keeping that
+// public path stable.
+export type { SessionRunnerConfig } from './session-options.js';
 
 /**
  * A streaming input that yields NO user message and parks until `signal` aborts.
@@ -76,202 +80,6 @@ const CLAUDE_CLI_MISSING_MESSAGE =
   '(see https://code.claude.com/docs/en/setup), then retry.';
 
 /**
- * Translate the user-configured external MCP server entries (the `transport`-tagged
- * contract shape) into the SDK's `Options.mcpServers` map (`Record<name,
- * McpServerConfig>`). Pure, so it is unit-testable without spinning a query.
- *
- * Three translations matter:
- *  - filter to `enabled` entries (the Rust core already does this, but re-filtering
- *    here keeps the helper correct on any caller);
- *  - the entry `name` becomes the record KEY (the SDK keys on it, and it is the
- *    `mcp__<name>__*` tool prefix) — a later duplicate name wins (last write);
- *  - `transport` → the SDK's `type`: OMITTED for stdio (the SDK's `type?: 'stdio'`
- *    defaults to stdio), SET to `'http'`/`'sse'` for the remote transports.
- *
- * Returns `undefined` when no enabled entry survives, so the caller can omit the
- * `mcpServers` key entirely (byte-identical to the pre-feature options).
- */
-export function toSdkMcpServers(
-  entries: McpServerEntry[] | undefined,
-): Record<string, McpServerConfig> | undefined {
-  if (entries === undefined || entries.length === 0) return undefined;
-  const servers: Record<string, McpServerConfig> = {};
-  for (const entry of entries) {
-    if (!entry.enabled) continue;
-    const { config } = entry;
-    if (config.transport === 'stdio') {
-      // stdio: OMIT `type` (the SDK defaults it). Only set `env` when non-empty so
-      // the options stay minimal.
-      servers[entry.name] = {
-        command: config.command,
-        args: config.args,
-        ...(Object.keys(config.env).length > 0 ? { env: config.env } : {}),
-      };
-    } else {
-      // http / sse: SET `type` to the transport; only set `headers` when non-empty.
-      servers[entry.name] = {
-        type: config.transport,
-        url: config.url,
-        ...(Object.keys(config.headers).length > 0
-          ? { headers: config.headers }
-          : {}),
-      };
-    }
-  }
-  return Object.keys(servers).length > 0 ? servers : undefined;
-}
-
-/** Map a contract image `format` token to the SDK base64 source `media_type`. The
- *  contract uses bare tokens (codegen-clean Rust enum variants); the SDK wants the
- *  full MIME type. */
-const WIRE_IMAGE_MEDIA_TYPE: Record<
-  WireImage['format'],
-  'image/png' | 'image/jpeg' | 'image/webp' | 'image/gif'
-> = {
-  png: 'image/png',
-  jpeg: 'image/jpeg',
-  webp: 'image/webp',
-  gif: 'image/gif',
-};
-
-/** Build the SDK user-message content for a prompt + optional image attachments.
- *  Text-only stays a plain string (byte-identical to the pre-image shape); with
- *  attachments it becomes a content-block array — a text block followed by one
- *  base64 image block per attachment. `MessageParam.content` accepts both shapes.
- *  Exported for unit testing the block assembly. */
-export function buildUserMessageContent(text: string, images: WireImage[] = []) {
-  if (images.length === 0) return text;
-  return [
-    { type: 'text' as const, text },
-    ...images.map((image) => ({
-      type: 'image' as const,
-      source: {
-        type: 'base64' as const,
-        media_type: WIRE_IMAGE_MEDIA_TYPE[image.format],
-        data: image.data,
-      },
-    })),
-  ];
-}
-
-/** Everything a [`SessionRunner`] needs to construct and drive one SDK query:
- *  the prompt + optional images, model/effort, permission policy, cwd, and the
- *  optional kind-preset / autonomy-ceiling / resume / MCP / context-pack inputs. */
-export interface SessionRunnerConfig {
-  sessionId: number;
-  prompt: string;
-  /** Image attachments to include on the FIRST user message as SDK image content
-   *  blocks (alongside the prompt text). Absent/empty ⇒ a text-only message
-   *  (byte-identical to the pre-feature shape). */
-  images?: WireImage[];
-  model: string;
-  /** Reasoning effort for the session. Fixed at query construction — the SDK has
-   *  no live `setEffort()`, so a surface's effort choice applies to the next
-   *  session. Omitted = let the model decide. */
-  effort?: EffortLevel;
-  permissionMode: PermissionMode;
-  permissionPolicy: PermissionPolicy;
-  cwd: string;
-  /** When true, an `ANTHROPIC_API_KEY` is present and used as a fallback. Auth
-   *  otherwise flows entirely through the local Claude CLI credentials — the
-   *  runner passes NO apiKey itself (see README auth section). */
-  apiKeyFallback: boolean;
-  /** On-disk settings sources the SDK loads (skills/commands/agents/CLAUDE.md).
-   *  Empty = strict isolation (no skills loaded, no `Skill` option set). */
-  settingSources: SettingSource[];
-  /** Enable the SDK's task/todo tracking. REQUIRED for the `task_*` system
-   *  messages (→ `task-updated` events) to be emitted. */
-  todoFeatureEnabled: boolean;
-  /** The session's task kind (preset selector). Threaded into message
-   *  translation so a `decompose` session's final result is parsed into structured
-   *  `proposedSubtasks` on the `session-completed` event. Absent ⇒ no per-kind
-   *  result post-processing (the `build` shape). */
-  kind?: TaskKind;
-  /** Appended to the SDK system prompt (kind preset). Omitted = no append. */
-  appendSystemPrompt?: string;
-  /** Tools to explicitly allow (kind preset, SDK `allowedTools`). */
-  allowedTools?: string[];
-  /** Tools to deny (kind preset, SDK `disallowedTools`). */
-  disallowedTools?: string[];
-  /** Autonomy ceiling: max conversation turns before the SDK stops the query
-   *  (`Options.maxTurns`). A hit ceiling returns an `error_max_turns` result →
-   *  `session-failed { reason: 'max-turns' }`. Resolved by the manager (per-task
-   *  override → config default). */
-  maxTurns?: number;
-  /** Autonomy ceiling: max spend in USD before the SDK stops the query
-   *  (`Options.maxBudgetUsd`). A hit ceiling returns an `error_max_budget_usd`
-   *  result → `session-failed { reason: 'max-budget' }`. Omitted ⇒ uncapped.
-   *  Resolved by the manager (per-task override → config). */
-  maxBudgetUsd?: number;
-  /** Resume a prior SDK session by its UUID (`Options.resume`). Set on the
-   *  recovery path when a persisted `sdkSessionId` exists. Omitted ⇒ a cold
-   *  (fresh) session. */
-  resumeSessionId?: string;
-  /** External MCP servers to inject for this session (`Options.mcpServers`).
-   *  Folded into the SDK options by `name`, ADDITIVELY over the user's native
-   *  `.mcp.json`/`~/.claude.json` (we never set `strictMcpConfig`). The Rust core
-   *  already filters to `enabled` entries, but `toSdkMcpServers` re-filters
-   *  defensively. Absent/empty ⇒ no `mcpServers` key is set. Values in
-   *  `env`/`headers` may carry secrets — never logged at info/telemetry. */
-  mcpServers?: McpServerEntry[];
-  /** Enable SDK file checkpointing (`Options.enableFileCheckpointing`) so the
-   *  session's file changes can be rewound via `rewindFiles()`. Off by default. */
-  enableFileCheckpointing?: boolean;
-  /** A curated, Nightcore-CONTROLLED pre-flight context pack the Rust core
-   *  assembled from on-disk sources. Composed into the final `appendSystemPrompt`
-   *  BEFORE [`appendSystemPrompt`] (the kind-preset persona) so project rules lead,
-   *  then the persona — and truncated to [`CONTEXT_PACK_MAX_CHARS`] so it can't
-   *  crowd out the task. Absent/empty ⇒ no pack folded in. */
-  appendContextPack?: string;
-}
-
-/**
- * A conservative character budget for the injected context pack.
- * The pack leads the system prompt, so an unbounded pack could crowd out the task
- * and the model's own reasoning budget. ~12k characters is roughly 3k tokens — a
- * generous Constitution + arch summary + convention rules + memory excerpts, while
- * leaving the bulk of the window for the actual run. Truncation is hard-capped here
- * (not at the Rust source) so the engine is the last line of defence regardless of
- * what the core hands over.
- */
-export const CONTEXT_PACK_MAX_CHARS = 12_000;
-
-/** A visible marker appended when the pack is truncated, so a reader (human or
- *  model) knows the Constitution was clipped rather than silently ending. */
-const CONTEXT_PACK_TRUNCATION_NOTICE =
-  '\n\n…[context pack truncated to fit the pre-flight budget]';
-
-/** Separator between the context pack and the kind-preset persona in the composed
- *  `appendSystemPrompt`. A blank line keeps the two trusted blocks visually
- *  distinct in the assembled system prompt. */
-const CONTEXT_PACK_SEPARATOR = '\n\n';
-
-/**
- * Compose the final `appendSystemPrompt` from the (optional) trusted context pack
- * and the (optional) kind-preset persona — pack FIRST so project rules lead, then
- * the reviewer/build persona. The pack is truncated to [`CONTEXT_PACK_MAX_CHARS`]
- * so it can't crowd out the task. Returns `undefined` when neither is present, so
- * the caller omits the SDK option entirely. Pure + exported so the ordering is
- * unit-testable without spinning a query.
- */
-export function composeAppendSystemPrompt(
-  contextPack: string | undefined,
-  persona: string | undefined,
-): string | undefined {
-  const pack = contextPack?.trim();
-  const boundedPack =
-    pack !== undefined && pack.length > 0
-      ? pack.length > CONTEXT_PACK_MAX_CHARS
-        ? pack.slice(0, CONTEXT_PACK_MAX_CHARS) + CONTEXT_PACK_TRUNCATION_NOTICE
-        : pack
-      : undefined;
-  const parts = [boundedPack, persona].filter(
-    (part): part is string => part !== undefined && part.length > 0,
-  );
-  return parts.length > 0 ? parts.join(CONTEXT_PACK_SEPARATOR) : undefined;
-}
-
-/**
  * Owns a single SDK `query()` loop and translates each `SDKMessage` into a
  * `NightcoreEvent`. Control methods (`interrupt`, `setModel`,
  * `setPermissionMode`, `streamInput`) proxy to the SDK `Query`.
@@ -287,6 +95,8 @@ export class SessionRunner {
   private readonly questions: QuestionLayer;
   private readonly registry = new ToolRegistry();
   private readonly hooks: HookBus;
+  /** Composes the SDK `Options` from `cfg` for both the run loop and the probes. */
+  private readonly optionsBuilder: SessionOptionsBuilder;
 
   /** Streaming input plumbing: a queue of user messages + a waiter the input
    *  generator parks on between messages. */
@@ -299,6 +109,7 @@ export class SessionRunner {
     private readonly emit: (event: NightcoreEvent) => void,
     private readonly logger?: Logger,
   ) {
+    this.optionsBuilder = new SessionOptionsBuilder(cfg, logger);
     this.hooks = new HookBus(logger);
     this.permissions = new PermissionLayer(
       cfg.permissionPolicy,
@@ -346,86 +157,15 @@ export class SessionRunner {
 
     this.enqueueInput(this.cfg.prompt, this.cfg.images);
 
-    const options: Options = {
-      ...this.baseOptions(),
-      model: this.cfg.model,
-      permissionMode: this.cfg.permissionMode,
-      includePartialMessages: true,
+    const options = this.optionsBuilder.run({
       canUseTool: this.permissions.canUseTool,
       // AskUserQuestion is delivered as a `request_user_dialog` of this kind, NOT
-      // via canUseTool. Declaring ONLY this dialog kind opts the session into
-      // receiving it (the CLI fails closed on undeclared kinds) while leaving
-      // every other dialog kind on its existing no-dialog/canUseTool behavior.
+      // via canUseTool — declaring ONLY this dialog kind opts the session into it.
       onUserDialog: this.questions.onUserDialog,
       supportedDialogKinds: [ASK_USER_QUESTION_DIALOG],
-      // Native SDK tools only — the agent uses the SDK's native
-      // Read/Write/Edit/Bash/Grep/Glob (the Claude-Code mental model); Nightcore
-      // ships no in-house custom tools and registers no IN-PROCESS MCP server.
-      // (User-configured EXTERNAL MCP servers are a separate thing: they ride
-      // `Options.mcpServers`, folded in via `baseOptions`.) The `ToolRegistry` is
-      // kept solely for risk metadata via `riskOf`, which classifies the native
-      // tools so the PermissionLayer auto-allows safe reads and still prompts on
-      // writes/shell — and an unknown `mcp__*` tool from an external server is
-      // already classified `dangerous`, so it always prompts (in non-bypass mode).
       hooks: this.hooks.hooks(),
       abortController: this.abort,
-      ...(this.cfg.effort !== undefined ? { effort: this.cfg.effort } : {}),
-      // The SDK ignores `permissionMode: 'bypassPermissions'` unless this safety
-      // flag is explicitly set. This is config (not a secret) — fine to log
-      // at debug. Bypass is the user's explicit choice for an autonomous studio.
-      ...(this.cfg.permissionMode === 'bypassPermissions'
-        ? { allowDangerouslySkipPermissions: true }
-        : {}),
-      // Compose the FINAL `appendSystemPrompt` as [trusted context pack →
-      // kind-preset persona], pack first so project rules lead, then the
-      // reviewer/build persona. The pack is truncated to a token budget so it can't
-      // crowd out the task. With neither present the field is omitted, so a `build`
-      // session (no preset, no pack) keeps its default system prompt.
-      ...((): { appendSystemPrompt?: string } => {
-        const composed = composeAppendSystemPrompt(
-          this.cfg.appendContextPack,
-          this.cfg.appendSystemPrompt,
-        );
-        return composed !== undefined ? { appendSystemPrompt: composed } : {};
-      })(),
-      ...(this.cfg.allowedTools !== undefined
-        ? { allowedTools: this.cfg.allowedTools }
-        : {}),
-      // Union the policy deny list into `disallowedTools` so that a configured
-      // `permissions.deny` entry is hard-blocked even under `bypassPermissions`
-      // mode (where `canUseTool` is never called by the SDK). The SDK enforces
-      // `disallowedTools` regardless of permission mode — this is the correct
-      // enforcement seam. Preset-provided entries are preserved (union, not
-      // overwrite). An empty deny list is a no-op: the result collapses back to
-      // the preset value (or is omitted when both are absent/empty).
-      ...((): { disallowedTools?: string[] } => {
-        const preset = this.cfg.disallowedTools ?? [];
-        const denied = this.cfg.permissionPolicy.deny;
-        if (denied.length === 0) {
-          return preset.length > 0 ? { disallowedTools: preset } : {};
-        }
-        const merged = [...new Set([...preset, ...denied])];
-        return { disallowedTools: merged };
-      })(),
-      // Autonomy ceilings (maxTurns / maxBudgetUsd). An absent field leaves the
-      // SDK default in place; a hit ceiling returns an
-      // `error_max_turns` / `error_max_budget_usd` result the adapter maps to a
-      // distinct `session-failed` reason (never a silent success).
-      ...(this.cfg.maxTurns !== undefined ? { maxTurns: this.cfg.maxTurns } : {}),
-      ...(this.cfg.maxBudgetUsd !== undefined
-        ? { maxBudgetUsd: this.cfg.maxBudgetUsd }
-        : {}),
-      // Session resume: when a persisted SDK session id exists, reattach instead
-      // of starting cold. The id is bookkeeping (not a secret),
-      // but is only ever logged at debug — never at info/telemetry.
-      ...(this.cfg.resumeSessionId !== undefined
-        ? { resume: this.cfg.resumeSessionId }
-        : {}),
-      // File checkpointing: opt-in backend for `rewindFiles()`.
-      ...(this.cfg.enableFileCheckpointing
-        ? { enableFileCheckpointing: true }
-        : {}),
-    };
+    });
 
     if (this.cfg.resumeSessionId !== undefined) {
       this.logger?.debug('resuming SDK session', {
@@ -604,7 +344,7 @@ export class SessionRunner {
       transient = query({
         prompt: emptyInputStream(abort.signal),
         options: {
-          ...this.baseOptions(),
+          ...this.optionsBuilder.base(),
           ...(cwdOverride !== undefined ? { cwd: cwdOverride } : {}),
           abortController: abort,
         },
@@ -622,69 +362,6 @@ export class SessionRunner {
         this.logger?.debug('probe teardown interrupt failed', error);
       });
     }
-  }
-
-  /** SDK options shared by the main run loop and the transient model probe. Auth:
-   *  never pass an apiKey — the SDK's bundled CLI resolves the user's local Claude
-   *  credentials (~/.claude); ANTHROPIC_API_KEY in the env is honored as a
-   *  fallback automatically. `pathToClaudeCodeExecutable` is set whenever
-   *  `resolveClaudeBinary()` finds a real, on-disk, executable `claude` (the SDK's
-   *  own version-pinned binary preferred) — required for the `bun build --compile`
-   *  distributable, whose `$bunfs` bundling breaks the SDK's self-resolution; it
-   *  stays unset only when nothing verifiable resolves, leaving the SDK's default
-   *  resolution in place. */
-  private baseOptions(): Options {
-    const claudePath = resolveClaudeBinary();
-    const hasSettingSources = this.cfg.settingSources.length > 0;
-    // Inject the configured external MCP servers HERE (not only in `run()`) so the
-    // SAME merged set the run uses also reaches the transient probe that backs the
-    // provider-config inspector (`withProbe` → `baseOptions`). Additive over the
-    // user's native config (no `strictMcpConfig`); an empty/absent list leaves the
-    // key unset, byte-identical to the pre-feature options.
-    const mcpServers = toSdkMcpServers(this.cfg.mcpServers);
-    return {
-      cwd: this.cfg.cwd,
-      executable: 'bun',
-      stderr: (data) => this.logger?.debug('[sdk stderr]', data),
-      // settingSources is kept config-driven, NOT dropped.
-      // Nightcore's permission policy already governs every run regardless of this
-      // value — the harness `PermissionLayer` (`canUseTool`) plus the SDK
-      // `permissionMode` are what gate tool use; `settingSources` only loads
-      // skills/commands/CLAUDE.md, not permission rules. Dropping `'user'` would
-      // strip the user's own skills/commands (which the config contract wants to
-      // "just work") without strengthening governance, so it stays config-driven.
-      settingSources: this.cfg.settingSources,
-      // No `agents` key: we deliberately do NOT register built-in subagent
-      // presets on the main session. Registering them exposes the SDK `Agent`
-      // (Task) tool to the main model, which then delegates shell work (e.g.
-      // `bun run … build`/test) to a subagent instead of calling `Bash`
-      // directly — surfacing as confusing `Agent`/`subagent_type` entries in the
-      // logs and board transcript. Native tools only, matching the Claude-Code
-      // mental model. The user's own filesystem-discovered agents (via
-      // `settingSources`) are unaffected.
-      // The task/todo feature has no run-`Options` key in the pinned SDK; it is
-      // toggled via the `CLAUDE_CODE_ENABLE_TASKS` env var the bundled CLI reads.
-      // `Options.env` REPLACES the subprocess environment wholesale. We do NOT
-      // spread `...process.env` (that hands every unrelated secret in the desktop
-      // app's env — AWS keys, GITHUB_TOKEN, DB creds — to an agent that under the
-      // default bypass can exfiltrate them). Instead `buildSubprocessEnv` copies a
-      // curated allowlist: system/runtime essentials (PATH/HOME/temp/locale/proxy/
-      // TLS + Windows system vars) plus the agent's OWN `ANTHROPIC_*`/`CLAUDE_*`
-      // credentials. When tasks are enabled we also turn on AI progress summaries
-      // so `task_progress.summary` is populated for the live panel.
-      env: buildSubprocessEnv(process.env, {
-        CLAUDE_CODE_ENABLE_TASKS: this.cfg.todoFeatureEnabled ? '1' : '0',
-      }),
-      ...(this.cfg.todoFeatureEnabled ? { agentProgressSummaries: true } : {}),
-      // Skills are filesystem-discovered via settingSources; only enable the
-      // skills filter (which auto-adds the `Skill` tool) when at least one
-      // source is loaded — with strict isolation there is nothing to enable.
-      ...(hasSettingSources ? { skills: 'all' as const } : {}),
-      ...(claudePath ? { pathToClaudeCodeExecutable: claudePath } : {}),
-      // Configured external MCP servers, additive over the user's native config.
-      // Shared by the run and the inspector probe (both spread `baseOptions`).
-      ...(mcpServers !== undefined ? { mcpServers } : {}),
-    };
   }
 
   // --- streaming input internals ---------------------------------------------
