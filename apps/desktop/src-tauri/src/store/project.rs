@@ -219,7 +219,14 @@ fn read_json<T: for<'de> Deserialize<'de>>(path: &Path) -> Option<T> {
     match serde_json::from_str(&raw) {
         Ok(value) => Some(value),
         Err(e) => {
-            tracing::warn!(target: "nightcore::project", path = %path.display(), error = %e, "skipping unparsable project file");
+            // projects.json / active.json are single-file all-or-nothing registries:
+            // returning None resets to empty, and the next add/remove/set-active write
+            // overwrites the file — losing the entire known-project list. Quarantine the
+            // bad file first so the data is recoverable instead of silently erased.
+            match crate::store::quarantine_corrupt(path) {
+                Ok(backup) => tracing::warn!(target: "nightcore::project", path = %path.display(), backup = %backup.display(), error = %e, "cannot parse project file; quarantined it and starting empty"),
+                Err(rename_err) => tracing::error!(target: "nightcore::project", path = %path.display(), error = %e, rename_error = %rename_err, "cannot parse project file and failed to quarantine it; it may be overwritten on next save"),
+            }
             None
         }
     }
@@ -281,6 +288,38 @@ mod tests {
         let tmp = TempDir::new().expect("create temp dir");
         let store = ProjectStore::load_from(tmp.path().join("config"));
         (store, tmp)
+    }
+
+    #[test]
+    fn corrupt_registry_is_quarantined_not_silently_overwritten() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let config = tmp.path().join("config");
+        std::fs::create_dir_all(&config).unwrap();
+        let registry = config.join("projects.json");
+        std::fs::write(&registry, b"{ this is not valid json").unwrap();
+
+        // Loading starts empty (the file can't parse)...
+        let store = ProjectStore::load_from(config.clone());
+        assert!(store.list().is_empty());
+
+        // ...but the unparsable file must be moved aside, not left in place to be
+        // overwritten by an empty registry on the next write.
+        assert!(!registry.exists(), "corrupt projects.json must be quarantined");
+        let quarantined: Vec<_> = std::fs::read_dir(&config)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                e.file_name()
+                    .to_string_lossy()
+                    .starts_with("projects.json.corrupt-")
+            })
+            .collect();
+        assert_eq!(quarantined.len(), 1, "exactly one quarantine backup expected");
+        assert_eq!(
+            std::fs::read_to_string(quarantined[0].path()).unwrap(),
+            "{ this is not valid json",
+            "the original bytes must be preserved for recovery"
+        );
     }
 
     #[test]
