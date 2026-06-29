@@ -112,7 +112,7 @@ export function QuestionPrompt({ prompt, onAnswer }: QuestionPromptProps) {
                   value={answers.typedFor(q)}
                   onChange={(e) => answers.setTyped(q, e.target.value)}
                   placeholder="Custom answer…"
-                  className="w-full rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-sm text-foreground/90 placeholder:text-muted-foreground/60 focus:border-primary focus:outline-none"
+                  className="w-full rounded-md border border-border bg-black/20 px-2.5 py-1.5 text-sm text-foreground/90 placeholder:text-muted-foreground/60 outline-none focus:border-primary"
                 />
               </div>
             </div>

@@ -1,5 +1,6 @@
 /** Presentational sub-parts for the WorktreeSwitcher: the per-tab button. */
 import { BoardIcon, BranchIcon } from '@/components/ui';
+import { rovingKeydown } from '@/lib/roving-keydown';
 import type { WorktreeTab } from './WorktreeSwitcher.types';
 
 /** Props for a single worktree tab button. */
@@ -19,6 +20,8 @@ export function WorktreeTabButton({ tab, selected, onSelect }: WorktreeTabButton
       type="button"
       role="tab"
       aria-selected={selected}
+      tabIndex={selected ? 0 : -1}
+      onKeyDown={rovingKeydown}
       onClick={onSelect}
       title={
         isMain
