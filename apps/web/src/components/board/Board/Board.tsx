@@ -167,6 +167,7 @@ function BoardImpl({
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
+              aria-label="Search tasks"
               placeholder="Search tasks by keyword…"
               className="flex-1 bg-transparent text-[13px] text-foreground outline-none placeholder:text-muted-foreground"
             />

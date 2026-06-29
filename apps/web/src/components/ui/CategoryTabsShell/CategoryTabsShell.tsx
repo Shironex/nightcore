@@ -2,6 +2,7 @@
  *  worktree switcher pattern). Each tab shows its label, an open-finding count,
  *  and a live pulse while its pass runs. Feature wrappers resolve their own
  *  metadata (labels, glyphs, the list/error labels) and pass it in. */
+import { rovingKeydown } from '@/lib/roving-keydown';
 import type { CategoryTabsShellProps } from './CategoryTabsShell.types';
 
 export function CategoryTabsShell<K extends string>({
@@ -27,6 +28,8 @@ export function CategoryTabsShell<K extends string>({
             type="button"
             aria-selected={isActive}
             aria-busy={tab.running}
+            tabIndex={isActive ? 0 : -1}
+            onKeyDown={rovingKeydown}
             onClick={() => onSelect(tab.key)}
             className={`inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12.5px] font-medium transition-colors ${
               isActive

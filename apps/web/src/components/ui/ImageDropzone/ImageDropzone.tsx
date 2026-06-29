@@ -87,7 +87,11 @@ export function ImageDropzone({
               className="group relative aspect-square overflow-hidden rounded-[10px] border border-border bg-black/20"
             >
               {item.previewUrl !== null ? (
-                <img src={item.previewUrl} alt={item.filename} className="h-full w-full object-cover" />
+                <img
+                  src={item.previewUrl}
+                  alt={`Attachment: ${item.filename}`}
+                  className="h-full w-full object-cover"
+                />
               ) : (
                 <div className="flex h-full w-full items-center justify-center">
                   <ImageIcon size={16} className="text-muted-foreground/50" />

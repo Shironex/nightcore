@@ -1,3 +1,4 @@
+import { rovingKeydown } from '@/lib/roving-keydown';
 import { PERMISSION_MODE_OPTIONS } from '../status';
 import { permissionModeHint } from './PermissionModePicker.hooks';
 import type { PermissionModePickerProps } from './PermissionModePicker.types';
@@ -17,7 +18,9 @@ export function PermissionModePicker({ value, onChange, disabled = false }: Perm
           type="button"
           role="radio"
           aria-checked={value === null}
+          tabIndex={value === null ? 0 : -1}
           disabled={disabled}
+          onKeyDown={rovingKeydown}
           onClick={() => onChange(null)}
           className={`${CHIP} ${
             value === null
@@ -35,7 +38,9 @@ export function PermissionModePicker({ value, onChange, disabled = false }: Perm
               type="button"
               role="radio"
               aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
               disabled={disabled}
+              onKeyDown={rovingKeydown}
               onClick={() => onChange(option.mode)}
               className={`${CHIP} ${
                 selected

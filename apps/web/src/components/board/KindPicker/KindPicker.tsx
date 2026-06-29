@@ -1,3 +1,4 @@
+import { rovingKeydown } from '@/lib/roving-keydown';
 import { KIND_OPTIONS } from '../status';
 import { kindIcon } from './KindPicker.hooks';
 import type { KindPickerProps } from './KindPicker.types';
@@ -24,8 +25,10 @@ export function KindPicker({ value, onChange, compact = false, disabled = false 
             type="button"
             role="radio"
             aria-checked={selected}
+            tabIndex={selected ? 0 : -1}
             disabled={inert}
             title={option.enabled ? option.hint : 'Coming soon'}
+            onKeyDown={rovingKeydown}
             onClick={() => onChange(option.kind)}
             className={`flex flex-col gap-1 rounded-[10px] border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed ${
               selected

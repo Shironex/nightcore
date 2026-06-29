@@ -1,3 +1,4 @@
+import { rovingKeydown } from '@/lib/roving-keydown';
 import { RUN_MODE_OPTIONS } from '../status';
 import { runModeIcon } from './WorkModePicker.hooks';
 import type { WorkModePickerProps } from './WorkModePicker.types';
@@ -20,7 +21,9 @@ export function WorkModePicker({ value, onChange, disabled = false }: WorkModePi
               type="button"
               role="radio"
               aria-checked={selected}
+              tabIndex={selected ? 0 : -1}
               disabled={disabled}
+              onKeyDown={rovingKeydown}
               onClick={() => onChange(option.mode)}
               className={`flex items-center gap-1.5 rounded-[10px] border px-3 py-2.5 text-left transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
                 selected
