@@ -240,20 +240,39 @@ pub fn remove_task_attachment(
 /// Read one attachment's bytes as base64 (no `data:` prefix) for display in the
 /// detail drawer. The web builds the data URL from the ref's `format`. Errors if the
 /// task or attachment id is unknown.
+///
+/// Reads the attachment file and base64-encodes it (~1.33×) — multi-MB for a large
+/// screenshot. A synchronous command does that on the main thread, briefly freezing
+/// the WKWebView when the detail drawer opens, so run it on the blocking pool.
 #[tauri::command]
-pub fn read_task_attachment(
+pub async fn read_task_attachment(
     app: AppHandle,
-    store: State<'_, TaskStore>,
     id: String,
     attachment_id: String,
 ) -> Result<String, String> {
-    let task = store.get(&id).ok_or_else(|| format!("no task with id {id}"))?;
+    tauri::async_runtime::spawn_blocking(move || {
+        read_task_attachment_blocking(&app, &id, &attachment_id)
+    })
+    .await
+    .map_err(|e| format!("read attachment failed to run: {e}"))?
+}
+
+fn read_task_attachment_blocking(
+    app: &AppHandle,
+    id: &str,
+    attachment_id: &str,
+) -> Result<String, String> {
+    use tauri::Manager;
+    let store = app
+        .try_state::<TaskStore>()
+        .ok_or("task store unavailable")?;
+    let task = store.get(id).ok_or_else(|| format!("no task with id {id}"))?;
     let att = task
         .attachments
         .iter()
         .find(|a| a.id == attachment_id)
         .ok_or_else(|| format!("no attachment with id {attachment_id}"))?;
-    crate::store::attachments::read_base64(&app, &id, att)
+    crate::store::attachments::read_base64(app, id, att)
 }
 
 /// Best-effort cleanup of a deleted task's `nc/<id>` worktree + branch (C8). Only
