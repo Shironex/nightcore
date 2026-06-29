@@ -301,6 +301,27 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Res
     result
 }
 
+/// Move an unparsable store file aside to a non-clobbering `<name>.corrupt-<millis>`
+/// sibling, returning the backup path. Single-file stores (settings.json,
+/// projects.json) load all-or-nothing: on a parse error the caller falls back to
+/// defaults, and the NEXT write would persist those defaults over the bad file —
+/// permanently erasing recoverable data (incl. plaintext MCP secrets). Quarantining
+/// first means the later overwrite lands on a now-absent path instead. Best-effort:
+/// the rename can fail (e.g. read-only dir); callers log and continue.
+pub(crate) fn quarantine_corrupt(path: &std::path::Path) -> std::io::Result<std::path::PathBuf> {
+    let millis = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    let name = path
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "store.json".to_string());
+    let backup = path.with_file_name(format!("{name}.corrupt-{millis}"));
+    std::fs::rename(path, &backup)?;
+    Ok(backup)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
