@@ -77,10 +77,17 @@ pub async fn start_scorecard(
 
     // Ensure the sidecar is up, then dispatch the scorecard command.
     if let Err(e) = ensure_reader(&app).await {
-        let _ = scorecard_store.mutate(&run_id, |r| {
+        if let Err(persist_err) = scorecard_store.mutate(&run_id, |r| {
             r.status = "failed".to_string();
             r.error = Some(e.clone());
-        });
+        }) {
+            tracing::warn!(
+                target: "nightcore",
+                run_id = %run_id,
+                error = %persist_err,
+                "failed to persist scorecard run failed-state (run may look stuck on reload)"
+            );
+        }
         return Err(e);
     }
 
@@ -96,10 +103,17 @@ pub async fn start_scorecard(
     };
     let provider = app.state::<std::sync::Arc<SidecarProvider>>();
     if let Err(e) = provider.dispatch_command(command).await {
-        let _ = scorecard_store.mutate(&run_id, |r| {
+        if let Err(persist_err) = scorecard_store.mutate(&run_id, |r| {
             r.status = "failed".to_string();
             r.error = Some(e.clone());
-        });
+        }) {
+            tracing::warn!(
+                target: "nightcore",
+                run_id = %run_id,
+                error = %persist_err,
+                "failed to persist scorecard run failed-state (run may look stuck on reload)"
+            );
+        }
         return Err(e);
     }
 

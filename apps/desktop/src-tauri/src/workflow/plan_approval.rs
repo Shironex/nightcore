@@ -39,10 +39,21 @@ where
     // Resolve every parked request for the task (a plan run parks exactly one, but
     // draining is harmless and keeps the registry clean).
     for request_id in orch.permissions.drain_task(task_id) {
-        let _ = orch
+        if let Err(e) = orch
             .provider
             .decide_permission(session_id, &request_id, decision.clone())
-            .await;
+            .await
+        {
+            // A failed relay leaves the session parked-waiting while the task is
+            // transitioned below — surface the mismatch instead of swallowing it.
+            tracing::warn!(
+                target: "nightcore",
+                task_id,
+                request_id = %request_id,
+                error = %e,
+                "failed to relay plan decision to live session"
+            );
+        }
     }
 
     let task = store.mutate(task_id, mutate)?;

@@ -75,12 +75,36 @@ function format(scope: string, level: LogLevel, msg: string, meta?: unknown): st
 }
 
 function safeStringify(meta: unknown): string {
-  if (meta instanceof Error) return `${meta.name}: ${meta.message}`;
+  if (meta instanceof Error) return formatError(meta);
   try {
     return JSON.stringify(meta);
   } catch {
     return String(meta);
   }
+}
+
+/**
+ * Render an Error with its stack and `.cause` chain — a bare `name: message`
+ * discards the trace a real crash needs. Kept to a SINGLE line: `format()`'s
+ * wire contract requires the LEVEL token at field 0 of every captured line, so
+ * a multi-line stack would collapse its follow-on lines to `Info` on the Rust
+ * side. Newlines are folded to ` ⏎ `; the cause chain is bounded to avoid cycles.
+ */
+function formatError(err: Error): string {
+  const flatten = (e: Error): string =>
+    (e.stack ?? `${e.name}: ${e.message}`).replace(/\s*\n\s*/g, ' ⏎ ');
+  const parts = [flatten(err)];
+  let cause: unknown = (err as { cause?: unknown }).cause;
+  for (let depth = 0; cause !== undefined && depth < 5; depth++) {
+    if (cause instanceof Error) {
+      parts.push(`caused by: ${flatten(cause)}`);
+      cause = (cause as { cause?: unknown }).cause;
+    } else {
+      parts.push(`caused by: ${String(cause)}`);
+      break;
+    }
+  }
+  return parts.join(' | ');
 }
 
 export function createLogger(level: LogLevel = 'info', scope = 'nightcore'): Logger {
