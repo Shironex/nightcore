@@ -278,18 +278,47 @@ fn merge_task_blocking(app: &AppHandle, id: &str) -> Result<(), String> {
 // approval in `plan_approval.rs`: a verification-parked task has NO live session,
 // so those permission-resolving commands don't apply here.
 
+/// Guard a review-approval action against a racing `rerun_verification`. Accept/reject
+/// are bare state writes with no slot awareness, but `rerun_verification` leases a slot
+/// and moves the task to `Verifying`; if a click on Accept/Reject interleaves with a
+/// Rerun, the reviewer's later completion is mis-routed and its slot leaks. Refusing
+/// while a slot is held (a rerun is in flight) plus the `WaitingApproval` precondition
+/// below (checked atomically inside `mutate_if`) closes the window.
+fn ensure_review_resolvable(
+    orch: &crate::orchestration::coordinator::Orchestrator,
+    id: &str,
+) -> Result<(), String> {
+    if orch.slots.is_leased(id) {
+        return Err("a verification run is in progress — wait for it to finish".to_string());
+    }
+    Ok(())
+}
+
+/// Require a task to be parked for verification approval. Run as the `mutate_if` check so
+/// the status test and the write happen under one lock — a concurrent transition (e.g. a
+/// reviewer completion flipping the task to `Verifying`/`Done`) can't slip between them.
+fn waiting_approval(t: &Task) -> Result<(), String> {
+    if t.status == TaskStatus::WaitingApproval {
+        Ok(())
+    } else {
+        Err(format!(
+            "task is not waiting for review approval (status: {:?})",
+            t.status
+        ))
+    }
+}
+
 /// Accept the review on the user's authority (override the reviewer): mark the
 /// task `verified` and `Done`. The worktree is retained for commit/merge.
 #[tauri::command]
 pub fn accept_review(
     app: AppHandle,
     store: State<'_, TaskStore>,
+    orch: State<'_, crate::orchestration::coordinator::Orchestrator>,
     id: String,
 ) -> Result<(), String> {
-    store
-        .get(&id)
-        .ok_or_else(|| format!("no task with id {id}"))?;
-    let updated = store.mutate(&id, |t| {
+    ensure_review_resolvable(&orch, &id)?;
+    let updated = store.mutate_if(&id, waiting_approval, |t| {
         t.verified = true;
         t.status = TaskStatus::Done;
         t.error = None;
@@ -304,12 +333,11 @@ pub fn accept_review(
 pub fn reject_review(
     app: AppHandle,
     store: State<'_, TaskStore>,
+    orch: State<'_, crate::orchestration::coordinator::Orchestrator>,
     id: String,
 ) -> Result<(), String> {
-    store
-        .get(&id)
-        .ok_or_else(|| format!("no task with id {id}"))?;
-    let updated = store.mutate(&id, |t| {
+    ensure_review_resolvable(&orch, &id)?;
+    let updated = store.mutate_if(&id, waiting_approval, |t| {
         t.verified = false;
         t.status = TaskStatus::Backlog;
     })?;
