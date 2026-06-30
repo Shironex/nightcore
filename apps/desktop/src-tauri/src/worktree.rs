@@ -56,9 +56,8 @@ pub fn is_under(base: &Path, candidate: &Path) -> bool {
 /// Run a git subcommand in `repo`, returning trimmed stdout on success or the
 /// trimmed stderr as the error.
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
-    let out = crate::platform::std_command("git")
+    let out = crate::platform::git_command(repo)
         .args(args)
-        .current_dir(repo)
         .output()
         .map_err(|e| format!("failed to run git (is `git` on PATH?): {e}"))?;
     if out.status.success() {
@@ -155,8 +154,43 @@ pub fn remove(project_path: &Path, task_id: &str) -> Result<(), String> {
     let dir_str = dir.to_string_lossy().to_string();
     // `--force` because the agent's run leaves uncommitted edits in the worktree;
     // we still keep the branch, so nothing is lost.
-    git(project_path, &["worktree", "remove", "--force", &dir_str])?;
+    if git(project_path, &["worktree", "remove", "--force", &dir_str]).is_ok() {
+        return Ok(());
+    }
+    // `git worktree remove` can fail on a locked admin file or untracked build
+    // artifacts (node_modules, macOS `.app` bundles). Fall back to a bounded retry,
+    // then a manual recursive delete + `worktree prune` to clear the admin refs
+    // (Aperant's cross-platform cleanup). Still confined to the `is_under`-guarded
+    // dir, so this can never touch the user's main checkout.
+    remove_dir_with_retry(&dir)?;
+    let _ = git(project_path, &["worktree", "prune"]);
     Ok(())
+}
+
+/// Recursively delete `dir` with a bounded linear backoff, tolerating the transient
+/// file locks that make a first delete fail (a lingering file handle). The caller
+/// has already `is_under`-guarded `dir`.
+fn remove_dir_with_retry(dir: &Path) -> Result<(), String> {
+    const MAX_ATTEMPTS: usize = 3;
+    let mut last_err = String::new();
+    for attempt in 0..MAX_ATTEMPTS {
+        match std::fs::remove_dir_all(dir) {
+            Ok(()) => return Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => {
+                last_err = e.to_string();
+                if attempt + 1 < MAX_ATTEMPTS {
+                    std::thread::sleep(std::time::Duration::from_millis(
+                        200 * (attempt as u64 + 1),
+                    ));
+                }
+            }
+        }
+    }
+    Err(format!(
+        "failed to remove worktree dir {}: {last_err}",
+        dir.display()
+    ))
 }
 
 /// Stage everything in a task's worktree and commit it with `message`. Confined to
@@ -264,9 +298,24 @@ pub fn base_branch(project_path: &Path) -> String {
 /// Delete a task's `nc/<taskId>` branch (used after a successful merge when policy
 /// removes the worktree). Best-effort: a missing branch is not an error.
 pub fn delete_branch(project_path: &Path, task_id: &str) -> Result<(), String> {
-    let branch = branch_name(task_id);
-    if git_status_success(project_path, &["rev-parse", "--verify", "--quiet", &branch]) {
-        git(project_path, &["branch", "-D", &branch])?;
+    delete_branch_named(project_path, &branch_name(task_id))
+}
+
+/// Delete a specific `branch` (best-effort). Refuses to delete the project's current
+/// base branch / `HEAD` — an exact-match safety guard (Aperant) so a bad or
+/// user-supplied branch value can never delete the user's working branch. A missing
+/// branch is a no-op.
+pub fn delete_branch_named(project_path: &Path, branch: &str) -> Result<(), String> {
+    if branch.is_empty() {
+        return Ok(());
+    }
+    if branch == "HEAD" || branch == base_branch(project_path) {
+        return Err(format!(
+            "refusing to delete branch {branch} — it is the project's base branch"
+        ));
+    }
+    if git_status_success(project_path, &["rev-parse", "--verify", "--quiet", branch]) {
+        git(project_path, &["branch", "-D", branch])?;
     }
     Ok(())
 }
@@ -274,12 +323,20 @@ pub fn delete_branch(project_path: &Path, task_id: &str) -> Result<(), String> {
 /// Run a git subcommand purely for its exit status (no output capture). Returns
 /// true on success. Used for predicate-style git calls (`diff --quiet`, `merge`).
 fn git_status_success(repo: &Path, args: &[&str]) -> bool {
-    crate::platform::std_command("git")
+    crate::platform::git_command(repo)
         .args(args)
-        .current_dir(repo)
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+/// Best-effort `git update-index --refresh` in `dir` to clear git's stale stat
+/// cache. Without it, a worktree that was only `stat`-touched (a build that wrote
+/// then restored a file's mtime) can report a false-positive "uncommitted changes"
+/// in `git status`. Errors are deliberately swallowed — it is a pure optimization
+/// and must never fail a higher-level read (Aperant `refreshGitIndex`).
+fn refresh_index(dir: &Path) {
+    let _ = git_status_success(dir, &["update-index", "--refresh"]);
 }
 
 /// List the task ids that currently have a Nightcore worktree on disk under the
@@ -335,6 +392,9 @@ pub struct WorktreeStatus {
 /// failed git read degrades to `dirty=false` / `ahead_of_base=0` rather than
 /// erroring, so one bad worktree can't break the monitor list).
 pub fn worktree_status(dir: &Path, task_id: &str, base: &str) -> WorktreeStatus {
+    // Clear git's stale stat cache first so a `stat`-touched-but-unchanged file
+    // doesn't read as a false-positive dirty (best-effort; never fails the read).
+    refresh_index(dir);
     let dirty = git(dir, &["status", "--porcelain"])
         .map(|s| !s.is_empty())
         .unwrap_or(false);

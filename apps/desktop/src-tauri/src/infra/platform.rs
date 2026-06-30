@@ -15,7 +15,7 @@
 //! spawn (`orchestration/provider.rs`, async tokio), the readiness gauntlet's `bun`/`npm`/`cargo`
 //! steps (`gauntlet.rs`), and the `git` calls in `orchestration/worktree.rs` + `project.rs`.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// A resolved, launchable program: an absolute executable path plus any prefix
 /// args needed to actually launch it. On macOS/Linux `prefix_args` is empty and
@@ -79,6 +79,50 @@ pub fn std_command(name: &str) -> std::process::Command {
     let prog = resolve_program(name);
     let mut cmd = std::process::Command::new(prog.program);
     cmd.args(prog.prefix_args);
+    cmd
+}
+
+/// Environment variables that leak a parent git context into a child `git`
+/// invocation. If any are inherited (Nightcore launched from a git hook, or the
+/// agent's own git ops set them), git would target the WRONG repo/index/author —
+/// silently committing to or reading from the parent instead of the worktree. We
+/// scrub them before every git spawn. Ported from Aperant's `GIT_ENV_VARS_TO_CLEAR`
+/// (`utils/git-isolation.ts`).
+pub const GIT_ENV_VARS_TO_CLEAR: &[&str] = &[
+    "GIT_DIR",
+    "GIT_WORK_TREE",
+    "GIT_INDEX_FILE",
+    "GIT_OBJECT_DIRECTORY",
+    "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+    "GIT_AUTHOR_NAME",
+    "GIT_AUTHOR_EMAIL",
+    "GIT_AUTHOR_DATE",
+    "GIT_COMMITTER_NAME",
+    "GIT_COMMITTER_EMAIL",
+    "GIT_COMMITTER_DATE",
+];
+
+/// Build a `git` [`std::process::Command`] in `repo` with an ISOLATED environment.
+/// Every production git call routes through here so a leaked parent git context can
+/// never redirect git at the wrong repo. We:
+/// - remove the 11 `GIT_*` vars that override repo/work-tree/index/author
+///   ([`GIT_ENV_VARS_TO_CLEAR`]);
+/// - set `HUSKY=0` so the user's git hooks never fire on our automated commits/merges;
+/// - pin `LC_ALL=C` so git's porcelain text output is locale-stable for parsing;
+/// - set `GIT_TERMINAL_PROMPT=0` so a credential prompt errors instead of hanging a
+///   headless subprocess.
+///
+/// We use `env_remove` (not `env_clear`) so PATH/HOME/SSH/locale-needed vars survive —
+/// clearing the whole env would stop git finding its binary or credentials.
+pub fn git_command(repo: &Path) -> std::process::Command {
+    let mut cmd = std_command("git");
+    cmd.current_dir(repo);
+    for var in GIT_ENV_VARS_TO_CLEAR {
+        cmd.env_remove(var);
+    }
+    cmd.env("HUSKY", "0");
+    cmd.env("LC_ALL", "C");
+    cmd.env("GIT_TERMINAL_PROMPT", "0");
     cmd
 }
 
@@ -311,5 +355,33 @@ mod tests {
         let resolved = resolve_program("git");
         let cmd = std_command("git");
         assert_eq!(cmd.get_program(), resolved.program.as_os_str());
+    }
+
+    /// `git_command` scrubs the 11 contaminating `GIT_*` vars (so a leaked parent
+    /// context can't redirect git), sets the hardening vars, pins the cwd, and does
+    /// NOT clear PATH/HOME (env_remove, not env_clear).
+    #[test]
+    fn git_command_isolates_the_environment() {
+        use std::collections::HashMap;
+        use std::ffi::OsStr;
+        let cmd = git_command(Path::new("/tmp"));
+        let envs: HashMap<&OsStr, Option<&OsStr>> = cmd.get_envs().collect();
+        for var in GIT_ENV_VARS_TO_CLEAR {
+            assert_eq!(
+                envs.get(OsStr::new(var)),
+                Some(&None),
+                "{var} must be removed from the git env"
+            );
+        }
+        assert_eq!(envs.get(OsStr::new("HUSKY")), Some(&Some(OsStr::new("0"))));
+        assert_eq!(envs.get(OsStr::new("LC_ALL")), Some(&Some(OsStr::new("C"))));
+        assert_eq!(
+            envs.get(OsStr::new("GIT_TERMINAL_PROMPT")),
+            Some(&Some(OsStr::new("0")))
+        );
+        // PATH/HOME are inherited (not in the override map) — env_remove only marks
+        // the 11 GIT_* vars; we never env_clear.
+        assert!(!envs.contains_key(OsStr::new("PATH")));
+        assert_eq!(cmd.get_current_dir(), Some(Path::new("/tmp")));
     }
 }
