@@ -1,7 +1,8 @@
 /** State, validation, submit, and keyboard/paste handling for the create-task
  *  dialog. */
-import { useCallback, useState } from 'react';
-import type { PermissionMode, RunMode, TaskKind } from '@/lib/bridge';
+import { useCallback, useEffect, useState } from 'react';
+import { listBranches } from '@/lib/bridge';
+import type { BranchInfo, PermissionMode, RunMode, TaskKind } from '@/lib/bridge';
 import {
   imageFilesFrom,
   MAX_IMAGES_PER_TASK,
@@ -35,6 +36,12 @@ export interface NewTaskFormState {
   description: string;
   kind: TaskKind;
   runMode: RunMode;
+  /** Chosen worktree branch name (empty ⇒ default `nc/<taskId>`). Worktree mode only. */
+  branch: string;
+  /** Chosen base branch (empty ⇒ the project's current branch). Worktree mode only. */
+  baseBranch: string;
+  /** Available branches for the picker (local + remote-tracking). */
+  branches: BranchInfo[];
   permissionMode: PermissionMode | null;
   model: string | null;
   effort: string | null;
@@ -54,6 +61,8 @@ export interface NewTaskFormState {
   setDescription: (value: string) => void;
   setKind: (value: TaskKind) => void;
   setRunMode: (value: RunMode) => void;
+  setBranch: (value: string) => void;
+  setBaseBranch: (value: string) => void;
   setPermissionMode: (value: PermissionMode | null) => void;
   setModel: (value: string | null) => void;
   setEffort: (value: string | null) => void;
@@ -80,6 +89,9 @@ export function useNewTaskForm({
   const [description, setDescription] = useState('');
   const [kind, setKind] = useState<TaskKind>('build');
   const [runMode, setRunMode] = useState<RunMode>('main');
+  const [branch, setBranch] = useState('');
+  const [baseBranch, setBaseBranch] = useState('');
+  const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<string | null>(null);
@@ -89,6 +101,20 @@ export function useNewTaskForm({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Load the project's branches once for the branch picker (worktree mode). Returns
+  // [] outside Tauri; a failure just leaves free-form entry.
+  useEffect(() => {
+    let alive = true;
+    void listBranches()
+      .then((b) => {
+        if (alive) setBranches(b);
+      })
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const canSubmit = title.trim().length > 0 && !busy;
 
@@ -133,6 +159,9 @@ export function useNewTaskForm({
         // Empty/blank/invalid input ⇒ inherit (omit the override → null at the seam).
         maxTurns: parsePositiveInt(maxTurns),
         maxBudgetUsd: parseNonNegativeFloat(maxBudget),
+        // Branch + base only apply in worktree mode; blank ⇒ inherit the defaults.
+        branch: runMode === 'worktree' ? branch.trim() || null : null,
+        baseBranch: runMode === 'worktree' ? baseBranch.trim() || null : null,
         attachments: attachments.map(toPayload),
       });
       onClose();
@@ -148,6 +177,8 @@ export function useNewTaskForm({
     description,
     kind,
     runMode,
+    branch,
+    baseBranch,
     permissionMode,
     model,
     effort,
@@ -175,6 +206,9 @@ export function useNewTaskForm({
     description,
     kind,
     runMode,
+    branch,
+    baseBranch,
+    branches,
     permissionMode,
     model,
     effort,
@@ -189,6 +223,8 @@ export function useNewTaskForm({
     setDescription,
     setKind,
     setRunMode,
+    setBranch,
+    setBaseBranch,
     setPermissionMode,
     setModel,
     setEffort,
