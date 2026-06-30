@@ -43,7 +43,7 @@ export const CreatesTask: Story = {
         'Build the settings surface.',
         'build',
         'main',
-        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, attachments: [] },
+        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
       ),
     );
   },
@@ -64,6 +64,8 @@ export const CreatesResearchTask: Story = {
         effort: null,
         maxTurns: null,
         maxBudgetUsd: null,
+        branch: null,
+        baseBranch: null,
         attachments: [],
       }),
     );
@@ -84,7 +86,7 @@ export const CreatesWorktreeTask: Story = {
         '',
         'build',
         'worktree',
-        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, attachments: [] },
+        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
       ),
     );
   },
@@ -110,6 +112,8 @@ export const CreatesWithOverrides: Story = {
         effort: 'high',
         maxTurns: null,
         maxBudgetUsd: null,
+        branch: null,
+        baseBranch: null,
         attachments: [],
       }),
     );
@@ -133,6 +137,8 @@ export const CreatesWithLimits: Story = {
         effort: null,
         maxTurns: 40,
         maxBudgetUsd: 2.5,
+        branch: null,
+        baseBranch: null,
         attachments: [],
       }),
     );

@@ -23,6 +23,8 @@ test('gates create on a non-empty title, then fires onCreate', async () => {
     effort: null,
     maxTurns: null,
     maxBudgetUsd: null,
+    branch: null,
+    baseBranch: null,
     attachments: [],
   });
 });
@@ -41,6 +43,8 @@ test('threads an explicit max-turns ceiling through onCreate', async () => {
     effort: null,
     maxTurns: 40,
     maxBudgetUsd: null,
+    branch: null,
+    baseBranch: null,
     attachments: [],
   });
 });

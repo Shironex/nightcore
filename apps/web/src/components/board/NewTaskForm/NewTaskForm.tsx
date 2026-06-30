@@ -1,4 +1,5 @@
 import {
+  BranchPicker,
   Button,
   CloseIcon,
   IconButton,
@@ -27,6 +28,9 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
     description,
     kind,
     runMode,
+    branch,
+    baseBranch,
+    branches,
     permissionMode,
     model,
     effort,
@@ -41,6 +45,8 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
     setDescription,
     setKind,
     setRunMode,
+    setBranch,
+    setBaseBranch,
     setPermissionMode,
     setModel,
     setEffort,
@@ -119,6 +125,31 @@ export function NewTaskForm({ onCreate, onClose }: NewTaskFormProps) {
             <span className={LABEL_CLASS}>Run mode</span>
             <WorkModePicker value={runMode} onChange={setRunMode} />
           </div>
+          {runMode === 'worktree' && (
+            <>
+              <div className="flex flex-col gap-1.5">
+                <span className={LABEL_CLASS}>Branch</span>
+                <BranchPicker
+                  value={branch}
+                  onChange={setBranch}
+                  branches={branches}
+                  placeholder="nc/<task-id> · default"
+                  ariaLabel="Worktree branch"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <span className={LABEL_CLASS}>Base branch</span>
+                <BranchPicker
+                  value={baseBranch}
+                  onChange={setBaseBranch}
+                  branches={branches}
+                  allowCreate={false}
+                  placeholder="Current branch · default"
+                  ariaLabel="Base branch"
+                />
+              </div>
+            </>
+          )}
           <div className="flex flex-col gap-1.5">
             <span className={LABEL_CLASS}>Permission mode</span>
             <PermissionModePicker value={permissionMode} onChange={setPermissionMode} />

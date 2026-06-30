@@ -281,6 +281,12 @@ export interface CreateTaskOptions {
   maxTurns?: number | null;
   /** SDK-guardrail max-budget-USD override (`null` = inherit). */
   maxBudgetUsd?: number | null;
+  /** Worktree branch name chosen in the branch picker (worktree mode). `null` ⇒
+   *  the coordinator names it `nc/<taskId>`. Ignored for main-mode tasks. */
+  branch?: string | null;
+  /** Base branch the worktree branches off / merges into (worktree mode). `null` ⇒
+   *  the project's current branch. Ignored for main-mode tasks. */
+  baseBranch?: string | null;
   /** Image attachments to persist with the task (base64 payloads). Defaults to none. */
   attachments?: NewAttachmentPayload[];
 }
@@ -305,6 +311,8 @@ export async function createTask(
     effort: options.effort ?? null,
     maxTurns: options.maxTurns ?? null,
     maxBudgetUsd: options.maxBudgetUsd ?? null,
+    branch: options.branch ?? null,
+    baseBranch: options.baseBranch ?? null,
     attachments: options.attachments ?? [],
   });
 }
