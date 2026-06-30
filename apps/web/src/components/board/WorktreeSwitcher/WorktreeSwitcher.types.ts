@@ -18,6 +18,10 @@ export interface WorktreeTab {
   dirty: boolean;
   /** Commits ahead of the project base (worktree tabs only). */
   aheadOfBase: number;
+  /** Commits behind the project base (worktree tabs only). */
+  behindOfBase: number;
+  /** Count of uncommitted changed files (worktree tabs only). */
+  changedFiles: number;
 }
 
 /** Props for the worktree switcher: the project's tasks, live worktrees, the

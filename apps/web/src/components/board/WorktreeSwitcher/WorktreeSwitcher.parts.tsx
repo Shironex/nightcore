@@ -26,8 +26,12 @@ export function WorktreeTabButton({ tab, selected, onSelect }: WorktreeTabButton
       title={
         isMain
           ? 'Tasks running on the project directory'
-          : `Worktree ${tab.branch}${tab.dirty ? ' · uncommitted changes' : ''}${
-              tab.aheadOfBase > 0 ? ` · ${tab.aheadOfBase} ahead` : ''
+          : `Worktree ${tab.branch}${
+              tab.dirty
+                ? ` · ${tab.changedFiles > 0 ? `${tab.changedFiles} changed` : 'uncommitted changes'}`
+                : ''
+            }${tab.aheadOfBase > 0 ? ` · ↑${tab.aheadOfBase}` : ''}${
+              tab.behindOfBase > 0 ? ` · ↓${tab.behindOfBase}` : ''
             }`
       }
       className={`flex items-center gap-1.5 rounded-[9px] border px-3 py-1.5 font-mono text-[12px] transition-colors ${
@@ -58,8 +62,13 @@ export function WorktreeTabButton({ tab, selected, onSelect }: WorktreeTabButton
       )}
 
       {tab.dirty && (
-        <span className="text-[10px] font-semibold text-warning" aria-label="Uncommitted changes">
-          ●
+        <span
+          className="text-[10px] font-semibold tabular-nums text-warning"
+          aria-label={
+            tab.changedFiles > 0 ? `${tab.changedFiles} uncommitted files` : 'Uncommitted changes'
+          }
+        >
+          ●{tab.changedFiles > 0 ? tab.changedFiles : ''}
         </span>
       )}
 
@@ -69,6 +78,15 @@ export function WorktreeTabButton({ tab, selected, onSelect }: WorktreeTabButton
           aria-label={`${tab.aheadOfBase} commits ahead of base`}
         >
           ↑{tab.aheadOfBase}
+        </span>
+      )}
+
+      {tab.behindOfBase > 0 && (
+        <span
+          className="text-[10px] font-semibold tabular-nums text-warning"
+          aria-label={`${tab.behindOfBase} commits behind base`}
+        >
+          ↓{tab.behindOfBase}
         </span>
       )}
     </button>

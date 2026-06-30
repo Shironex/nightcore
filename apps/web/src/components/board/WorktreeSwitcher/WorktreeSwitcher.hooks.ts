@@ -39,6 +39,8 @@ export function useWorktreeTabs(tasks: Task[], worktrees: WorktreeInfo[]): Workt
       runningCount: mainTasks.filter(isRunning).length,
       dirty: false,
       aheadOfBase: 0,
+      behindOfBase: 0,
+      changedFiles: 0,
     };
 
     const source: WorktreeInfo[] =
@@ -63,6 +65,8 @@ export function useWorktreeTabs(tasks: Task[], worktrees: WorktreeInfo[]): Workt
         runningCount: branchTasks.filter(isRunning).length,
         dirty: worktree.dirty,
         aheadOfBase: worktree.aheadOfBase,
+        behindOfBase: worktree.behindOfBase,
+        changedFiles: worktree.changedFiles,
       };
     });
 
