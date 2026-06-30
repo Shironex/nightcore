@@ -50,6 +50,8 @@ export function useWorktreeTabs(tasks: Task[], worktrees: WorktreeInfo[]): Workt
             taskIds: [],
             dirty: false,
             aheadOfBase: 0,
+            behindOfBase: 0,
+            changedFiles: 0,
           }));
 
     const worktreeTabs = source.map((worktree): WorktreeTab => {

@@ -382,9 +382,17 @@ pub struct WorktreeStatus {
     /// Whether the worktree has uncommitted changes (`git status --porcelain` is
     /// non-empty). Tolerant: an unreadable/locked worktree reads as `false`.
     pub dirty: bool,
-    /// How many commits the worktree's branch is ahead of `base` (`git rev-list
-    /// --count base..HEAD`). Tolerant: unresolvable reads as `0`.
+    /// How many commits the worktree's branch is ahead of `base` (HEAD-only commits
+    /// from `git rev-list --left-right --count base...HEAD`). Tolerant: unresolvable
+    /// reads as `0`.
     pub ahead_of_base: u32,
+    /// How many commits the worktree's branch is BEHIND `base` (base-only commits).
+    /// Non-zero alongside `ahead_of_base` means the branch has diverged from base.
+    /// Tolerant: unresolvable reads as `0`.
+    pub behind_of_base: u32,
+    /// The number of changed (uncommitted) entries in the worktree — the line count
+    /// of `git status --porcelain`. `0` when clean. Tolerant: unreadable reads as `0`.
+    pub changed_files: u32,
 }
 
 /// Read the status of one live worktree at `dir` for task `task_id`, diffing its
@@ -395,21 +403,37 @@ pub fn worktree_status(dir: &Path, task_id: &str, base: &str) -> WorktreeStatus 
     // Clear git's stale stat cache first so a `stat`-touched-but-unchanged file
     // doesn't read as a false-positive dirty (best-effort; never fails the read).
     refresh_index(dir);
-    let dirty = git(dir, &["status", "--porcelain"])
-        .map(|s| !s.is_empty())
-        .unwrap_or(false);
-    let range = format!("{base}..HEAD");
-    let ahead_of_base = git(dir, &["rev-list", "--count", &range])
+    let porcelain = git(dir, &["status", "--porcelain"]).unwrap_or_default();
+    let dirty = !porcelain.is_empty();
+    let changed_files = if porcelain.is_empty() {
+        0
+    } else {
+        porcelain.lines().count() as u32
+    };
+    let range = format!("{base}...HEAD");
+    let (behind_of_base, ahead_of_base) = git(dir, &["rev-list", "--left-right", "--count", &range])
         .ok()
-        .and_then(|s| s.trim().parse::<u32>().ok())
-        .unwrap_or(0);
+        .and_then(|s| parse_left_right_count(&s))
+        .unwrap_or((0, 0));
     WorktreeStatus {
         branch: branch_name(task_id),
         path: dir.to_string_lossy().to_string(),
         task_ids: vec![task_id.to_string()],
         dirty,
         ahead_of_base,
+        behind_of_base,
+        changed_files,
     }
+}
+
+/// Parse `git rev-list --left-right --count <base>...HEAD` output (`"<behind>\t<ahead>"`)
+/// into `(behind, ahead)`: the left count is commits reachable from `base` but not
+/// HEAD (behind), the right is HEAD-only (ahead). `None` on malformed output.
+fn parse_left_right_count(s: &str) -> Option<(u32, u32)> {
+    let mut parts = s.split_whitespace();
+    let behind = parts.next()?.parse::<u32>().ok()?;
+    let ahead = parts.next()?.parse::<u32>().ok()?;
+    Some((behind, ahead))
 }
 
 /// The status of every live Nightcore worktree for a project (M4.6 §C). Reads each
@@ -457,6 +481,8 @@ pub fn list_worktree_statuses(project_path: &Path) -> Vec<WorktreeStatus> {
                         task_ids: vec![task_id.to_string()],
                         dirty: false,
                         ahead_of_base: 0,
+                        behind_of_base: 0,
+                        changed_files: 0,
                     }
                 })
             })
@@ -791,18 +817,31 @@ mod tests {
         assert_eq!(s.task_ids, vec!["task-1".to_string()]);
         assert!(!s.dirty, "a fresh worktree is clean");
         assert_eq!(s.ahead_of_base, 0, "a fresh worktree is level with base");
+        assert_eq!(s.behind_of_base, 0, "a fresh worktree is not behind base");
+        assert_eq!(s.changed_files, 0, "a fresh worktree has no changed files");
 
-        // An uncommitted edit marks it dirty (still not ahead — no commit).
+        // An uncommitted edit marks it dirty with one changed file (still not ahead).
         std::fs::write(dir.join("wip.txt"), "wip").expect("write");
         let dirty = list_worktree_statuses(&repo);
         assert!(dirty[0].dirty, "an uncommitted edit is dirty");
         assert_eq!(dirty[0].ahead_of_base, 0);
+        assert_eq!(dirty[0].changed_files, 1, "one uncommitted file");
 
-        // Committing it clears dirty and advances ahead-of-base to 1.
+        // Committing it clears dirty and advances ahead-of-base to 1, not behind.
         commit(&repo, "task-1", "wip commit").expect("commit");
         let committed = list_worktree_statuses(&repo);
         assert!(!committed[0].dirty, "a committed worktree is clean");
         assert_eq!(committed[0].ahead_of_base, 1, "one commit ahead of base");
+        assert_eq!(committed[0].behind_of_base, 0, "not behind base");
+        assert_eq!(committed[0].changed_files, 0, "no changed files after commit");
+    }
+
+    #[test]
+    fn parse_left_right_count_reads_behind_then_ahead() {
+        assert_eq!(parse_left_right_count("3\t5"), Some((3, 5)));
+        assert_eq!(parse_left_right_count("0 0"), Some((0, 0)));
+        assert_eq!(parse_left_right_count(""), None);
+        assert_eq!(parse_left_right_count("nope"), None);
     }
 
     #[test]

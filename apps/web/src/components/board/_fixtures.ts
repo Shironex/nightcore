@@ -143,6 +143,8 @@ export const WORKTREES: WorktreeInfo[] = [
     taskIds: ['t-running'],
     dirty: true,
     aheadOfBase: 2,
+    behindOfBase: 0,
+    changedFiles: 3,
   },
   {
     branch: 'nc/auth-guard',
@@ -150,6 +152,8 @@ export const WORKTREES: WorktreeInfo[] = [
     taskIds: ['t-done'],
     dirty: false,
     aheadOfBase: 1,
+    behindOfBase: 0,
+    changedFiles: 0,
   },
 ];
 

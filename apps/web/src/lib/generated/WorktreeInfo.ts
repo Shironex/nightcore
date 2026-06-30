@@ -25,7 +25,19 @@ taskIds: Array<string>,
  */
 dirty: boolean, 
 /**
- * How many commits the worktree's branch is ahead of `base` (`git rev-list
- * --count base..HEAD`). Tolerant: unresolvable reads as `0`.
+ * How many commits the worktree's branch is ahead of `base` (HEAD-only commits
+ * from `git rev-list --left-right --count base...HEAD`). Tolerant: unresolvable
+ * reads as `0`.
  */
-aheadOfBase: number, };
+aheadOfBase: number, 
+/**
+ * How many commits the worktree's branch is BEHIND `base` (base-only commits).
+ * Non-zero alongside `ahead_of_base` means the branch has diverged from base.
+ * Tolerant: unresolvable reads as `0`.
+ */
+behindOfBase: number, 
+/**
+ * The number of changed (uncommitted) entries in the worktree — the line count
+ * of `git status --porcelain`. `0` when clean. Tolerant: unreadable reads as `0`.
+ */
+changedFiles: number, };
