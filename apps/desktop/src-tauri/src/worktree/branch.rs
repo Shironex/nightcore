@@ -25,9 +25,12 @@ pub fn base_branch(project_path: &Path) -> String {
 }
 
 /// Delete a specific `branch` (best-effort). Refuses to delete the project's current
-/// base branch / `HEAD` — an exact-match safety guard (Aperant) so a bad or
-/// user-supplied branch value can never delete the user's working branch. A missing
-/// branch is a no-op.
+/// base branch / `HEAD` — a safety guard (Aperant) so a bad or user-supplied branch
+/// value can never delete the user's working branch. The guard matches on *identity*,
+/// not one spelling (see [`resolves_to_base_or_head`]): a qualified ref
+/// (`refs/heads/main`) or a case variant (`Main`, which `git branch -D` happily
+/// deletes on the case-insensitive filesystems we target) can't slip past it. A
+/// missing branch is a no-op.
 pub fn delete_branch_named(project_path: &Path, branch: &str) -> Result<(), String> {
     if branch.is_empty() {
         return Ok(());
@@ -35,9 +38,9 @@ pub fn delete_branch_named(project_path: &Path, branch: &str) -> Result<(), Stri
     // Reject a branch git would read as an OPTION (leading `-`) or that is not a legal
     // ref before it reaches `rev-parse`/`branch -D`.
     validate_ref(branch)?;
-    if branch == "HEAD" || branch == base_branch(project_path) {
+    if resolves_to_base_or_head(project_path, branch) {
         return Err(format!(
-            "refusing to delete branch {branch} — it is the project's base branch"
+            "refusing to delete branch {branch} — it resolves to the project's base branch"
         ));
     }
     if git_status_success(
@@ -47,6 +50,59 @@ pub fn delete_branch_named(project_path: &Path, branch: &str) -> Result<(), Stri
         git(project_path, &["branch", "-D", "--end-of-options", branch])?;
     }
     Ok(())
+}
+
+/// True when `branch` denotes the project's base branch or `HEAD` under *any* spelling
+/// that `git branch -D` would resolve to the same underlying ref — the last line of
+/// defense against a bad or user-supplied branch value deleting the working branch.
+///
+/// Exact string equality on the short name (the original guard) is bypassable in two
+/// ways we verified against real git:
+/// - a differently-qualified but equivalent ref (`refs/heads/main` vs `main`), and
+/// - on the case-insensitive filesystems Nightcore targets (macOS/Windows), a case
+///   variant (`Main`) — `git branch -D Main` case-folds on the filesystem and deletes
+///   `main`, so the guard *must* fold case too.
+///
+/// So we match on two axes, both ASCII-case-insensitively:
+/// 1. the short name against `HEAD` and the resolved base branch (the fast, I/O-free
+///    path that also catches case variants), and
+/// 2. the fully-qualified refname of the candidate against `HEAD`'s (resolved via
+///    `rev-parse --symbolic-full-name`), so `refs/heads/main` / `heads/main` are
+///    rejected too. Falls through to `false` when either can't be resolved (e.g.
+///    detached HEAD), leaving axis 1 as the guarantee.
+fn resolves_to_base_or_head(project_path: &Path, branch: &str) -> bool {
+    let base = base_branch(project_path);
+    if branch.eq_ignore_ascii_case("HEAD") || branch.eq_ignore_ascii_case(&base) {
+        return true;
+    }
+    match (
+        symbolic_full_name(project_path, "HEAD"),
+        symbolic_full_name(project_path, branch),
+    ) {
+        (Some(head_ref), Some(candidate_ref)) => candidate_ref.eq_ignore_ascii_case(&head_ref),
+        _ => false,
+    }
+}
+
+/// Resolve `reference` to its fully-qualified refname (`main` / `refs/heads/main` /
+/// `HEAD` → `refs/heads/main`). `None` when it doesn't resolve to a ref (detached
+/// HEAD, a non-existent name, or a git failure). `--verify` keeps the output to the
+/// single resolved name (without it, `rev-parse` echoes `--end-of-options` as an
+/// extra line).
+fn symbolic_full_name(project_path: &Path, reference: &str) -> Option<String> {
+    git(
+        project_path,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            "--symbolic-full-name",
+            "--end-of-options",
+            reference,
+        ],
+    )
+    .ok()
+    .filter(|s| !s.is_empty())
 }
 
 /// One branch for the branch picker. Local branches carry upstream + ahead/behind
