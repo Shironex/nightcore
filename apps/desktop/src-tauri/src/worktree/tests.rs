@@ -600,3 +600,55 @@ fn merge_and_delete_reject_dash_refs() {
         "an empty branch is a no-op, not an error"
     );
 }
+
+/// The base-branch guard matches on identity, not one spelling: neither a qualified
+/// ref (`refs/heads/main`) nor a case variant (`Main` — which `git branch -D`
+/// case-folds and deletes on macOS/Windows) may bypass it.
+#[test]
+fn delete_refuses_base_branch_under_equivalent_spellings() {
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    let base = base_branch(&repo);
+    let head_sha = |r: &Path| {
+        String::from_utf8(
+            Command::new("git")
+                .args(["rev-parse", "--verify", &base])
+                .current_dir(r)
+                .output()
+                .expect("rev-parse base")
+                .stdout,
+        )
+        .ok()
+    };
+    let before = head_sha(&repo).expect("base resolves before");
+
+    for spelling in [
+        base.clone(),                        // exact short name
+        base.to_uppercase(),                 // case variant (case-fold delete on macOS/Windows)
+        format!("refs/heads/{base}"),        // fully-qualified ref
+        format!("heads/{base}"),             // partially-qualified ref
+        "HEAD".to_string(),                  // the literal HEAD
+    ] {
+        assert!(
+            delete_branch_named(&repo, &spelling).is_err(),
+            "guard must refuse base-branch spelling {spelling:?}"
+        );
+        assert_eq!(
+            head_sha(&repo).as_deref(),
+            Some(before.as_str()),
+            "base branch must still exist after refusing {spelling:?}"
+        );
+    }
+
+    // Positive control: a genuine non-base branch is still deletable.
+    assert!(
+        run_in(&repo, &["branch", "feature/keepable"]),
+        "create a deletable branch"
+    );
+    delete_branch_named(&repo, "feature/keepable").expect("non-base branch deletes");
+    assert!(
+        !run_in(&repo, &["rev-parse", "--verify", "--quiet", "feature/keepable"]),
+        "the non-base branch was deleted"
+    );
+}
