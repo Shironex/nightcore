@@ -558,8 +558,19 @@ pub(crate) fn build_new_task(
     // chosen name. Blank entries fall back to the defaults (`nc/<taskId>` off the
     // project's current branch). Main-mode tasks never carry a worktree branch.
     if run_mode.is_worktree() {
-        task.branch = inputs.branch.filter(|b| !b.trim().is_empty());
-        task.base_branch = inputs.base_branch.filter(|b| !b.trim().is_empty());
+        // A blank picker entry falls back to the default naming; so does one that
+        // isn't a legal git ref (e.g. a name git would parse as an OPTION), so a
+        // hostile/typo'd branch can never be stored and later spliced into a git
+        // argument list. `worktree::allocate_branch`/`merge_branch` re-validate at the
+        // call boundary, so this is the ingestion half of a defence-in-depth pair.
+        task.branch = inputs
+            .branch
+            .filter(|b| !b.trim().is_empty())
+            .filter(|b| crate::worktree::validate_ref(b).is_ok());
+        task.base_branch = inputs
+            .base_branch
+            .filter(|b| !b.trim().is_empty())
+            .filter(|b| crate::worktree::validate_ref(b).is_ok());
     }
     // P0: an explicit per-task model/effort wins; absent ⇒ stamp the resolved
     // Settings default (an SDK long id) so changing "Default model" in Settings
@@ -1166,6 +1177,50 @@ mod tests {
             TaskKind::Build,
             "an omitted kind defaults to Build"
         );
+    }
+
+    #[test]
+    fn build_new_task_drops_an_invalid_picker_branch_at_ingestion() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+
+        // A picker value git would parse as an OPTION (or is otherwise not a legal
+        // ref) is never stored — it falls back to the default naming, so a hostile /
+        // typo'd branch can't be persisted and later spliced into a git call.
+        let hostile = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                run_mode: Some(RunMode::Worktree),
+                branch: Some("-D".into()),
+                base_branch: Some("a b".into()),
+                ..Default::default()
+            },
+        );
+        assert!(hostile.branch.is_none(), "an option-like branch is dropped");
+        assert!(
+            hostile.base_branch.is_none(),
+            "a malformed base is dropped"
+        );
+
+        // A legal picker branch/base survives ingestion unchanged.
+        let ok = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                run_mode: Some(RunMode::Worktree),
+                branch: Some("feature/foo".into()),
+                base_branch: Some("main".into()),
+                ..Default::default()
+            },
+        );
+        assert_eq!(ok.branch.as_deref(), Some("feature/foo"));
+        assert_eq!(ok.base_branch.as_deref(), Some("main"));
     }
 
     #[test]
