@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 
 /** The in-flight-action tracker returned by {@link useActionGuard}. */
 export interface ActionGuard {
@@ -48,5 +48,13 @@ export function useActionGuard(): ActionGuard {
     [pending],
   );
 
-  return { guard, isPending };
+  // Memoize the returned API so `action` keeps a stable identity across renders
+  // it doesn't cause (e.g. a per-frame `nc:session` stream flush). Every guarded
+  // handler in AppShell lists `action` in its dependency array; a fresh literal
+  // here would re-identify all of them — and thus `detailActions`, the Board's
+  // card handlers, etc. — on every render, silently defeating every downstream
+  // `memo` (TaskDetailChrome / Column / TaskCard). `guard` is fully stable and
+  // `isPending` changes only when the pending set transitions (an action starts
+  // or settles), so this reference turns over only on real guard-state changes.
+  return useMemo(() => ({ guard, isPending }), [guard, isPending]);
 }

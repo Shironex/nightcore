@@ -1,4 +1,5 @@
 import { lazy, Suspense } from 'react';
+import type { PermissionPrompt, QuestionPrompt } from '@/lib/bridge';
 import { Board, EMPTY_TRANSCRIPT, NewTaskForm } from '@/components/board';
 import { NewProjectDialog } from '@/components/new-project';
 import {
@@ -71,6 +72,11 @@ const NAV: NavItem[] = [
 ];
 
 const MODELS = ['Opus 4.8', 'Sonnet 4.8', 'Haiku 4.5'];
+
+// Stable empty fallbacks for a task with no parked prompts/questions — a fresh
+// `[]` per render would defeat the memoized TaskDetailChrome on every stream flush.
+const NO_PROMPTS: PermissionPrompt[] = [];
+const NO_QUESTIONS: QuestionPrompt[] = [];
 
 /** The Nightcore app shell and composition root: it hosts the sidebar, routes
  *  between the Board / Projects / Settings surfaces, and renders the New Project
@@ -225,42 +231,17 @@ export function AppShell() {
                 task={selected}
                 stream={board.streams[selected.id] ?? EMPTY_TRANSCRIPT}
                 anyRunning={anyRunning}
-                prompts={board.prompts[selected.id] ?? []}
-                questions={board.questions[selected.id] ?? []}
+                prompts={board.prompts[selected.id] ?? NO_PROMPTS}
+                questions={board.questions[selected.id] ?? NO_QUESTIONS}
                 gauntlet={board.gauntletResults[selected.id] ?? null}
                 gauntletRunning={board.gauntletRunning.has(selected.id)}
-                onClose={() => setSelectedId(null)}
+                onClose={board.closeDetail}
                 // The drawer's ~25 action callbacks travel as one grouped object,
-                // assembled here from the `board` controller. Delete routes through
-                // the confirm-gated `requestDelete` (matching the card/column deletes).
-                actions={{
-                  onRun: board.handleRun,
-                  onCancel: board.handleCancel,
-                  onDelete: board.requestDelete,
-                  onRespondPermission: board.handleRespondPermission,
-                  onAnswerQuestion: board.handleAnswerQuestion,
-                  onApprove: board.handleApprove,
-                  onReject: board.handleReject,
-                  onRefine: board.handleRefine,
-                  onChangeKind: board.handleChangeKind,
-                  onChangeRunMode: board.handleChangeRunMode,
-                  onChangePermissionMode: board.handleChangePermissionMode,
-                  onChangeModel: board.handleChangeModel,
-                  onChangeEffort: board.handleChangeEffort,
-                  onChangeMaxTurns: board.handleChangeMaxTurns,
-                  onChangeMaxBudget: board.handleChangeMaxBudget,
-                  onAcceptReview: board.handleAcceptReview,
-                  onRejectReview: board.handleRejectReview,
-                  onRerunVerification: board.handleRerunVerification,
-                  onRunGauntlet: board.handleRunGauntlet,
-                  onConvertSubtask: board.handleConvertSubtask,
-                  onConvertAllSubtasks: board.handleConvertAllSubtasks,
-                  onMerge: board.handleMerge,
-                  onCommit: board.handleCommit,
-                  onResumeSession: board.handleResumeSession,
-                  onRenameSession: board.handleRenameSession,
-                  onTagSession: board.handleTagSession,
-                }}
+                // pre-assembled once in the `board` controller (`detailActions`) so
+                // its identity is stable across the per-frame stream flush. Delete
+                // routes through the confirm-gated `requestDelete` (matching the
+                // card/column deletes).
+                actions={board.detailActions}
                 isActionPending={board.isActionPending}
               />
               </Suspense>
