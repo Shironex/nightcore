@@ -220,6 +220,59 @@ mod tests {
     }
 
     #[test]
+    fn accumulate_findings_persists_mid_scan_and_is_noop_once_completed() {
+        let (store, _tmp) = store();
+        // A fresh running scan with no findings yet (the helper `run` seeds one, so
+        // build an empty running scan explicitly).
+        let mut r = run("r1");
+        r.status = "running".into();
+        r.findings = vec![];
+        r.artifacts = vec![];
+        r.cost_usd = 0.0;
+        r.usage = HarnessUsage::default();
+        store.upsert(&r).unwrap();
+
+        let empty = std::collections::HashSet::new();
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &empty, 0.7, 8, 4)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        assert_eq!(got.findings.len(), 1, "the lens's finding is persisted mid-scan");
+        assert_eq!(got.cost_usd, 0.7);
+        assert_eq!(got.usage.input_tokens, 8);
+
+        // Re-delivery of the same id is idempotent.
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &empty, 0.0, 0, 0)
+            .unwrap();
+        assert_eq!(store.get("r1").unwrap().findings.len(), 1);
+
+        // A prior-run dismissed fingerprint carries forward onto a fresh finding.
+        let mut dismissed = std::collections::HashSet::new();
+        dismissed.insert("fp2".to_string());
+        store
+            .accumulate_findings("r1", vec![finding("f2", "fp2")], &dismissed, 0.0, 0, 0)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        let f2 = got.findings.iter().find(|f| f.id == "f2").unwrap();
+        assert_eq!(f2.status, "dismissed");
+
+        // A completed scan is authoritative — no incremental accumulation.
+        store.accumulate_findings("r1", vec![finding("f3", "fp3")], &empty, 0.0, 0, 0).unwrap();
+        store
+            .mutate("r1", |run| run.status = "completed".into())
+            .unwrap();
+        store
+            .accumulate_findings("r1", vec![finding("f9", "fp9")], &empty, 5.0, 0, 0)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        assert!(
+            got.findings.iter().all(|f| f.id != "f9"),
+            "no incremental write once the scan is completed"
+        );
+    }
+
+    #[test]
     fn from_wire_parses_finding_and_artifact() {
         let fv = serde_json::json!({
             "id": "folder-structure-abc",

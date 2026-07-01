@@ -12,7 +12,7 @@
 //! this store stamps status + `linkedTaskId` and carries dismissed-history across
 //! re-runs by fingerprint (the production fix over Aperant's wipe-and-rerun).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -268,6 +268,58 @@ impl InsightStore {
         Ok(outcome)
     }
 
+    /// Merge one category pass's findings into a still-`running` run so a cancel or
+    /// crash keeps the partial results already paid for — and so mid-run dismiss/convert
+    /// on a peeked category has persisted findings to act on. A no-op once the run leaves
+    /// `running`: the terminal `analysis-completed` event is authoritative and owns the
+    /// final, cross-category-deduped set. A newly-arrived finding inherits any in-run
+    /// lifecycle already applied to a finding sharing its fingerprint, else the cross-run
+    /// `dismissed` set; a finding whose id is already present is skipped (idempotent
+    /// re-delivery). Cost/usage accumulate so a cancelled run still shows what it spent
+    /// (the terminal event overwrites these totals when the run completes cleanly).
+    pub fn accumulate_findings(
+        &self,
+        run_id: &str,
+        findings: Vec<StoredFinding>,
+        dismissed: &HashSet<String>,
+        cost_usd: f64,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<(), String> {
+        self.mutate(run_id, |run| {
+            if run.status != "running" {
+                return;
+            }
+            let prior: HashMap<String, (String, Option<String>)> = run
+                .findings
+                .iter()
+                .filter(|f| f.status != "open")
+                .map(|f| {
+                    (
+                        f.fingerprint.clone(),
+                        (f.status.clone(), f.linked_task_id.clone()),
+                    )
+                })
+                .collect();
+            for mut f in findings {
+                if run.findings.iter().any(|e| e.id == f.id) {
+                    continue;
+                }
+                if let Some((status, link)) = prior.get(&f.fingerprint) {
+                    f.status = status.clone();
+                    f.linked_task_id = link.clone();
+                } else if dismissed.contains(&f.fingerprint) {
+                    f.status = "dismissed".to_string();
+                }
+                run.findings.push(f);
+            }
+            run.cost_usd += cost_usd;
+            run.usage.input_tokens += input_tokens;
+            run.usage.output_tokens += output_tokens;
+        })
+        .map(|_| ())
+    }
+
     /// Every fingerprint a user has DISMISSED across all runs (optionally excluding
     /// `except_run`). Used to carry dismissed-history forward: a re-discovered
     /// finding whose fingerprint was previously dismissed stays dismissed.
@@ -482,6 +534,64 @@ mod tests {
                 .as_deref(),
             Some("task-1"),
             "the original link is preserved"
+        );
+    }
+
+    #[test]
+    fn accumulate_findings_persists_into_a_running_run_and_dedups_by_id() {
+        let (store, _tmp) = store();
+        let mut r = run("r1", vec![]);
+        r.status = "running".into();
+        store.upsert(&r).unwrap();
+
+        let empty = HashSet::new();
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &empty, 0.5, 10, 3)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        assert_eq!(got.findings.len(), 1, "the pass's finding is persisted mid-run");
+        assert_eq!(got.cost_usd, 0.5);
+        assert_eq!(got.usage.input_tokens, 10);
+
+        // Re-delivery of the same id is idempotent (no duplicate), cost still accrues.
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &empty, 0.5, 0, 0)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        assert_eq!(got.findings.len(), 1, "duplicate id is not re-added");
+        assert_eq!(got.cost_usd, 1.0, "cost still accumulates across passes");
+    }
+
+    #[test]
+    fn accumulate_findings_is_a_noop_once_the_run_is_not_running() {
+        // The terminal `analysis-completed` event owns the authoritative deduped set; a
+        // late category event must never re-inject findings into a finalized run.
+        let (store, _tmp) = store();
+        store.upsert(&run("done", vec![])).unwrap(); // helper builds a `completed` run
+        let empty = HashSet::new();
+        store
+            .accumulate_findings("done", vec![finding("f1", "fp1")], &empty, 1.0, 0, 0)
+            .unwrap();
+        let got = store.get("done").unwrap();
+        assert!(got.findings.is_empty(), "no incremental write once not running");
+        assert_eq!(got.cost_usd, 0.0);
+    }
+
+    #[test]
+    fn accumulate_findings_applies_cross_run_dismissed_history() {
+        let (store, _tmp) = store();
+        let mut r = run("r1", vec![]);
+        r.status = "running".into();
+        store.upsert(&r).unwrap();
+        let mut dismissed = HashSet::new();
+        dismissed.insert("fp1".to_string());
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &dismissed, 0.0, 0, 0)
+            .unwrap();
+        assert_eq!(
+            store.get_finding("r1", "f1").unwrap().status,
+            "dismissed",
+            "a re-surfaced, previously-dismissed finding stays dismissed mid-run"
         );
     }
 

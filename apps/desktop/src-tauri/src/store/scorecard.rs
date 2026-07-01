@@ -236,6 +236,46 @@ impl ScorecardStore {
         Ok(run)
     }
 
+    /// Merge one dimension pass's reading into a still-`running` run so a cancel or
+    /// crash keeps the grades already paid for. A no-op once the run leaves `running`:
+    /// the terminal `scorecard-completed` event is authoritative. A reading whose id is
+    /// already present is skipped (idempotent re-delivery); in-run lifecycle (a reading
+    /// hardened live during this run) is preserved by fingerprint. Cost/usage accumulate
+    /// so a cancelled run still shows what it spent (the terminal event overwrites these
+    /// totals when the run completes cleanly).
+    pub fn accumulate_reading(
+        &self,
+        run_id: &str,
+        reading: StoredReading,
+        cost_usd: f64,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) -> Result<(), String> {
+        self.mutate(run_id, |run| {
+            if run.status != "running" {
+                return;
+            }
+            run.cost_usd += cost_usd;
+            run.usage.input_tokens += input_tokens;
+            run.usage.output_tokens += output_tokens;
+            if run.readings.iter().any(|r| r.id == reading.id) {
+                return;
+            }
+            let mut reading = reading;
+            if let Some((status, link)) = run
+                .readings
+                .iter()
+                .find(|r| r.fingerprint == reading.fingerprint && r.status != "open")
+                .map(|r| (r.status.clone(), r.linked_task_id.clone()))
+            {
+                reading.status = status;
+                reading.linked_task_id = link;
+            }
+            run.readings.push(reading);
+        })
+        .map(|_| ())
+    }
+
     /// Atomically link a reading to a task: under ONE lock, if the reading is already
     /// linked return [`LinkOutcome::AlreadyLinked`] (the caller discards its freshly-
     /// minted task and returns the existing one); otherwise stamp it `converted` +
@@ -457,6 +497,35 @@ mod tests {
         assert!(store
             .set_reading_status("nope", "f1", "converted", None)
             .is_err());
+    }
+
+    #[test]
+    fn accumulate_reading_persists_mid_run_and_is_noop_once_completed() {
+        let (store, _tmp) = store();
+        let mut r = run("r1", vec![]);
+        r.status = "running".into();
+        store.upsert(&r).unwrap();
+
+        store
+            .accumulate_reading("r1", reading("d1", "fp1"), 0.4, 5, 2)
+            .unwrap();
+        let got = store.get("r1").unwrap();
+        assert_eq!(got.readings.len(), 1, "the dimension's grade is persisted mid-run");
+        assert_eq!(got.cost_usd, 0.4);
+        assert_eq!(got.usage.input_tokens, 5);
+
+        // Re-delivery of the same id is idempotent.
+        store
+            .accumulate_reading("r1", reading("d1", "fp1"), 0.0, 0, 0)
+            .unwrap();
+        assert_eq!(store.get("r1").unwrap().readings.len(), 1);
+
+        // A completed run is authoritative — no incremental accumulation.
+        store.upsert(&run("done", vec![])).unwrap();
+        store
+            .accumulate_reading("done", reading("d2", "fp2"), 1.0, 0, 0)
+            .unwrap();
+        assert!(store.get("done").unwrap().readings.is_empty());
     }
 
     #[test]

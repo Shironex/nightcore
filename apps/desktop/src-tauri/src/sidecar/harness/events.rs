@@ -166,13 +166,37 @@ pub(crate) async fn handle_harness_event(app: &AppHandle, event_type: &str, even
                 .get("category")
                 .and_then(Value::as_str)
                 .unwrap_or("");
-            let findings = event
+            let cost = event.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0);
+            let usage = event.get("usage");
+            let token = |key: &str| {
+                usage
+                    .and_then(|u| u.get(key))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            // Persist this lens's findings into the running scan so a cancel/crash keeps
+            // them; compute the cross-run dismissed set BEFORE the mutate (both lock the
+            // store). A no-op once the scan has left `running`.
+            let parsed: Vec<StoredConventionFinding> = event
                 .get("findings")
                 .and_then(Value::as_array)
-                .map(Vec::len)
-                .unwrap_or(0);
-            let cost = event.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0);
-            tracing::info!(target: "nightcore", run_id, category, findings, cost_usd = cost, "harness lens completed");
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(StoredConventionFinding::from_wire)
+                        .collect()
+                })
+                .unwrap_or_default();
+            let count = parsed.len();
+            let dismissed = harness_store.dismissed_finding_fingerprints(Some(run_id));
+            let _ = harness_store.accumulate_findings(
+                run_id,
+                parsed,
+                &dismissed,
+                cost,
+                token("inputTokens"),
+                token("outputTokens"),
+            );
+            tracing::info!(target: "nightcore", run_id, category, findings = count, cost_usd = cost, "harness lens completed");
         }
         "harness-synthesis-started" => {
             // Persist the synthesizing flag so a reload during the (serial,

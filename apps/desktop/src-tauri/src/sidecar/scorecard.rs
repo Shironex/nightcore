@@ -338,6 +338,24 @@ pub(crate) async fn handle_scorecard_event(app: &AppHandle, event_type: &str, ev
                 .and_then(Value::as_str)
                 .unwrap_or("-");
             let cost = event.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0);
+            let usage = event.get("usage");
+            let token = |key: &str| {
+                usage
+                    .and_then(|u| u.get(key))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            // Persist this dimension's grade into the running run so a cancel/crash keeps
+            // the grades already paid for; a no-op once the run has left `running`.
+            if let Some(reading) = event.get("reading").and_then(StoredReading::from_wire) {
+                let _ = scorecard_store.accumulate_reading(
+                    run_id,
+                    reading,
+                    cost,
+                    token("inputTokens"),
+                    token("outputTokens"),
+                );
+            }
             tracing::info!(target: "nightcore", run_id, dimension, grade, cost_usd = cost, "scorecard dimension completed");
         }
         _ => {}
