@@ -53,6 +53,64 @@ pub fn is_under(base: &Path, candidate: &Path) -> bool {
     cand.len() > base.len() && cand[..base.len()] == base[..]
 }
 
+/// Validate a user-supplied branch or base ref before it is spliced into a `git`
+/// argument list. The create dialog's branch picker feeds `task.branch` /
+/// `task.base_branch` straight into `git worktree add` / `checkout` / `merge` /
+/// `branch -D` as positionals, so a value beginning with `-` (`-D`, `--all`,
+/// `--orphan`, `--detach`, …) is parsed by git as an OPTION rather than a ref — the
+/// injection this guards against. Names that are merely malformed (`..`, whitespace,
+/// control chars, `~^:?*[\`, empty components, `.lock` suffixes, …) are rejected too,
+/// so an unusual name fails loudly here instead of silently breaking allocation,
+/// merge, or status.
+///
+/// A conservative subset of `git check-ref-format`, kept PURE + unit-tested (the
+/// module's convention) rather than shelling out — version-independent and needing no
+/// repo. Paired with the `--end-of-options` separator every ref-taking git call in
+/// this module now carries, the option-injection hole is closed at ingestion AND at
+/// each call site (defence in depth).
+pub fn validate_ref(name: &str) -> Result<(), String> {
+    let reject = |why: &str| Err(format!("invalid branch/base name {name:?}: {why}"));
+    if name.is_empty() {
+        return reject("must not be empty");
+    }
+    // The core of the vulnerability: a leading '-' makes git read the value as an
+    // OPTION (`-D`, `--all`, `--orphan`, …) instead of a ref.
+    if name.starts_with('-') {
+        return reject("must not start with '-' (git parses it as an option, not a ref)");
+    }
+    if name == "@" {
+        return reject("must not be the single character '@'");
+    }
+    if name.ends_with('/') || name.ends_with('.') {
+        return reject("must not end with '/' or '.'");
+    }
+    if name.contains("..") || name.contains("@{") || name.contains("//") {
+        return reject("must not contain '..', '@{', or '//'");
+    }
+    for ch in name.chars() {
+        if ch.is_control() || ch == ' ' {
+            return reject("must not contain whitespace or control characters");
+        }
+        if matches!(ch, '~' | '^' | ':' | '?' | '*' | '[' | '\\') {
+            return reject("must not contain any of: ~ ^ : ? * [ \\");
+        }
+    }
+    // Per-component (slash-separated) git ref rules: no component may be empty, begin
+    // with '.', or end with '.lock'.
+    for comp in name.split('/') {
+        if comp.is_empty() {
+            return reject("must not have an empty path component (leading/trailing/double '/')");
+        }
+        if comp.starts_with('.') {
+            return reject("no path component may start with '.'");
+        }
+        if comp.ends_with(".lock") {
+            return reject("no path component may end with '.lock'");
+        }
+    }
+    Ok(())
+}
+
 /// Run a git subcommand in `repo`, returning trimmed stdout on success or the
 /// trimmed stderr as the error.
 fn git(repo: &Path, args: &[&str]) -> Result<String, String> {
@@ -92,11 +150,16 @@ pub fn allocate(project_path: &Path, task_id: &str) -> Result<PathBuf, String> {
 
     // If the branch already exists (a prior run we kept for inspection), check it
     // out into a fresh worktree instead of creating it.
-    let branch_exists = git(project_path, &["rev-parse", "--verify", "--quiet", &branch]).is_ok();
+    let branch_exists = git(
+        project_path,
+        &["rev-parse", "--verify", "--quiet", "--end-of-options", &branch],
+    )
+    .is_ok();
 
     let args: Vec<&str> = if branch_exists {
-        vec!["worktree", "add", &dir_str, &branch]
+        vec!["worktree", "add", &dir_str, "--end-of-options", &branch]
     } else {
+        // `-b <branch>` consumes `branch` as the flag's argument (never as an option).
         vec!["worktree", "add", &dir_str, "-b", &branch]
     };
     // Concurrency #3: two worktree-mode launches racing the auto-loop both pass the
@@ -127,13 +190,22 @@ pub fn allocate_branch(
     std::fs::create_dir_all(worktrees_base(project_path))
         .map_err(|e| format!("failed to create worktrees base: {e}"))?;
     let dir_str = dir.to_string_lossy().to_string();
-    let branch_exists = git(project_path, &["rev-parse", "--verify", "--quiet", branch]).is_ok();
+    // Reject a picker-supplied branch git would read as an OPTION (leading `-`) or
+    // that is not a legal ref, before it reaches any `git` argument list.
+    validate_ref(branch)?;
+    let branch_exists = git(
+        project_path,
+        &["rev-parse", "--verify", "--quiet", "--end-of-options", branch],
+    )
+    .is_ok();
     let args: Vec<&str> = if branch_exists {
         // Resume an existing branch in a fresh worktree (base is irrelevant).
-        vec!["worktree", "add", &dir_str, branch]
+        vec!["worktree", "add", &dir_str, "--end-of-options", branch]
     } else {
-        // Create `branch` off `base`.
-        vec!["worktree", "add", &dir_str, "-b", branch, base]
+        // Create `branch` off `base`. `-b <branch>` consumes `branch` as the flag's
+        // argument; `--end-of-options` guards the trailing `base` positional.
+        validate_ref(base)?;
+        vec!["worktree", "add", &dir_str, "-b", branch, "--end-of-options", base]
     };
     git_worktree_add_retrying(project_path, &args)?;
     Ok(dir)
@@ -294,14 +366,18 @@ pub fn merge_branch(
     branch: &str,
     base: &str,
 ) -> Result<MergeOutcome, String> {
+    // Reject a branch/base git would read as an OPTION or that is not a legal ref
+    // before either reaches a `git` argument list.
+    validate_ref(base)?;
+    validate_ref(branch)?;
     // The base branch must be checked out to receive the merge. Refuse if the main
     // tree is dirty so we never merge over uncommitted work.
     if !is_worktree_clean(project_path)? {
         return Err("base working tree is dirty; commit or stash before merging".to_string());
     }
-    git(project_path, &["checkout", base])?;
+    git(project_path, &["checkout", "--end-of-options", base])?;
 
-    match git(project_path, &["merge", "--no-edit", branch]) {
+    match git(project_path, &["merge", "--no-edit", "--end-of-options", branch]) {
         Ok(_) => Ok(MergeOutcome::Merged),
         Err(merge_err) => {
             // A merge failure is only a *conflict* when it left unmerged paths in the
@@ -364,13 +440,19 @@ pub fn delete_branch_named(project_path: &Path, branch: &str) -> Result<(), Stri
     if branch.is_empty() {
         return Ok(());
     }
+    // Reject a branch git would read as an OPTION (leading `-`) or that is not a legal
+    // ref before it reaches `rev-parse`/`branch -D`.
+    validate_ref(branch)?;
     if branch == "HEAD" || branch == base_branch(project_path) {
         return Err(format!(
             "refusing to delete branch {branch} — it is the project's base branch"
         ));
     }
-    if git_status_success(project_path, &["rev-parse", "--verify", "--quiet", branch]) {
-        git(project_path, &["branch", "-D", branch])?;
+    if git_status_success(
+        project_path,
+        &["rev-parse", "--verify", "--quiet", "--end-of-options", branch],
+    ) {
+        git(project_path, &["branch", "-D", "--end-of-options", branch])?;
     }
     Ok(())
 }
@@ -475,7 +557,10 @@ pub fn worktree_status(dir: &Path, task_id: &str, base: &str) -> WorktreeStatus 
         porcelain.lines().count() as u32
     };
     let range = format!("{base}...HEAD");
-    let (behind_of_base, ahead_of_base) = git(dir, &["rev-list", "--left-right", "--count", &range])
+    let (behind_of_base, ahead_of_base) = git(
+        dir,
+        &["rev-list", "--left-right", "--count", "--end-of-options", &range],
+    )
         .ok()
         .and_then(|s| parse_left_right_count(&s))
         .unwrap_or((0, 0));
@@ -690,7 +775,11 @@ pub struct DiffFileStat {
 fn diff_numstat(repo: &Path, range: &str) -> (Vec<DiffFileStat>, u32, u32) {
     // `--no-renames` so a rename is a clean Delete+Add pair (one path per row) rather
     // than git's `old => new` form, which would not key cleanly.
-    let out = git(repo, &["diff", "--numstat", "--no-renames", range]).unwrap_or_default();
+    let out = git(
+        repo,
+        &["diff", "--numstat", "--no-renames", "--end-of-options", range],
+    )
+    .unwrap_or_default();
     let mut files = Vec::new();
     let mut add_total = 0;
     let mut del_total = 0;
@@ -763,7 +852,10 @@ pub struct MergePreview {
 /// Preview merging `branch` into `base` — READ-ONLY (never mutates the working tree).
 pub fn merge_preview(project_path: &Path, branch: &str, base: &str) -> MergePreview {
     let range = format!("{base}...{branch}");
-    let (behind, ahead) = git(project_path, &["rev-list", "--left-right", "--count", &range])
+    let (behind, ahead) = git(
+        project_path,
+        &["rev-list", "--left-right", "--count", "--end-of-options", &range],
+    )
         .ok()
         .and_then(|s| parse_left_right_count(&s))
         .unwrap_or((0, 0));
@@ -810,7 +902,14 @@ enum ConflictDetection {
 /// old git lacking the flag) = unknown.
 fn detect_merge_conflicts(project_path: &Path, base: &str, branch: &str) -> ConflictDetection {
     let Ok(out) = crate::platform::git_command(project_path)
-        .args(["merge-tree", "--write-tree", "--name-only", base, branch])
+        .args([
+            "merge-tree",
+            "--write-tree",
+            "--name-only",
+            "--end-of-options",
+            base,
+            branch,
+        ])
         .output()
     else {
         return ConflictDetection::Unknown;
@@ -887,7 +986,7 @@ pub fn worktree_diff(dir: &Path, base: &str) -> WorktreeDiff {
     // `--no-renames` keeps numstat ⇄ name-status keyed on a single path per row (a
     // rename becomes a Delete+Add pair) so per-file stats join correctly.
     let mut stats: HashMap<String, (u32, u32)> = HashMap::new();
-    if let Ok(numstat) = git(dir, &["diff", "--numstat", "--no-renames", base]) {
+    if let Ok(numstat) = git(dir, &["diff", "--numstat", "--no-renames", "--end-of-options", base]) {
         for line in numstat.lines() {
             let mut f = line.splitn(3, '\t');
             let add = f.next().unwrap_or("0").parse::<u32>().unwrap_or(0);
@@ -902,7 +1001,7 @@ pub fn worktree_diff(dir: &Path, base: &str) -> WorktreeDiff {
     let mut files = Vec::new();
     let mut add_total = 0;
     let mut del_total = 0;
-    if let Ok(name_status) = git(dir, &["diff", "--name-status", "--no-renames", base]) {
+    if let Ok(name_status) = git(dir, &["diff", "--name-status", "--no-renames", "--end-of-options", base]) {
         for line in name_status.lines() {
             let mut f = line.splitn(2, '\t');
             let code = f.next().unwrap_or("");
@@ -1545,5 +1644,112 @@ mod tests {
             MergeOutcome::Merged
         );
         assert!(repo.join("f.txt").exists(), "merge integrated the file");
+    }
+
+    #[test]
+    fn validate_ref_accepts_normal_branch_names() {
+        for ok in [
+            "main",
+            "nc/abc-123",
+            "feature/foo",
+            "release-2.0",
+            "user/fix.bug",
+            "a_b-c/d",
+        ] {
+            assert!(
+                validate_ref(ok).is_ok(),
+                "expected {ok:?} to be a valid ref: {:?}",
+                validate_ref(ok)
+            );
+        }
+    }
+
+    #[test]
+    fn validate_ref_rejects_option_injection_and_malformed_names() {
+        // A leading '-' is the core hole: git would parse these as OPTIONS, not refs.
+        for bad in ["-D", "--all", "--detach", "--orphan", "-"] {
+            assert!(
+                validate_ref(bad).is_err(),
+                "a leading-dash name {bad:?} must be rejected (git reads it as an option)"
+            );
+        }
+        // …and other names that are simply not legal git refs.
+        for bad in [
+            "",           // empty
+            "@",          // the single '@'
+            "a..b",       // '..'
+            "a b",        // whitespace
+            "a\tb",       // control char
+            "a~b",        // '~'
+            "a^b",        // '^'
+            "a:b",        // ':'
+            "a?b",        // '?'
+            "a*b",        // '*'
+            "a[b",        // '['
+            "a\\b",       // backslash
+            "a@{b",       // '@{'
+            "/leading",   // leading '/'
+            "trailing/",  // trailing '/'
+            "double//sl", // '//'
+            "trailing.",  // trailing '.'
+            ".hidden",    // component starts with '.'
+            "foo/.bar",   // later component starts with '.'
+            "foo.lock",   // '.lock' suffix
+            "a/b.lock",   // '.lock' on a later component
+        ] {
+            assert!(
+                validate_ref(bad).is_err(),
+                "malformed ref {bad:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn allocate_branch_rejects_a_dash_branch_before_touching_git() {
+        // A picker value that git would parse as an option must be refused up front,
+        // never spliced into `git worktree add` (defence in depth with the ingestion
+        // filter and the `--end-of-options` separators).
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        let base = base_branch(&repo);
+        let err = allocate_branch(&repo, "task-1", "-D", &base)
+            .expect_err("a dash-branch must be rejected");
+        assert!(err.contains("invalid branch/base name"), "err was: {err}");
+        // Nothing was allocated.
+        assert!(
+            list_worktree_task_ids(&repo).is_empty(),
+            "a rejected allocate must not create a worktree"
+        );
+
+        // A hostile BASE (used only when the branch is new) is rejected too.
+        let err_base = allocate_branch(&repo, "task-2", "feature/ok", "--all")
+            .expect_err("a dash-base must be rejected");
+        assert!(err_base.contains("invalid branch/base name"), "err: {err_base}");
+    }
+
+    #[test]
+    fn merge_and_delete_reject_dash_refs() {
+        let Some((_tmp, repo)) = temp_repo() else {
+            return;
+        };
+        let base = base_branch(&repo);
+        assert!(
+            merge_branch(&repo, "--all", &base).is_err(),
+            "a dash-branch merge must be rejected"
+        );
+        assert!(
+            merge_branch(&repo, "feature/ok", "-D").is_err(),
+            "a dash-base merge must be rejected"
+        );
+        assert!(
+            delete_branch_named(&repo, "-D").is_err(),
+            "a dash-branch delete must be rejected"
+        );
+        // An empty branch stays a no-op (not an error) — callers rely on that.
+        assert!(
+            delete_branch_named(&repo, "").is_ok(),
+            "an empty branch is a no-op, not an error"
+        );
     }
 }
