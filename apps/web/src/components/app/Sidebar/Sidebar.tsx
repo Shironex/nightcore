@@ -91,9 +91,18 @@ export function Sidebar({
 
         {switcherOpen && (
           <div
-            className="absolute left-3 right-3 top-full z-40 mt-1.5 rounded-xl border border-border bg-popover p-1.5 shadow-2xl"
-            style={{ animation: 'nc-rise .14s ease' }}
+            className={
+              collapsed
+                ? 'absolute left-full top-0 z-40 ml-2 w-64 rounded-xl border border-border bg-popover p-1.5 shadow-2xl'
+                : 'absolute left-3 right-3 top-full z-40 mt-1.5 rounded-xl border border-border bg-popover p-1.5 shadow-2xl'
+            }
+            style={{ animation: collapsed ? 'nc-slide .14s ease' : 'nc-rise .14s ease' }}
           >
+            {collapsed && (
+              <div className="px-2.5 pb-1 pt-1 font-mono text-[9.5px] uppercase tracking-[0.18em] text-muted-foreground/70">
+                Projects
+              </div>
+            )}
             {projects.length === 0 && (
               <div className="px-2.5 py-2 text-[12px] text-muted-foreground">
                 No projects yet.
