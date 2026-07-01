@@ -14,6 +14,7 @@ import { createHash } from 'node:crypto';
 import * as path from 'node:path';
 import type {
   Config,
+  HarnessProposal,
   NightcoreEvent,
   ProposedArtifact,
   RepoProfile,
@@ -23,6 +24,8 @@ import type {
 import {
   ArtifactKindSchema,
   ArtifactWriteModeSchema,
+  HarnessProposalKindSchema,
+  HarnessProposalSchema,
   ProposedArtifactSchema,
   type ConventionFinding,
 } from '@nightcore/contracts';
@@ -47,6 +50,8 @@ type StartHarnessScan = Extract<SurfaceCommand, { type: 'start-harness-scan' }>;
 const DEFAULT_MAX_TURNS = 40;
 /** Cap on proposed artifacts so a runaway pass can't flood the UI. */
 const MAX_ARTIFACTS = 24;
+/** Cap on task-shaped proposals so a runaway pass can't flood the board convert UI. */
+const MAX_PROPOSALS = 24;
 
 const EMPTY_USAGE: TokenUsage = {
   inputTokens: 0,
@@ -79,6 +84,8 @@ export interface SynthesizeHarnessArgs {
 
 export interface SynthesizeHarnessResult {
   artifacts: ProposedArtifact[];
+  /** The task-shaped proposals the user converts into board tasks. */
+  proposals: HarnessProposal[];
   usage: TokenUsage;
   costUsd: number;
   error?: string;
@@ -93,7 +100,7 @@ type SessionFailedReason = Extract<
 /** The strict-JSON reminder appended to the ONE corrective synthesis retry — the
  *  synthesis analog of the per-lens `retryReminderSuffix`. */
 const SYNTHESIS_RETRY_REMINDER =
-  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON array of artifacts, nothing else.';
+  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON object { "artifacts": [...], "proposals": [...] }, nothing else.';
 
 /** The terminal outcome of one synthesis session spin. */
 interface SynthesisSessionOutcome {
@@ -115,7 +122,13 @@ export async function synthesizeHarness(
   args: SynthesizeHarnessArgs,
 ): Promise<SynthesizeHarnessResult> {
   if (args.isCancelled?.()) {
-    return { artifacts: [], usage: { ...EMPTY_USAGE }, costUsd: 0, error: 'cancelled' };
+    return {
+      artifacts: [],
+      proposals: [],
+      usage: { ...EMPTY_USAGE },
+      costUsd: 0,
+      error: 'cancelled',
+    };
   }
 
   const usage: TokenUsage = { ...EMPTY_USAGE };
@@ -185,11 +198,12 @@ export async function synthesizeHarness(
 
   const first = await runSession(basePrompt);
   if (args.isCancelled?.()) {
-    return { artifacts: [], usage, costUsd, error: 'cancelled' };
+    return { artifacts: [], proposals: [], usage, costUsd, error: 'cancelled' };
   }
   if (first.result === undefined) {
     return {
       artifacts: [],
+      proposals: [],
       usage,
       costUsd,
       error:
@@ -198,7 +212,7 @@ export async function synthesizeHarness(
     };
   }
 
-  let parsed = parseProposedArtifacts(first.result, args.command.projectPath);
+  let parsed = parseSynthesis(first.result, args.command.projectPath);
   if (parsed.error !== undefined) {
     // One corrective retry with the strict-JSON reminder (mirrors the lens passes).
     args.logger?.debug('harness synthesis produced no JSON; retrying', {
@@ -206,16 +220,17 @@ export async function synthesizeHarness(
     });
     const retry = await runSession(`${basePrompt}${SYNTHESIS_RETRY_REMINDER}`);
     if (args.isCancelled?.()) {
-      return { artifacts: [], usage, costUsd, error: 'cancelled' };
+      return { artifacts: [], proposals: [], usage, costUsd, error: 'cancelled' };
     }
     if (retry.result !== undefined) {
-      parsed = parseProposedArtifacts(retry.result, args.command.projectPath);
+      parsed = parseSynthesis(retry.result, args.command.projectPath);
     }
     // A retry that also failed keeps the first parse error (degrade to no proposals).
   }
 
   return {
     artifacts: parsed.artifacts,
+    proposals: parsed.proposals,
     usage,
     costUsd,
     ...(parsed.error !== undefined ? { error: parsed.error } : {}),
@@ -333,8 +348,39 @@ function artifactOutputContract(profile: RepoProfile): string {
         ].join('\n')
       : 'This repo has no monorepo/eslint host: prefer an `agent-contract` plus minimal rules; do NOT scaffold a full plugin package or a `custom-lint-plugin` bundle.',
     'CLAUDE.md / AGENTS.md guardrail docs use `agent-contract` + `writeMode:"merge-section"`.',
-    'Every `targetPath` MUST be repo-relative (no leading `/`, no `..`). Return [] if',
-    `there is nothing worth proposing. Propose at most ${MAX_ARTIFACTS} artifacts.`,
+    'Every `targetPath` MUST be repo-relative (no leading `/`, no `..`).',
+    `Propose at most ${MAX_ARTIFACTS} artifacts.`,
+    '',
+    proposalOutputContract(eslintAllowed),
+  ].join('\n');
+}
+
+/** The JSON contract for the task-shaped proposals. Proposals ride ALONGSIDE the
+ *  artifacts in an object envelope; a bare artifacts array is still accepted (→ no
+ *  proposals) so an older-style answer never fails the parse. */
+function proposalOutputContract(eslintAllowed: boolean): string {
+  return [
+    'Return your whole answer as a JSON OBJECT with two arrays (no prose, no fences):',
+    '{ "artifacts": [ …the artifacts above… ], "proposals": [ …see below… ] }',
+    '',
+    'A PROPOSAL is a task-shaped recommendation the user turns into ONE board task. Each is:',
+    '{',
+    '  "kind": "apply-artifacts | agent-task",',
+    '  "title": "one-line headline (becomes the task title)",',
+    '  "description": "what to do, concretely (becomes the task body)",',
+    '  "rationale": "why it matters / what an agent breaks without it (optional)",',
+    '  "artifactIds": ["ids of the artifacts this bundles"]  // apply-artifacts ONLY,',
+    '  "prompt": "the instruction for the agent to perform"   // agent-task ONLY,',
+    '  "verifyCommand": "a command that MUST pass when done, e.g. npx eslint ."  // agent-task, optional,',
+    '  "harnessCheck": { "name": "…", "kind": "lint-plugin", "command": "npx eslint ." }  // optional',
+    '}',
+    'Use `apply-artifacts` for changes that are safe to write straight to disk (new docs,',
+    'a new lint config file, a generated plugin BUNDLE): set `artifactIds` to the ids of',
+    'the artifacts that ship together (group members share one proposal).',
+    eslintAllowed
+      ? 'Use `agent-task` for changes that must NOT be a blind write — WIRING the generated plugin into `eslint.config.*`, editing `package.json` scripts, adding a pre-commit hook: describe the change in `prompt`, and set `verifyCommand` to the command that proves it works (e.g. the lint command). These become worktree Build tasks a human reviews as a diff — never a direct file write.'
+      : 'This repo has no eslint host: prefer `apply-artifacts` proposals for the docs/rules; use `agent-task` only for a genuinely execution-adjacent change.',
+    `Return "proposals": [] if there is nothing worth proposing. At most ${MAX_PROPOSALS} proposals.`,
   ].join('\n');
 }
 
@@ -382,6 +428,143 @@ export function parseProposedArtifacts(
     if (artifact !== undefined) artifacts.push(artifact);
   }
   return { artifacts };
+}
+
+/** The combined result of parsing a synthesis answer: the file-level artifacts AND the
+ *  task-shaped proposals. `error` is set only when NO JSON could be extracted at all. */
+export interface ParsedSynthesis {
+  artifacts: ProposedArtifact[];
+  proposals: HarnessProposal[];
+  error?: string;
+}
+
+/**
+ * Parse + GROUND a synthesis answer into artifacts AND proposals. Tolerant of both the
+ * object envelope `{ artifacts, proposals }` and a bare artifacts array (→ no proposals),
+ * so an older-style answer still yields artifacts. Proposals are grounded against the
+ * PARSED artifacts: an `apply-artifacts` proposal keeps only `artifactIds` that survived
+ * artifact grounding and is dropped if none remain (never references a rejected/injected
+ * artifact); an `agent-task` proposal requires a non-empty `prompt`. Returns `error` only
+ * when no JSON is present at all (drives the single corrective retry).
+ */
+export function parseSynthesis(raw: string, projectPath: string): ParsedSynthesis {
+  const parsed = extractJson(raw);
+  if (parsed === undefined) {
+    return { artifacts: [], proposals: [], error: 'no JSON in synthesis output' };
+  }
+  const artifacts: ProposedArtifact[] = [];
+  for (const item of toRawArray(parsed)) {
+    const artifact = coerceArtifact(item, projectPath);
+    if (artifact !== undefined) artifacts.push(artifact);
+  }
+  const knownArtifactIds = new Set(artifacts.map((a) => a.id));
+  const proposals: HarnessProposal[] = [];
+  for (const item of toProposalArray(parsed)) {
+    if (proposals.length >= MAX_PROPOSALS) break;
+    const proposal = coerceProposal(item, knownArtifactIds);
+    if (proposal !== undefined) proposals.push(proposal);
+  }
+  return { artifacts, proposals };
+}
+
+/** Pull the `proposals` array out of the object envelope; `[]` for a bare array or any
+ *  shape without one. */
+function toProposalArray(parsed: unknown): unknown[] {
+  if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    const proposals = (parsed as Record<string, unknown>).proposals;
+    if (Array.isArray(proposals)) return proposals;
+  }
+  return [];
+}
+
+/** Stable fingerprint for a proposal: `kind | targetSignature` — the sorted artifact ids
+ *  for an `apply-artifacts` bundle, or the verify command / prompt / title for an
+ *  `agent-task` (whatever most stably identifies the SAME recommendation across re-scans). */
+function proposalFingerprint(
+  kind: HarnessProposal['kind'],
+  artifactIds: string[],
+  agentBasis: string,
+): string {
+  const target =
+    kind === 'apply-artifacts' ? [...artifactIds].sort().join(',') : agentBasis.trim();
+  return createHash('sha1').update(`${kind}|${target}`).digest('hex').slice(0, 16);
+}
+
+/** Coerce + ground one raw model item into a {@link HarnessProposal}, or drop it. */
+function coerceProposal(
+  raw: unknown,
+  knownArtifactIds: Set<string>,
+): HarnessProposal | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+
+  const kindResult = HarnessProposalKindSchema.safeParse(r.kind);
+  if (!kindResult.success) return undefined;
+  const kind = kindResult.data;
+
+  const title = getString(r, 'title');
+  const description = getString(r, 'description');
+  if (title === undefined || description === undefined) return undefined;
+
+  const rationale = getString(r, 'rationale');
+  const confidence = getNumber(r, 'confidence');
+  // Keep only artifact ids that survived artifact grounding — a proposal can never
+  // reference a rejected/injected artifact.
+  const artifactIds = getStringArray(r, 'artifactIds').filter((id) =>
+    knownArtifactIds.has(id),
+  );
+  const prompt = getString(r, 'prompt');
+  const verifyCommand = getString(r, 'verifyCommand');
+
+  if (kind === 'apply-artifacts' && artifactIds.length === 0) return undefined;
+  if (kind === 'agent-task' && (prompt === undefined || prompt.trim().length === 0)) {
+    return undefined;
+  }
+
+  const harnessCheck = coerceHarnessCheck(r.harnessCheck);
+  const fingerprint = proposalFingerprint(
+    kind,
+    artifactIds,
+    verifyCommand ?? prompt ?? title,
+  );
+
+  const candidate: Record<string, unknown> = {
+    id: `${kind}-${fingerprint}`,
+    kind,
+    title,
+    description,
+    ...(rationale !== undefined ? { rationale } : {}),
+    artifactIds,
+    ...(prompt !== undefined ? { prompt } : {}),
+    ...(verifyCommand !== undefined ? { verifyCommand } : {}),
+    ...(harnessCheck !== undefined ? { harnessCheck } : {}),
+    ...(confidence !== undefined ? { confidence } : {}),
+    fingerprint,
+  };
+
+  const result = HarnessProposalSchema.safeParse(candidate);
+  return result.success ? result.data : undefined;
+}
+
+/** Coerce a suggested gauntlet check `{ name, kind, command }` — all three must be
+ *  non-empty strings, else the check is dropped (a partial suggestion is discarded, not
+ *  patched). This is only a SUGGESTION; arming stays human-gated in Rust. */
+function coerceHarnessCheck(raw: unknown): HarnessProposal['harnessCheck'] | undefined {
+  if (raw === null || typeof raw !== 'object') return undefined;
+  const r = raw as Record<string, unknown>;
+  const name = getString(r, 'name');
+  const kind = getString(r, 'kind');
+  const command = getString(r, 'command');
+  if (
+    name === undefined ||
+    kind === undefined ||
+    command === undefined ||
+    name.trim().length === 0 ||
+    command.trim().length === 0
+  ) {
+    return undefined;
+  }
+  return { name, kind, command };
 }
 
 /** Coerce + ground one raw model item into a {@link ProposedArtifact}. */

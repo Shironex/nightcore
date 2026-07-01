@@ -204,3 +204,71 @@ export const ProposedArtifactSchema = z.object({
   fingerprint: z.string(),
 });
 export type ProposedArtifact = z.infer<typeof ProposedArtifactSchema>;
+
+/**
+ * How a harness proposal reaches the repo. `apply-artifacts` bundles one or more
+ * {@link ProposedArtifact}s written straight to disk through the hardened `apply.rs`
+ * path (docs, lint configs at NEW paths, a plugin bundle). `agent-task` is a change
+ * that must NOT be a blind file write — wiring a plugin into `eslint.config.*`,
+ * pre-commit hooks, `package.json` scripts — so it converts to a worktree Build task
+ * an agent performs and a human reviews as a diff. The split is the security hinge:
+ * execution-adjacent work reaches sink-class targets WITHOUT weakening the apply-path
+ * denylist, because the human gate moves from "confirm a file write" to "review a
+ * worktree diff".
+ */
+export const HarnessProposalKindSchema = z.enum(['apply-artifacts', 'agent-task']);
+export type HarnessProposalKind = z.infer<typeof HarnessProposalKindSchema>;
+
+/**
+ * A Structure-Lock gauntlet check a proposal SUGGESTS arming once its work lands (an
+ * `apply-artifacts` plugin is applied, an `agent-task` diff is merged). This is a
+ * SUGGESTION shown to the user, never an authority: arming still goes through the
+ * human-gated `arm_harness_gauntlet_check` command (which writes `.nightcore/harness.json`
+ * itself), so a prompt-injected proposal can't silently install a gate. `kind` is a bare
+ * wire string (not an enum) so a future gauntlet kind never breaks deserialize; it is
+ * validated against the armable-kind allowlist at arm time in Rust.
+ */
+export const HarnessCheckSchema = z.object({
+  /** The check's `name` in the manifest (stable identity for merge-by-name). */
+  name: z.string(),
+  /** `lint-plugin` | `dependency-cruiser` | `coverage-threshold` (validated at arm time). */
+  kind: z.string(),
+  /** The shell command the gauntlet runs (e.g. `npx eslint .`). */
+  command: z.string(),
+});
+export type HarnessCheck = z.infer<typeof HarnessCheckSchema>;
+
+/**
+ * One task-shaped harness proposal — the unit the user CONVERTS into a board task
+ * (mirroring Insight's finding→task path), distinct from the file-level
+ * {@link ProposedArtifact}. Synthesis emits proposals alongside artifacts: each
+ * proposal is either an `apply-artifacts` bundle (referencing `artifactIds`) or an
+ * `agent-task` (carrying a `prompt` + optional `verifyCommand` gauntlet gate). The
+ * lifecycle (status/linked task) is owned by the Rust store, not here.
+ */
+export const HarnessProposalSchema = z.object({
+  /** Stable id assigned by the engine (convert/dismiss, UI keys). */
+  id: z.string(),
+  kind: HarnessProposalKindSchema,
+  /** One-line headline (becomes the converted task's title). */
+  title: z.string(),
+  /** What the proposal does, concretely (becomes the task body). */
+  description: z.string(),
+  /** Why it matters / what an agent breaks without it. */
+  rationale: z.string().optional(),
+  /** `apply-artifacts`: the artifact ids this proposal applies together as a bundle. */
+  artifactIds: z.array(z.string()).default([]),
+  /** `agent-task`: the Build-task prompt describing the change to make in a worktree. */
+  prompt: z.string().optional(),
+  /** `agent-task`: the machine-checkable done-command → the converted task's
+   *  `verify_command` (runs as a Structure-Lock check before the paid reviewer). */
+  verifyCommand: z.string().optional(),
+  /** The gauntlet check to SUGGEST arming once this proposal's work lands (human-gated). */
+  harnessCheck: HarnessCheckSchema.optional(),
+  /** Model self-rated confidence 0..1, when provided. */
+  confidence: z.number().optional(),
+  /** Stable fingerprint (kind + normalized target signature) for dedup + convert/dismiss
+   *  carry-forward across re-scans. */
+  fingerprint: z.string(),
+});
+export type HarnessProposal = z.infer<typeof HarnessProposalSchema>;

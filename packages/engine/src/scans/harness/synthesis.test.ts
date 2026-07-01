@@ -5,7 +5,11 @@ import type {
   ScanRunnerFactory,
   ScanSessionRunner,
 } from '../shared/scan-manager.js';
-import { parseProposedArtifacts, synthesizeHarness } from './synthesis.js';
+import {
+  parseProposedArtifacts,
+  parseSynthesis,
+  synthesizeHarness,
+} from './synthesis.js';
 
 /**
  * Focused coverage for the synthesis parse/ground helper — specifically the new
@@ -218,6 +222,119 @@ describe('synthesizeHarness — corrective retry', () => {
     expect(calls.n).toBe(2);
     expect(res.artifacts).toHaveLength(0);
     expect(res.error).toBeDefined();
+  });
+});
+
+describe('parseSynthesis — task-shaped proposals', () => {
+  /** A single valid artifact whose engine-assigned id we reuse in proposals. */
+  const ARTIFACT = {
+    kind: 'agent-contract',
+    title: 'Codify conventions',
+    description: 'Managed AGENTS.md section.',
+    targetPath: 'AGENTS.md',
+    writeMode: 'merge-section',
+    content: '## Conventions\n- x',
+  };
+  // The id the engine deterministically assigns this artifact (`kind-fingerprint`).
+  const ARTIFACT_ID = parseProposedArtifacts(
+    JSON.stringify([ARTIFACT]),
+    PROJECT,
+  ).artifacts[0]!.id;
+
+  test('parses artifacts AND proposals from the object envelope', () => {
+    const raw = JSON.stringify({
+      artifacts: [ARTIFACT],
+      proposals: [
+        {
+          kind: 'apply-artifacts',
+          title: 'Adopt the agent contract',
+          description: 'Write the AGENTS.md guardrail section.',
+          artifactIds: [ARTIFACT_ID],
+        },
+        {
+          kind: 'agent-task',
+          title: 'Wire the plugin into eslint.config.ts',
+          description: 'Register the generated plugin and enable its rules.',
+          prompt: 'Add the plugin to eslint.config.ts and enable the rule as error.',
+          verifyCommand: 'npx eslint .',
+          harnessCheck: {
+            name: 'component-folder-structure',
+            kind: 'lint-plugin',
+            command: 'npx eslint .',
+          },
+        },
+      ],
+    });
+    const { artifacts, proposals, error } = parseSynthesis(raw, PROJECT);
+    expect(error).toBeUndefined();
+    expect(artifacts).toHaveLength(1);
+    expect(proposals).toHaveLength(2);
+
+    const apply = proposals.find((p) => p.kind === 'apply-artifacts');
+    expect(apply?.artifactIds).toEqual([ARTIFACT_ID]);
+
+    const agent = proposals.find((p) => p.kind === 'agent-task');
+    expect(agent?.prompt).toContain('eslint.config.ts');
+    expect(agent?.verifyCommand).toBe('npx eslint .');
+    expect(agent?.harnessCheck?.command).toBe('npx eslint .');
+    // Every proposal carries a stable, distinct fingerprint + id.
+    expect(new Set(proposals.map((p) => p.fingerprint)).size).toBe(2);
+  });
+
+  test('drops an apply-artifacts proposal that references no surviving artifact', () => {
+    const raw = JSON.stringify({
+      artifacts: [ARTIFACT],
+      proposals: [
+        {
+          kind: 'apply-artifacts',
+          title: 'dangling',
+          description: 'references an artifact that was never proposed',
+          artifactIds: ['eslint-rule-deadbeefdeadbeef'],
+        },
+      ],
+    });
+    const { proposals } = parseSynthesis(raw, PROJECT);
+    expect(proposals).toHaveLength(0);
+  });
+
+  test('drops an agent-task proposal with no prompt', () => {
+    const raw = JSON.stringify({
+      artifacts: [],
+      proposals: [
+        { kind: 'agent-task', title: 'no prompt', description: 'x' },
+        { kind: 'agent-task', title: 'blank prompt', description: 'x', prompt: '   ' },
+      ],
+    });
+    const { proposals } = parseSynthesis(raw, PROJECT);
+    expect(proposals).toHaveLength(0);
+  });
+
+  test('drops a partial harnessCheck but keeps the proposal', () => {
+    const raw = JSON.stringify({
+      artifacts: [],
+      proposals: [
+        {
+          kind: 'agent-task',
+          title: 'wire it',
+          description: 'x',
+          prompt: 'do the wiring',
+          harnessCheck: { name: 'x', kind: 'lint-plugin' }, // no command → dropped
+        },
+      ],
+    });
+    const { proposals } = parseSynthesis(raw, PROJECT);
+    expect(proposals).toHaveLength(1);
+    expect(proposals[0]?.harnessCheck).toBeUndefined();
+  });
+
+  test('a bare artifacts array yields artifacts and zero proposals (back-compat)', () => {
+    const { artifacts, proposals, error } = parseSynthesis(
+      JSON.stringify([ARTIFACT]),
+      PROJECT,
+    );
+    expect(error).toBeUndefined();
+    expect(artifacts).toHaveLength(1);
+    expect(proposals).toHaveLength(0);
   });
 });
 

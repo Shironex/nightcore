@@ -380,6 +380,8 @@ pub enum NightcoreEvent {
     HarnessProposalsReady {
         run_id: String,
         artifacts: Vec<ProposedArtifact>,
+        #[serde(default)]
+        proposals: Vec<HarnessProposal>,
     },
     #[serde(rename_all = "camelCase")]
     HarnessScanCompleted {
@@ -387,12 +389,16 @@ pub enum NightcoreEvent {
         profile: RepoProfile,
         findings: Vec<ConventionFinding>,
         artifacts: Vec<ProposedArtifact>,
+        #[serde(default)]
+        proposals: Vec<HarnessProposal>,
         categories_run: Vec<ConventionCategory>,
         cost_usd: f64,
         #[serde(default)]
         duration_ms: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         usage: Option<SessionCompletedUsage>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        synthesis_error: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     HarnessScanFailed {
@@ -620,6 +626,43 @@ pub enum FindingSeverity {
     Medium,
     High,
     Critical,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessCheck {
+    pub name: String,
+    pub kind: String,
+    pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessProposal {
+    pub id: String,
+    pub kind: HarnessProposalKind,
+    pub title: String,
+    pub description: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rationale: Option<String>,
+    #[serde(default)]
+    pub artifact_ids: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub verify_command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub harness_check: Option<HarnessCheck>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub confidence: Option<f64>,
+    pub fingerprint: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum HarnessProposalKind {
+    ApplyArtifacts,
+    AgentTask,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

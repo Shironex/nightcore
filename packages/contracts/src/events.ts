@@ -8,6 +8,7 @@ import {
 import {
   ConventionCategorySchema,
   ConventionFindingSchema,
+  HarnessProposalSchema,
   ProposedArtifactSchema,
   RepoProfileSchema,
 } from './harness.js';
@@ -429,11 +430,14 @@ export const HarnessSynthesisStartedEvent = z.object({
 });
 
 /** The synthesis pass finished: the proposed harness artifacts stream in as a batch.
- *  Emitted after every convention pass, before the terminal event. */
+ *  Emitted after every convention pass, before the terminal event. `proposals` are the
+ *  task-shaped recommendations the user converts to board tasks; additive (`.default([])`)
+ *  so a scan that emits only artifacts — and any pre-proposals on-disk run — stays valid. */
 export const HarnessProposalsReadyEvent = z.object({
   type: z.literal('harness-proposals-ready'),
   runId: z.string(),
   artifacts: z.array(ProposedArtifactSchema),
+  proposals: z.array(HarnessProposalSchema).default([]),
 });
 
 /** The whole scan finished: the final profile, deduped convention findings, and
@@ -444,10 +448,17 @@ export const HarnessScanCompletedEvent = z.object({
   profile: RepoProfileSchema,
   findings: z.array(ConventionFindingSchema),
   artifacts: z.array(ProposedArtifactSchema),
+  /** The task-shaped proposals the user converts to board tasks. Additive
+   *  (`.default([])`) so an older on-disk run loads with an empty set — zero risk. */
+  proposals: z.array(HarnessProposalSchema).default([]),
   categoriesRun: z.array(ConventionCategorySchema),
   costUsd: z.number(),
   durationMs: z.number().nonnegative().default(0),
   usage: TokenUsageSchema.optional(),
+  /** Set when the synthesis pass could not produce proposals (parse/session failure):
+   *  the scan still completes with its findings, and the UI marks synthesis errored
+   *  rather than silently showing zero proposals. */
+  synthesisError: z.string().optional(),
 });
 
 /** The scan failed before completing (could not start, or aborted). Reuses the
