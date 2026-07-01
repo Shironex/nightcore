@@ -57,6 +57,21 @@ export function encodeEvent(event: NightcoreEvent): string {
 }
 
 /**
+ * Outbound event types that skip the full discriminated-union `safeParse` on the
+ * way to the wire. Membership requires BOTH: the variant is constructed only by
+ * typed translator code (`translateMessage`) — never from untrusted input, so its
+ * shape is already guaranteed by the `NightcoreEvent[]` return type — AND it is
+ * high-frequency. `assistant-delta` fires once per token-level
+ * `content_block_delta` (hundreds–thousands per assistant turn, for every live
+ * session concurrently); a union `safeParse` walks variants and revalidates every
+ * field per delta, which materially outweighs the `JSON.stringify` that follows
+ * and buys nothing the type system hasn't already guaranteed. Every other event
+ * is low-frequency (lifecycle/terminal), so full validation stays on there where
+ * the cost is negligible and an upstream contract gap actually matters.
+ */
+const FAST_PATH_EVENT_TYPES = new Set<NightcoreEvent['type']>(['assistant-delta']);
+
+/**
  * Buffers raw stdin bytes and yields complete NDJSON command lines. A command
  * split across chunks still parses: bytes accumulate until a newline closes a
  * line. Blank lines are skipped. Decoded with a streaming `TextDecoder` so a
@@ -106,6 +121,14 @@ export function createSidecar(
   onError: (message: string) => void = (m) => process.stderr.write(`${m}\n`),
 ): { handleLine: (line: string) => void } {
   manager.on((event) => {
+    // Fast-path the hot, typed-translator-constructed variants (see
+    // FAST_PATH_EVENT_TYPES): a full union safeParse would otherwise run once per
+    // streamed token and dominate per-delta CPU, revalidating a shape the type
+    // system already guarantees.
+    if (FAST_PATH_EVENT_TYPES.has(event.type)) {
+      sink(encodeEvent(event));
+      return;
+    }
     // Validate OUTBOUND too (the inbound command path already does): the engine
     // constructs events from SDK output, so an upstream gap could emit a
     // contract-invalid event that the Rust core / web then decode differently.
