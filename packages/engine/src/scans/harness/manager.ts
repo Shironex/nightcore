@@ -16,6 +16,7 @@
 import type {
   ConventionCategory,
   ConventionFinding,
+  HarnessProposal,
   ProposedArtifact,
   RepoProfile,
   SurfaceCommand,
@@ -225,6 +226,7 @@ export class HarnessManager extends ScanManager<
     );
     const synthesisStartedAt = Date.now();
     let artifacts: ProposedArtifact[] = [];
+    let proposals: HarnessProposal[] = [];
     const synthesis = await synthesizeHarness({
       profile: context.profile,
       findings: deduped,
@@ -240,7 +242,7 @@ export class HarnessManager extends ScanManager<
     totalCost += synthesis.costUsd;
     addUsage(totalUsage, synthesis.usage);
     this.deps.logger?.info(
-      `[harness] synthesis: completed — ${synthesis.artifacts.length} artifacts, ${fmtCost(synthesis.costUsd)}, ${fmtSecs(Date.now() - synthesisStartedAt)}`,
+      `[harness] synthesis: completed — ${synthesis.artifacts.length} artifacts, ${synthesis.proposals.length} proposals, ${fmtCost(synthesis.costUsd)}, ${fmtSecs(Date.now() - synthesisStartedAt)}`,
     );
     if (synthesis.error !== undefined) {
       this.deps.logger?.warn('harness synthesis produced no proposals', {
@@ -249,6 +251,7 @@ export class HarnessManager extends ScanManager<
       });
     } else {
       artifacts = synthesis.artifacts;
+      proposals = synthesis.proposals;
     }
 
     if (run.cancelled) {
@@ -260,6 +263,7 @@ export class HarnessManager extends ScanManager<
       type: 'harness-proposals-ready',
       runId: command.runId,
       artifacts,
+      proposals,
     });
 
     const durationMs = Date.now() - startedAt;
@@ -269,13 +273,19 @@ export class HarnessManager extends ScanManager<
       profile: context.profile,
       findings: deduped,
       artifacts,
+      proposals,
       categoriesRun: itemsRun,
       costUsd: totalCost,
       durationMs,
       usage: totalUsage,
+      // Surface a synthesis failure on the terminal event so the UI marks synthesis
+      // errored rather than silently showing zero proposals/artifacts.
+      ...(synthesis.error !== undefined && synthesis.error !== 'cancelled'
+        ? { synthesisError: synthesis.error }
+        : {}),
     });
     this.deps.logger?.info(
-      `[harness] scan completed — ${deduped.length} findings, ${artifacts.length} proposals across ${itemsRun.length} lenses, ${fmtCost(totalCost)}, ${fmtElapsed(durationMs)}`,
+      `[harness] scan completed — ${deduped.length} findings, ${artifacts.length} artifacts, ${proposals.length} proposals across ${itemsRun.length} lenses, ${fmtCost(totalCost)}, ${fmtElapsed(durationMs)}`,
     );
   }
 

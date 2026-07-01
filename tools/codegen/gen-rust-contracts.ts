@@ -277,6 +277,12 @@ const STRUCT_NAMES: Record<string, string> = {
     'RepoProfile',
   'confidence|content|dependsOn|description|fingerprint|group|groupTitle|id|kind|language|rationale|sourceFindings|targetPath|title|writeMode':
     'ProposedArtifact',
+  // A suggested Structure-Lock check carried on a harness proposal (arming stays
+  // human-gated in Rust; this is data, not authority).
+  'command|kind|name': 'HarnessCheck',
+  // One task-shaped harness proposal (apply-artifacts bundle | agent-task).
+  'artifactIds|confidence|description|fingerprint|harnessCheck|id|kind|prompt|rationale|title|verifyCommand':
+    'HarnessProposal',
 };
 
 /** Stable Rust enum name for a referenced/inline `z.enum`. Named enums in the
@@ -317,6 +323,7 @@ const ENUM_NAMES: Record<string, string> = {
   'lint-meta-rule|eslint-rule|eslint-plugin-file|eslint-config|agent-contract|custom-lint-plugin':
     'ArtifactKind',
   'create|merge-section': 'ArtifactWriteMode',
+  'apply-artifacts|agent-task': 'HarnessProposalKind',
 };
 
 function registerInlineEnum(
@@ -1105,6 +1112,35 @@ const EVENT_INPUTS: Record<string, unknown> = {
         fingerprint: 'agent-contract:AGENTS.md',
       },
     ],
+    proposals: [
+      {
+        id: 'hp-1',
+        kind: 'apply-artifacts',
+        title: 'Adopt the folder-per-component agent contract',
+        description: 'Write the AGENTS.md guardrail section codifying colocation.',
+        rationale: 'Durable agent-facing record so future runs respect it.',
+        artifactIds: ['pa-1'],
+        confidence: 0.8,
+        fingerprint: 'apply-artifacts:agent-contract:AGENTS.md',
+      },
+      {
+        id: 'hp-2',
+        kind: 'agent-task',
+        title: 'Wire the generated ESLint plugin into eslint.config.ts',
+        description:
+          'Register @acme/eslint-plugin in the flat config and enable its rules as errors.',
+        prompt:
+          'Add @acme/eslint-plugin to eslint.config.ts and enable component-folder-structure as error.',
+        verifyCommand: 'npx eslint .',
+        harnessCheck: {
+          name: 'component-folder-structure',
+          kind: 'lint-plugin',
+          command: 'npx eslint .',
+        },
+        confidence: 0.75,
+        fingerprint: 'agent-task:eslint-wiring',
+      },
+    ],
   },
   'harness-scan-completed': {
     type: 'harness-scan-completed',
@@ -1148,6 +1184,16 @@ const EVENT_INPUTS: Record<string, unknown> = {
         writeMode: 'merge-section',
         content: '## Conventions\n\n- Components are folder-per-component.\n',
         fingerprint: 'agent-contract:AGENTS.md',
+      },
+    ],
+    proposals: [
+      {
+        id: 'hp-1',
+        kind: 'apply-artifacts',
+        title: 'Adopt the folder-per-component agent contract',
+        description: 'Write the AGENTS.md guardrail section codifying colocation.',
+        artifactIds: ['pa-1'],
+        fingerprint: 'apply-artifacts:agent-contract:AGENTS.md',
       },
     ],
     categoriesRun: ['architecture', 'folder-structure', 'imports-boundaries'],
