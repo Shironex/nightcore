@@ -23,7 +23,7 @@ pub mod types;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use crate::task::Task;
 
@@ -101,6 +101,21 @@ fn seq_high_water(tasks: &HashMap<String, Task>) -> u64 {
 pub struct TaskStore {
     tasks: Mutex<HashMap<String, Task>>,
     dir: Mutex<PathBuf>,
+    /// Per-task write-serialization locks, keyed by task id.
+    ///
+    /// The read-modify-write-persist of one task must be serialized against
+    /// *other writes to the same task* (the C7 anti-clobber invariant), but that
+    /// serialization must NOT be shared with reads or writes of a *different* task.
+    /// The disk write (`write_file` → `sync_all`, a full fsync — single-digit to
+    /// tens of ms on a busy disk) used to run while the single global `tasks` lock
+    /// was held, so a slow write for one streaming task stalled `list()`/`get()`
+    /// and every other task's `mutate` behind it (head-of-line blocking under
+    /// `max_concurrency` up to 6). Splitting the write lock out per id keeps the
+    /// `tasks` map lock for the O(1) read-clone + insert only — never across the
+    /// fsync — while a task's persist is still serialized against concurrent
+    /// writers to that same id via its own [`Arc<Mutex<()>>`]. Different tasks hold
+    /// different locks, so they fsync in parallel.
+    write_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
     /// Monotonic source for the per-snapshot [`Task::seq`]. Bumped on every
     /// persist (`upsert`/`mutate_if`) so each emitted `nc:task` carries a strictly
     /// greater `seq` than the prior one — the web orders snapshots by it instead of
@@ -127,6 +142,7 @@ impl TaskStore {
         Self {
             tasks: Mutex::new(tasks),
             dir: Mutex::new(dir),
+            write_locks: Mutex::new(HashMap::new()),
             seq,
         }
     }
@@ -143,6 +159,12 @@ impl TaskStore {
             .store(seq_high_water(&reloaded), Ordering::Relaxed);
         *crate::sync::lock_or_recover(&self.tasks) = reloaded;
         *crate::sync::lock_or_recover(&self.dir) = dir;
+        // Drop the old project's per-task write locks — the new project's tasks get
+        // fresh locks on first write. This bounds the registry to the tasks seen in
+        // one project session rather than accumulating across every switch. An
+        // in-flight writer still holds its own `Arc`, so clearing the map only drops
+        // this store's reference, never a live lock.
+        crate::sync::lock_or_recover(&self.write_locks).clear();
     }
 
     /// The next monotonic [`Task::seq`] value. A pre-increment so the first stamp is
@@ -150,6 +172,19 @@ impl TaskStore {
     /// or legacy `0`).
     fn next_seq(&self) -> u64 {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// The write-serialization lock for `id`, created on first use. A caller locks
+    /// the returned `Arc<Mutex<()>>` for the whole read-modify-write-persist so two
+    /// writers to the *same* id can't interleave and clobber each other (C7), while
+    /// writers to *different* ids proceed in parallel. The registry mutex is held
+    /// only long enough to look up / insert the `Arc` — never across the write — so
+    /// obtaining a lock for task A never waits on task B's in-flight fsync.
+    fn write_lock_for(&self, id: &str) -> Arc<Mutex<()>> {
+        crate::sync::lock_or_recover(&self.write_locks)
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     /// Path to a task's JSON file under the current target dir. Rejects an id that
@@ -187,31 +222,47 @@ impl TaskStore {
     /// that's actually on disk. Bumping `updated_at` is the caller's responsibility
     /// (see [`mutate`](Self::mutate)).
     ///
-    /// Holds the `tasks` mutex across the whole write so that a concurrent
-    /// `mutate`/`upsert` on the same id can't interleave its read-modify-write
-    /// against this one (C7 / concurrency #2). The in-memory map is only updated
-    /// after the disk write succeeds, so a failed persist leaves the prior record
-    /// authoritative in memory rather than diverging from disk.
+    /// Serializes against a concurrent `mutate`/`upsert`/`remove` on the *same* id
+    /// via that id's [write lock](Self::write_lock_for) — NOT the global `tasks`
+    /// mutex — so the same-id read-modify-write can't interleave (C7 / concurrency
+    /// #2) while a *different* task's write (or a `list()`/`get()`) never blocks on
+    /// this one's fsync. The in-memory map is only updated after the disk write
+    /// succeeds, so a failed persist leaves the prior record authoritative in memory
+    /// rather than diverging from disk.
     pub fn upsert(&self, task: &Task) -> Result<Task, String> {
-        let mut guard = crate::sync::lock_or_recover(&self.tasks);
+        // Reject an unsafe id before touching the lock registry so a crafted id
+        // neither creates a write-lock entry nor reaches the filesystem join.
+        if !is_safe_task_id(&task.id) {
+            return Err(format!("invalid task id: {}", task.id));
+        }
+        // Serialize this write against concurrent writers to THIS id only.
+        let wlock = self.write_lock_for(&task.id);
+        let _write = crate::sync::lock_or_recover(&wlock);
+
         // Stamp a fresh monotonic seq on the persisted+stored snapshot so this write
         // (and the `nc:task` the caller emits from the returned value) orders after
         // every prior one. The caller MUST emit the returned task, not its input, so
         // the snapshot on the wire carries the assigned `seq`.
         let mut stamped = task.clone();
         stamped.seq = self.next_seq();
+        // The fsync runs holding only this id's write lock; the `tasks` map lock is
+        // NOT held, so a concurrent read or a different task's write never waits.
         self.write_file(&stamped)?;
-        guard.insert(stamped.id.clone(), stamped.clone());
+        // Publish to memory only after the disk write succeeds — the map lock is held
+        // for this O(1) insert alone.
+        crate::sync::lock_or_recover(&self.tasks).insert(stamped.id.clone(), stamped.clone());
         Ok(stamped)
     }
 
     /// Apply `f` to the current task, bump `updated_at`, then persist and store it
     /// atomically. Returns the updated task. Errors if the id is unknown.
     ///
-    /// The whole read-modify-write runs under one `tasks` lock acquisition (C7):
-    /// the read-clone, the mutation, the disk write, and the in-memory replace are
-    /// a single critical section, so the sidecar reader and a Tauri handler can no
-    /// longer each persist a full record and clobber the other's fields.
+    /// The whole read-modify-write is serialized on that id's
+    /// [write lock](Self::write_lock_for) (C7): the read-clone, the mutation, the
+    /// disk write, and the in-memory replace can't interleave with another writer to
+    /// the *same* id, so the sidecar reader and a Tauri handler can no longer each
+    /// persist a full record and clobber the other's fields. A write to a *different*
+    /// task holds a different lock and proceeds in parallel.
     pub fn mutate<F>(&self, id: &str, f: F) -> Result<Task, String>
     where
         F: FnOnce(&mut Task),
@@ -220,18 +271,26 @@ impl TaskStore {
     }
 
     /// Like [`mutate`](Self::mutate) but gated on a precondition: `check` is run
-    /// against the current task under the same lock that performs the write, and a
-    /// `Err` short-circuits without mutating. This folds the common
-    /// check-then-act pattern (read status, decide, write) into ONE lock
-    /// acquisition (concurrency #2) so a status check and the write it guards can't
-    /// race a concurrent transition between them.
+    /// against the current task while this id's [write lock](Self::write_lock_for) is
+    /// held, and an `Err` short-circuits without mutating. This folds the common
+    /// check-then-act pattern (read status, decide, write) under ONE per-id write
+    /// lock (concurrency #2) so a status check and the write it guards can't race a
+    /// concurrent transition of the *same* task between them.
     pub fn mutate_if<C, F>(&self, id: &str, check: C, f: F) -> Result<Task, String>
     where
         C: FnOnce(&Task) -> Result<(), String>,
         F: FnOnce(&mut Task),
     {
-        let mut guard = crate::sync::lock_or_recover(&self.tasks);
-        let mut task = guard
+        // Hold this id's write lock across the whole read-modify-write-persist. The
+        // global `tasks` map lock is taken only twice, briefly: once for the O(1)
+        // read-clone and once for the O(1) insert — never across the fsync — so a
+        // different task's `mutate` or a `list()`/`get()` never blocks on this
+        // write. Same-id writers serialize on this lock, so the read below always
+        // observes the previous same-id write's insert (no lost update).
+        let wlock = self.write_lock_for(id);
+        let _write = crate::sync::lock_or_recover(&wlock);
+
+        let mut task = crate::sync::lock_or_recover(&self.tasks)
             .get(id)
             .cloned()
             .ok_or_else(|| format!("no task with id {id}"))?;
@@ -241,18 +300,29 @@ impl TaskStore {
         // Stamp the monotonic seq alongside `updated_at` so the returned snapshot
         // (which the caller emits as `nc:task`) orders strictly after the prior one.
         task.seq = self.next_seq();
+        // Persist (fsync) holding only the per-id write lock; the map lock is not held.
         self.write_file(&task)?;
-        guard.insert(task.id.clone(), task.clone());
+        // Publish to memory after the write succeeds — memory never runs ahead of disk.
+        crate::sync::lock_or_recover(&self.tasks).insert(task.id.clone(), task.clone());
         Ok(task)
     }
 
     /// Remove a task from memory and delete its file. Idempotent on a missing file.
-    /// Holds the `tasks` lock across the memory-remove + disk-delete so it can't
-    /// interleave with a concurrent `upsert`/`mutate` on the same id.
+    /// Takes this id's [write lock](Self::write_lock_for) across the memory-remove +
+    /// disk-delete so it can't interleave with a concurrent `upsert`/`mutate` on the
+    /// same id (which would otherwise resurrect the file/record after the delete);
+    /// the global `tasks` lock is held only for the O(1) map removal, not across the
+    /// unlink, so a slow filesystem doesn't stall other tasks.
     pub fn remove(&self, id: &str) -> Result<(), String> {
+        // Validates the id (path-traversal defence) and fails fast before any lock,
+        // so an unsafe id never creates a write-lock registry entry.
         let path = self.path_for(id)?;
-        let mut guard = crate::sync::lock_or_recover(&self.tasks);
-        guard.remove(id);
+        // Serialize against same-id writers: once we've removed the record here, a
+        // mutate that was blocked on this lock will read a map-miss and error rather
+        // than re-persisting a deleted task.
+        let wlock = self.write_lock_for(id);
+        let _write = crate::sync::lock_or_recover(&wlock);
+        crate::sync::lock_or_recover(&self.tasks).remove(id);
         match std::fs::remove_file(&path) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
@@ -587,6 +657,101 @@ mod tests {
             final_task.cost_usd.is_some(),
             "cost survived the interleave"
         );
+    }
+
+    #[test]
+    fn concurrent_writes_to_different_tasks_all_persist() {
+        // The per-task write lock must serialize only same-id writers: many threads
+        // each hammering their OWN task must all land correctly, with no cross-task
+        // corruption from the shared lock registry. (The old design serialized every
+        // write behind one global lock; this asserts the decoupling doesn't drop or
+        // scramble writes across tasks.)
+        let tmp = TempDir::new().expect("temp dir");
+        let store = std::sync::Arc::new(TaskStore::load_from(tmp.path().join("tasks")));
+
+        let n_tasks = 8;
+        let iterations = 100;
+        let ids: Vec<String> = (0..n_tasks)
+            .map(|i| {
+                let task = Task::new(format!("t{i}"), String::new());
+                let id = task.id.clone();
+                store.upsert(&task).expect("seed upsert");
+                id
+            })
+            .collect();
+
+        let handles: Vec<_> = ids
+            .iter()
+            .cloned()
+            .map(|id| {
+                let s = store.clone();
+                std::thread::spawn(move || {
+                    for i in 0..iterations {
+                        s.mutate(&id, |t| t.summary = Some(format!("v{i}")))
+                            .expect("mutate own task");
+                    }
+                })
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("join");
+        }
+
+        // Every task's last write survived, and the on-disk snapshot matches memory.
+        let reloaded = TaskStore::load_from(tmp.path().join("tasks"));
+        assert_eq!(reloaded.list().len(), n_tasks);
+        for id in &ids {
+            let mem = store.get(id).expect("in memory");
+            let disk = reloaded.get(id).expect("on disk");
+            assert_eq!(
+                mem.summary.as_deref(),
+                Some(format!("v{}", iterations - 1)).as_deref(),
+                "each task kept its final write"
+            );
+            assert_eq!(mem.summary, disk.summary, "memory and disk agree");
+        }
+    }
+
+    #[test]
+    fn remove_and_mutate_same_id_never_resurrect() {
+        // The per-id write lock serializes `remove` against a concurrent `mutate` on
+        // the same id. Whatever the interleaving, once the record is removed a mutate
+        // reads a map-miss and errors instead of re-persisting the deleted task — so
+        // the terminal state is deterministically ABSENT in both memory and on disk
+        // (no file resurrected behind the delete).
+        let tmp = TempDir::new().expect("temp dir");
+        let store = std::sync::Arc::new(TaskStore::load_from(tmp.path().join("tasks")));
+        let task = Task::new("doomed".into(), String::new());
+        let id = task.id.clone();
+        store.upsert(&task).expect("upsert");
+        let path = tmp.path().join("tasks").join(format!("{id}.json"));
+
+        let s1 = store.clone();
+        let id1 = id.clone();
+        let mutator = std::thread::spawn(move || {
+            // Best-effort mutations; each is Ok until the remove wins, then Err.
+            for i in 0..500 {
+                let _ = s1.mutate(&id1, |t| t.summary = Some(format!("s{i}")));
+            }
+        });
+        let s2 = store.clone();
+        let id2 = id.clone();
+        let remover = std::thread::spawn(move || {
+            s2.remove(&id2).expect("remove");
+        });
+        mutator.join().expect("join mutator");
+        remover.join().expect("join remover");
+
+        // Drain any straggler mutations that may have been queued behind the remove.
+        for i in 0..50 {
+            let _ = store.mutate(&id, |t| t.summary = Some(format!("late{i}")));
+        }
+
+        assert!(store.get(&id).is_none(), "removed task stays gone in memory");
+        assert!(!path.exists(), "no task file resurrected after the delete");
+        // And a fresh load agrees — nothing lingers on disk.
+        let reloaded = TaskStore::load_from(tmp.path().join("tasks"));
+        assert!(reloaded.get(&id).is_none(), "removed task absent after reload");
     }
 
     #[test]

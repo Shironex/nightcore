@@ -177,6 +177,52 @@ describe('createSidecar — event sink', () => {
     // until the Rust core sends an interactive (or fail-closed) decision.
     expect(manager.dispatched).toEqual([]);
   });
+
+  test('a hot assistant-delta is fast-pathed to the wire without full revalidation', () => {
+    const manager = new StubManager();
+    const lines: string[] = [];
+    const errors: string[] = [];
+    createSidecar(manager, (line) => lines.push(line), (m) => errors.push(m));
+
+    // Shape-invalid on paper (`partial` should be a boolean), but assistant-delta
+    // is the per-token hot path: the sidecar trusts the typed translator and
+    // forwards it WITHOUT paying for a union safeParse on every streamed token.
+    // It reaches the wire verbatim and nothing is dropped or logged.
+    manager.emit({
+      type: 'assistant-delta',
+      sessionId: 1,
+      text: 'chunk',
+      partial: 'nope',
+    } as unknown as NightcoreEvent);
+
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({
+      type: 'assistant-delta',
+      text: 'chunk',
+    });
+    expect(errors).toEqual([]);
+  });
+
+  test('a malformed low-frequency event is still dropped and logged, not shipped', () => {
+    const manager = new StubManager();
+    const lines: string[] = [];
+    const errors: string[] = [];
+    createSidecar(manager, (line) => lines.push(line), (m) => errors.push(m));
+
+    // session-completed is NOT fast-pathed, so outbound validation still runs and
+    // catches a contract gap (missing required fields) before it hits the wire —
+    // the fast-path narrows what skips validation, it doesn't disable it.
+    manager.emit({
+      type: 'session-completed',
+      sessionId: 1,
+    } as unknown as NightcoreEvent);
+
+    expect(lines).toEqual([]);
+    expect(errors).toHaveLength(1);
+    expect(errors[0]).toContain(
+      'dropping malformed outbound event (session-completed)',
+    );
+  });
 });
 
 describe('createSidecar — command dispatch', () => {

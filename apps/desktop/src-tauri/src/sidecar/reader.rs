@@ -4,6 +4,8 @@
 
 use std::sync::Arc;
 
+use serde::Serialize;
+use serde_json::value::RawValue;
 use serde_json::Value;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -94,6 +96,20 @@ pub(crate) fn classify_event(event: &Value) -> EventRoute {
     EventRoute::SessionCorrelated
 }
 
+/// The `nc:session` wire envelope: a streamed engine event tagged with its task.
+/// Both fields BORROW — the task id and the already-serialized event body — so
+/// Tauri serializes the envelope in a single pass with no intermediate allocation.
+/// The `event` is a [`RawValue`] emitted verbatim (its JSON bytes are copied, not
+/// re-serialized from a `Value` tree), which is what lets the reader serialize each
+/// streamed event exactly once and share those bytes with the transcript writer.
+/// Mirrors the web-side `SessionEnvelope { taskId, event }` shape in `bridge.ts`.
+#[derive(Serialize, Clone)]
+struct TaggedSessionEvent<'a> {
+    #[serde(rename = "taskId")]
+    task_id: &'a str,
+    event: &'a RawValue,
+}
+
 /// Process one parsed sidecar event: correlate it to its task, forward it as
 /// `nc:session`, auto-deny permission requests, and apply terminal transitions
 /// (releasing the slot, cleaning up the worktree, feeding the breaker, kicking the
@@ -157,16 +173,34 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
         return;
     };
 
-    // Forward the raw event to the webview tagged with its task.
-    let _ = app.emit(
-        SESSION_EVENT,
-        serde_json::json!({ "taskId": task_id, "event": event }),
-    );
-
-    // M4.7 §C: persist the same event to the task's transcript so a reload/HMR no
-    // longer blanks the stream. Best-effort and secret-safe (the wire events carry
-    // tool inputs but never tokens); a write failure never breaks the live stream.
-    crate::transcript::append_event(&store, &task_id, &event);
+    // Perf: forward the event to the webview AND persist it to the transcript while
+    // serializing the event body EXACTLY ONCE. This is the hottest core path —
+    // assistant text-delta events stream per token during a run, and payloads can be
+    // multiple KB. The old code deep-cloned the whole event `Value` into a `json!`
+    // wrapper (one allocation per node) and then re-serialized the same `Value` in
+    // the transcript writer; instead we serialize once into a `RawValue` and share
+    // those bytes with both the webview envelope (emitted verbatim) and the
+    // transcript (M4.7 §C — persisted so a reload/HMR no longer blanks the stream).
+    // Both are best-effort and secret-safe (the wire events carry tool inputs but
+    // never tokens); a serialize/write failure never breaks the live stream.
+    match serde_json::value::to_raw_value(&event) {
+        Ok(raw) => {
+            let _ = app.emit(
+                SESSION_EVENT,
+                TaggedSessionEvent {
+                    task_id: &task_id,
+                    event: &raw,
+                },
+            );
+            crate::transcript::append_line(&store, &task_id, raw.get());
+        }
+        // Re-serializing a just-parsed `Value` effectively cannot fail; if it somehow
+        // does, drop this one event from the stream/transcript rather than killing the
+        // reader (routing decisions below still run on the parsed event).
+        Err(e) => {
+            tracing::warn!(target: "nightcore", task_id, error = %e, "cannot serialize session event; dropping from stream/transcript");
+        }
+    }
 
     // M3: a permission request is relayed, not auto-denied. The plan gate
     // (`ExitPlanMode`) transitions the task to `waiting_approval` and stores the

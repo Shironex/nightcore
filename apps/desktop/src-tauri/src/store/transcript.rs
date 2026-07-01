@@ -33,18 +33,21 @@ fn transcript_path(tasks_dir: &Path, task_id: &str) -> PathBuf {
     tasks_dir.join(task_id).join("transcript.jsonl")
 }
 
-/// Append one streamed event to a task's transcript (M4.7 §C). Called on the same
-/// async reader task that emits `nc:session`. Best-effort: a write failure is logged
-/// and swallowed so transcript persistence can never break the live stream. The
-/// event is serialized as a single compact JSON line.
+/// Append one ALREADY-SERIALIZED streamed event to a task's transcript (M4.7 §C).
+/// This is the hot path: the sidecar reader serializes each `nc:session` event
+/// exactly once (into a `RawValue` shared with the webview emit) and hands the
+/// resulting JSON `line` here, so the event is never re-serialized just to persist
+/// it. The `line` is one compact JSON object with NO trailing newline (the newline
+/// is appended here). Best-effort: a write failure is logged and swallowed so
+/// transcript persistence can never break the live stream.
 ///
 /// Perf #4: the file I/O (create-dir + open + append) is moved off the reader task
 /// via `tokio::task::spawn_blocking`, so a slow disk can't stall the live event
-/// stream. The cheap parts (path resolution, JSON serialization) run inline; only
-/// the blocking syscalls are offloaded. Ordering within a single task's transcript
-/// is preserved because the append opens in `append` mode (each write seeks to EOF)
-/// and the events for one session arrive serially on the one reader.
-pub fn append_event(store: &TaskStore, task_id: &str, event: &Value) {
+/// stream. The cheap parts (path resolution, the owned copy) run inline; only the
+/// blocking syscalls are offloaded. Ordering within a single task's transcript is
+/// preserved because the append opens in `append` mode (each write seeks to EOF) and
+/// the events for one session arrive serially on the one reader.
+pub fn append_line(store: &TaskStore, task_id: &str, line: &str) {
     // Defence in depth: a task id is a flat filename component, never a path. Refuse
     // anything that could escape the per-task subdir (mirrors `store::path_for`).
     if !crate::store::is_safe_task_id(task_id) {
@@ -52,22 +55,18 @@ pub fn append_event(store: &TaskStore, task_id: &str, event: &Value) {
         return;
     }
     let path = transcript_path(&store.tasks_dir(), task_id);
-    let mut line = match serde_json::to_string(event) {
-        Ok(line) => line,
-        Err(e) => {
-            tracing::warn!(target: "nightcore::transcript", task_id, error = %e, "cannot serialize transcript event");
-            return;
-        }
-    };
-    line.push('\n');
+    // Own the bytes to move into `spawn_blocking`, appending the record separator in
+    // the same allocation (one flat copy — far cheaper than the deep `Value` clone the
+    // old wrapper paid per streamed delta).
+    let mut owned = String::with_capacity(line.len() + 1);
+    owned.push_str(line);
+    owned.push('\n');
     let task_id = task_id.to_string();
-    // Offload the blocking filesystem work; if there's no Tokio runtime (unit tests
-    // call this synchronously), fall back to a direct write so behavior is identical.
     match tokio::runtime::Handle::try_current() {
         Ok(_) => {
-            tokio::task::spawn_blocking(move || write_line(&path, &task_id, &line));
+            tokio::task::spawn_blocking(move || write_line(&path, &task_id, &owned));
         }
-        Err(_) => write_line(&path, &task_id, &line),
+        Err(_) => write_line(&path, &task_id, &owned),
     }
 }
 
@@ -231,6 +230,18 @@ mod tests {
         (store, tmp)
     }
 
+    /// Serialize a `Value` and append it as one wire line — mirrors exactly what the
+    /// reader does (serialize the event, then hand the JSON to `append_line`). A test
+    /// convenience so the cases below can express intent with a `Value` literal.
+    fn append_event(store: &TaskStore, task_id: &str, event: &Value) {
+        match serde_json::to_string(event) {
+            Ok(line) => append_line(store, task_id, &line),
+            // The reader logs-and-drops an unserializable event; unsafe ids never reach
+            // serialization in these tests, so surface any real serialize failure loudly.
+            Err(e) => panic!("test event failed to serialize: {e}"),
+        }
+    }
+
     #[test]
     fn append_then_read_round_trips() {
         let (store, _tmp) = temp_store();
@@ -246,6 +257,42 @@ mod tests {
         assert_eq!(got.len(), 2, "both appended events are read back");
         assert_eq!(got[0], e1);
         assert_eq!(got[1], e2);
+    }
+
+    #[test]
+    fn append_line_persists_a_preserialized_wire_line() {
+        // The reader hot path serializes each event ONCE and hands the JSON here via
+        // `append_line`; it must round-trip identically to `append_event`.
+        let (store, _tmp) = temp_store();
+        let task = Task::new("t".into(), String::new());
+        store.upsert(&task).expect("upsert");
+
+        let event = serde_json::json!({"type":"assistant-text","text":"hi"});
+        let line = serde_json::to_string(&event).expect("serialize");
+        append_line(&store, &task.id, &line);
+
+        let got = read_events(&store.tasks_dir(), &task.id);
+        assert_eq!(
+            got.len(),
+            1,
+            "the pre-serialized line is read back as one event"
+        );
+        assert_eq!(got[0], event, "round-trips byte-for-byte with append_event");
+    }
+
+    #[test]
+    fn append_line_refuses_unsafe_task_id() {
+        // The safe-id guard is the single write chokepoint: it must reject via
+        // `append_line` too, not just `append_event`.
+        let (store, _tmp) = temp_store();
+        append_line(&store, "../escape", "{\"type\":\"x\"}");
+        let leaked = std::fs::read_dir(store.tasks_dir())
+            .map(|rd| rd.flatten().count())
+            .unwrap_or(0);
+        assert_eq!(
+            leaked, 0,
+            "unsafe id wrote no transcript file via append_line"
+        );
     }
 
     #[test]

@@ -19,7 +19,10 @@ tauri = { version = "2.11.2", features = [] }
 tauri-plugin-dialog = "2.7"
 tauri-plugin-notification = "2.3"
 serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+# `raw_value` lets the sidecar reader serialize each streamed session event ONCE
+# into a `RawValue` and share those bytes with both the webview envelope (emitted
+# verbatim) and the transcript writer — see `sidecar::reader::handle_event`.
+serde_json = { version = "1.0", features = ["raw_value"] }
 uuid = { version = "1.23", features = ["v4"] }
 base64 = "0.22"
 async-trait = "0.1"
