@@ -1,3 +1,4 @@
+import { memo } from 'react';
 import {
   BranchIcon,
   Button,
@@ -18,15 +19,23 @@ import { GauntletResults } from '../GauntletResults';
 import { ActivityLog } from '../ActivityLog';
 import { TaskAttachments } from '../TaskAttachments';
 import { GroupLabel, HistoryCard, SessionCard } from '../SessionCard';
-import { canMerge, deriveTaskDetailView } from './TaskDetail.hooks';
-import type { TaskDetailProps } from './TaskDetail.types';
+import {
+  canMerge,
+  deriveTaskDetailView,
+  TaskStreamContext,
+  useTaskStreamSessions,
+} from './TaskDetail.hooks';
+import type { TaskDetailChromeProps, TaskDetailProps } from './TaskDetail.types';
 
-/** The logs / detail drawer — title, status, parked permission prompts, the
- *  reviewer verdict + verification controls, the readiness gauntlet +
- *  verified-gated merge, the description, the unified activity timeline, the
- *  collapsible Session config card, and the per-status run / approval controls.
- *  A thin layout coordinator: every section is its own sibling component, and the
- *  ~25 action callbacks travel as one grouped `actions` object. */
+/** The logs / detail drawer. A thin coordinator over two halves: the static
+ *  `TaskDetailChrome` (title, verdict, gauntlet, description, session config, and
+ *  the per-status controls) and the live activity timeline.
+ *
+ *  The `stream` prop changes on every rAF flush during a run, so this function
+ *  re-renders up to 60fps — but it forwards only the DERIVED view scalars to the
+ *  memoized chrome (never the stream), so the chrome bails on a flush. The live
+ *  session groups reach the deep `<ActivityLog>` through {@link TaskStreamContext}
+ *  instead, so a flush reconciles only the log — not the whole drawer subtree. */
 export function TaskDetail({
   task,
   stream,
@@ -39,15 +48,63 @@ export function TaskDetail({
   actions,
   isActionPending,
 }: TaskDetailProps) {
-  const {
-    isRunning,
-    cost,
-    sessions,
-    reviewParked,
-    planParked,
-    kindEditable,
-    isDoneColumn,
-  } = deriveTaskDetailView(task, stream);
+  const { isRunning, cost, sessions, reviewParked, planParked, kindEditable, isDoneColumn } =
+    deriveTaskDetailView(task, stream);
+  return (
+    <TaskStreamContext.Provider value={sessions}>
+      <TaskDetailChrome
+        task={task}
+        cost={cost}
+        isRunning={isRunning}
+        reviewParked={reviewParked}
+        planParked={planParked}
+        kindEditable={kindEditable}
+        isDoneColumn={isDoneColumn}
+        anyRunning={anyRunning}
+        prompts={prompts}
+        questions={questions}
+        gauntlet={gauntlet}
+        gauntletRunning={gauntletRunning}
+        onClose={onClose}
+        actions={actions}
+        isActionPending={isActionPending}
+      />
+    </TaskStreamContext.Provider>
+  );
+}
+
+/** The live activity timeline, split out of the memoized chrome so a per-frame
+ *  stream flush re-renders ONLY this subtree. It reads the session groups from
+ *  {@link TaskStreamContext} (fed by the drawer's Provider) rather than a prop, so
+ *  the chrome around it stays put on a flush while React still re-renders this
+ *  context consumer. */
+function TaskActivity({ isRunning }: { isRunning: boolean }) {
+  const sessions = useTaskStreamSessions();
+  return <ActivityLog sessions={sessions} isRunning={isRunning} />;
+}
+
+/** The static drawer chrome around the activity timeline — everything that does
+ *  NOT depend on the per-frame stream. Memoized so a stream flush (which re-renders
+ *  the outer `TaskDetail`) bails here: every prop is referentially stable across
+ *  flushes. Every section is its own sibling component, and the ~25 action
+ *  callbacks travel as one grouped `actions` object. */
+const TaskDetailChrome = memo(function TaskDetailChrome({
+  task,
+  cost,
+  isRunning,
+  reviewParked,
+  planParked,
+  kindEditable,
+  isDoneColumn,
+  anyRunning,
+  prompts,
+  questions,
+  gauntlet,
+  gauntletRunning,
+  onClose,
+  actions,
+  isActionPending,
+}: TaskDetailChromeProps) {
   const mergeable = canMerge(task, gauntlet);
   // Whether the Result band has anything to show (verdict and/or the Done-column
   // readiness gauntlet) — its label is suppressed otherwise so it never sits empty.
@@ -175,10 +232,12 @@ export function TaskDetail({
           <SessionCard task={task} kindEditable={kindEditable} actions={actions} />
         </div>
 
-        {/* Activity — every session's logs, grouped (build, verification, …). */}
+        {/* Activity — every session's logs, grouped (build, verification, …).
+            The live session groups arrive via TaskStreamContext, so this is the
+            only band that re-renders on a per-frame stream flush. */}
         <div className="space-y-3">
           <GroupLabel>Activity</GroupLabel>
-          <ActivityLog sessions={sessions} isRunning={isRunning} />
+          <TaskActivity isRunning={isRunning} />
         </div>
 
         {/* History — past SDK sessions for this task (resume / rename / tag). */}
@@ -322,4 +381,4 @@ export function TaskDetail({
       </footer>
     </aside>
   );
-}
+});

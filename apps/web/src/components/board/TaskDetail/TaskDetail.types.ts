@@ -90,3 +90,42 @@ export interface TaskDetailProps {
    *  itself between the click and the `nc:task` echo. Defaults to never-pending. */
   isActionPending?: (action: string, id: string) => boolean;
 }
+
+/** Props for the memoized `TaskDetailChrome` — the static drawer shell around the
+ *  live activity timeline. It takes the already-derived view scalars (never the
+ *  per-frame `stream`) so a stream flush that re-renders the outer `TaskDetail`
+ *  bails out here; only the context-fed `<ActivityLog>` re-renders. The memo bails
+ *  because nothing here turns over on a high-frequency `nc:session` flush: the
+ *  scalars (`cost`, the booleans) are passed by value, so the shallow compare
+ *  matches until they actually change — `cost` only at a session boundary
+ *  (`session-completed` carries the cost; text-delta flushes leave it null), the
+ *  booleans only on a `task.status` transition. The callback props are stable
+ *  refs — `onClose`/`isActionPending` are memoized, and the grouped `actions`
+ *  object stays stable ONLY because `useActionGuard` returns a memoized `action`
+ *  (an unmemoized one would re-identify every guarded handler each render and
+ *  defeat this memo). The one prop that does change every frame — the stream — is
+ *  deliberately absent; it reaches `<ActivityLog>` via `TaskStreamContext`. */
+export interface TaskDetailChromeProps {
+  task: Task;
+  /** Aggregate run cost — live stream total, falling back to the persisted total. */
+  cost: number | null;
+  /** True while the task's build session is streaming (`in_progress`). */
+  isRunning: boolean;
+  /** A `waiting_approval` parked on a verification verdict (has `review`). */
+  reviewParked: boolean;
+  /** A `waiting_approval` parked on a plan (`ExitPlanMode`, no verdict yet). */
+  planParked: boolean;
+  /** Whether the kind picker is editable — only before the task has run. */
+  kindEditable: boolean;
+  /** Whether the Done-column gauntlet + merge controls apply (a `done` task). */
+  isDoneColumn: boolean;
+  /** True when ANY task is in_progress (serial-run guard). */
+  anyRunning: boolean;
+  prompts: PermissionPrompt[];
+  questions: QuestionPrompt[];
+  gauntlet: GauntletResult | null;
+  gauntletRunning: boolean;
+  onClose: () => void;
+  actions: TaskDetailActions;
+  isActionPending?: (action: string, id: string) => boolean;
+}

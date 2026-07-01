@@ -33,7 +33,12 @@ import {
   type TaskStatus,
   type WorktreeInfo,
 } from '@/lib/bridge';
-import { EMPTY_TRANSCRIPT, type ActiveWorktree, type TaskTranscript } from '@/components/board';
+import {
+  EMPTY_TRANSCRIPT,
+  type ActiveWorktree,
+  type TaskDetailActions,
+  type TaskTranscript,
+} from '@/components/board';
 import { useToast } from '@/components/ui';
 import { useActionGuard } from './hooks/useActionGuard.hooks';
 import { useGlobalErrorToast } from './hooks/useGlobalErrorToast.hooks';
@@ -143,6 +148,12 @@ export interface AppShellState {
     /** True while a guarded task action (`run`/`approve`/`commit`/…) is in flight,
      *  so the matching button can disable itself and not double-fire. */
     isActionPending: (action: string, id: string) => boolean;
+    /** The open drawer's ~25 action callbacks pre-assembled into one referentially
+     *  stable object, so the memoized `TaskDetailChrome` bails on a stream flush
+     *  instead of re-rendering because a fresh `actions` literal arrived each frame. */
+    detailActions: TaskDetailActions;
+    /** Stable "close the detail drawer" handler (clears the selection). */
+    closeDetail: () => void;
     /** Open the destructive-delete confirmation for a card's trash button (the
      *  board wires this as the card `onDelete` so a delete is never immediate). */
     requestDelete: (id: string) => void;
@@ -561,6 +572,75 @@ export function useAppShell(): AppShellState {
     [permissions.prompts, questions.prompts],
   );
 
+  // Pre-assemble the drawer's grouped action object ONCE from the (individually
+  // memoized) handlers, instead of a fresh literal per render. Every dependency is
+  // stable across a stream flush: the handlers turn over only when a real input
+  // changes (a parked prompt resolving, the toast list, or the action-guard's
+  // pending set transitioning) — never on a per-frame `nc:session` delta. This
+  // holds ONLY because `useActionGuard` returns a memoized `action`; the guarded
+  // handlers below all list `action` in their deps, so an unmemoized `action`
+  // would re-identify them (and this object) every render and defeat the memo.
+  // With that invariant intact, the memoized TaskDetailChrome bails on a flush.
+  const closeDetail = useCallback(() => setSelectedId(null), [setSelectedId]);
+  const detailActions = useMemo<TaskDetailActions>(
+    () => ({
+      onRun: handleRun,
+      onCancel: handleCancel,
+      onDelete: confirm.requestDelete,
+      onRespondPermission: permissions.respond,
+      onAnswerQuestion: questions.answer,
+      onApprove: handleApprove,
+      onReject: handleReject,
+      onRefine: handleRefine,
+      onChangeKind: handleChangeKind,
+      onChangeRunMode: handleChangeRunMode,
+      onChangePermissionMode: handleChangePermissionMode,
+      onChangeModel: handleChangeModel,
+      onChangeEffort: handleChangeEffort,
+      onChangeMaxTurns: handleChangeMaxTurns,
+      onChangeMaxBudget: handleChangeMaxBudget,
+      onAcceptReview: handleAcceptReview,
+      onRejectReview: handleRejectReview,
+      onRerunVerification: handleRerunVerification,
+      onRunGauntlet: gauntlet.run,
+      onConvertSubtask: handleConvertSubtask,
+      onConvertAllSubtasks: handleConvertAllSubtasks,
+      onMerge: handleMerge,
+      onCommit: handleCommit,
+      onResumeSession: handleResumeSession,
+      onRenameSession: handleRenameSession,
+      onTagSession: handleTagSession,
+    }),
+    [
+      handleRun,
+      handleCancel,
+      confirm.requestDelete,
+      permissions.respond,
+      questions.answer,
+      handleApprove,
+      handleReject,
+      handleRefine,
+      handleChangeKind,
+      handleChangeRunMode,
+      handleChangePermissionMode,
+      handleChangeModel,
+      handleChangeEffort,
+      handleChangeMaxTurns,
+      handleChangeMaxBudget,
+      handleAcceptReview,
+      handleRejectReview,
+      handleRerunVerification,
+      gauntlet.run,
+      handleConvertSubtask,
+      handleConvertAllSubtasks,
+      handleMerge,
+      handleCommit,
+      handleResumeSession,
+      handleRenameSession,
+      handleTagSession,
+    ],
+  );
+
   return {
     routing,
     registry,
@@ -611,6 +691,8 @@ export function useAppShell(): AppShellState {
       handleConvertSubtask,
       handleConvertAllSubtasks,
       isActionPending: action.isPending,
+      detailActions,
+      closeDetail,
       requestDelete: confirm.requestDelete,
       requestClear: confirm.requestClear,
     },

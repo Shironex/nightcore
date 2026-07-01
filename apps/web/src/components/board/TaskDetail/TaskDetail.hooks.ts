@@ -1,7 +1,21 @@
 /** TaskDetail derivation helpers: build the drawer's view-model from the task +
  *  live transcript, and decide whether Merge is permitted. */
+import { createContext, useContext } from 'react';
 import type { GauntletResult, Task } from '@/lib/bridge';
 import { EMPTY_STREAM, type SessionGroup, type TaskTranscript } from '../session-stream';
+
+/** Carries the open task's live per-session transcript from the drawer's outer
+ *  `TaskDetail` (which re-renders on every rAF stream flush) down to the
+ *  `<ActivityLog>` buried inside the memoized `TaskDetailChrome`. Feeding the
+ *  fast-changing stream through context — rather than a prop — lets the chrome
+ *  memo bail on a flush while the activity timeline still updates, so only the
+ *  log the user is watching reconciles at 60fps, not the whole drawer subtree. */
+export const TaskStreamContext = createContext<SessionGroup[]>([]);
+
+/** Read the open task's live session groups from {@link TaskStreamContext}. */
+export function useTaskStreamSessions(): SessionGroup[] {
+  return useContext(TaskStreamContext);
+}
 
 /** The drawer's derived view-model: live run flags, aggregated cost/error, the
  *  per-session timeline, and which control bands apply for this task's status. */
