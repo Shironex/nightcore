@@ -1,0 +1,12 @@
+title = "gitleaks"
+
+[extend]
+# Keep the maintained default ruleset; this file only ADDS allowlist entries.
+useDefault = true
+
+[allowlist]
+description = "Known-safe paths/patterns, human-reviewed"
+# Uncomment and narrow only for fixtures/patterns you have personally verified
+# are not real secrets:
+# paths = ['''(^|/)tests?/fixtures/''']
+# regexes = ['''EXAMPLE_[A-Z_]+''']
