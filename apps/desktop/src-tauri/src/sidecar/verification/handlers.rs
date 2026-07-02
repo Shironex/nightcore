@@ -109,24 +109,81 @@ pub(crate) async fn handle_build_completed(
         task.error = None;
     });
 
-    // Structure-Lock Gauntlet (feature #3): run the TARGET project's own generated
-    // harness checks (custom lint-plugin / dependency-cruiser / coverage) as a
-    // DETERMINISTIC gate BEFORE the paid reviewer — an agent must not be able to
-    // verify (or later merge) code that breaks the locked structure, and a broken
-    // build should never burn a reviewer session. Absent `.nightcore/harness.json`
-    // ⇒ no checks ⇒ pass, so existing projects are unaffected. On failure we either
-    // feed the failing check into the existing bounded auto-fix loop, or park.
+    // The deterministic gate battery, in order: the diff-budget park gate
+    // (module #5) → the project's own structure-lock manifest checks (#3) → the
+    // built-in anti-gaming sweep (#2) → the strictness ratchet (#6) → the task's
+    // own verify-command (#1) — all BEFORE the paid reviewer, so an agent can
+    // neither verify (nor later merge) out-of-scope work, code that breaks the
+    // locked structure, gamed tests, or new laxness, and a broken build never
+    // burns a reviewer session. Every gate is opt-in via `.nightcore/` config or
+    // the task except the anti-gaming sweep (always-on for worktree builds), so
+    // existing projects are unaffected.
+
+    // Diff budget: an out-of-budget diff is a SCOPING decision, not a defect — an
+    // auto-fix could only shrink it by deleting work — so a breach parks for
+    // human triage (same transition as an exhausted fix budget) and NEVER routes
+    // into the auto-fix loop. Worktree builds only: main-mode work has no
+    // committed base..HEAD range to measure. The budget is read from the PROJECT
+    // root's manifest (`.nightcore/` is gitignored, so no worktree copy exists).
+    if review_dir.is_worktree {
+        if let Some(project) = app.state::<ProjectStore>().active() {
+            if let Some(breach) =
+                crate::workflow::diff_budget::evaluate(Path::new(&project.path), &review_dir.path)
+            {
+                tracing::warn!(target: "nightcore", task_id, "diff budget exceeded; parking for triage");
+                apply_and_emit(app, store, task_id, |task| {
+                    task.status = TaskStatus::WaitingApproval;
+                    task.verified = false;
+                    task.error = Some(breach.clone());
+                });
+                park_for_approval(app, task_id, None);
+                return;
+            }
+        }
+    }
+
+    // Structure-lock manifest checks: any failure below routes through the SAME
+    // bounded auto-fix loop (or parks once the budget is spent).
     let mut lock = crate::gauntlet_project::run(&review_dir.path);
-    // The verify-command contract (hardening module #1): if the project checks passed and
-    // THIS task carries its own machine-checkable done-command, run it in the same review
-    // dir as a final deterministic check. A converted Harness task that wires an ESLint
-    // plugin, for example, carries `npx eslint .` — proving the wiring actually holds
-    // before a paid reviewer ever sees it. A failure folds into the same gate below.
+
+    // Anti-gaming sweep: always-on for worktree builds (no manifest entry arms
+    // it — it guards the gate machinery itself), appended only while the manifest
+    // checks passed so the fix agent sees ONE failure at a time (stop-at-first).
+    if lock.passed && review_dir.is_worktree {
+        if let Some(project) = app.state::<ProjectStore>().active() {
+            crate::workflow::anti_gaming::append_anti_gaming_check(
+                &mut lock,
+                &review_dir.path,
+                Path::new(&project.path),
+            );
+        }
+    }
+
+    // Strictness ratchet: recount the review dir's laxness against the project's
+    // snapshotted `.nightcore/ratchet.json` baseline (absent ⇒ nothing appended;
+    // held ⇒ a visible Passed check). Same stop-at-first gating as above.
+    if lock.passed {
+        if let Some(project) = app.state::<ProjectStore>().active() {
+            crate::workflow::ratchet::append_ratchet_check(
+                &mut lock,
+                &review_dir.path,
+                Path::new(&project.path),
+            );
+        }
+    }
+
+    // The verify-command contract (hardening module #1): if every gate above passed
+    // and THIS task carries its own machine-checkable done-command, run it in the
+    // same review dir as the final deterministic check. A converted Harness task
+    // that wires an ESLint plugin, for example, carries `npx eslint .` — proving
+    // the wiring actually holds before a paid reviewer ever sees it. A failure
+    // folds into the same gate below.
     if lock.passed {
         if let Some(command) = task.verify_command.as_deref() {
             crate::gauntlet_project::append_task_verify_command(&mut lock, command, &review_dir.path);
         }
     }
+
     apply_and_emit(app, store, task_id, |task| {
         task.structure_lock_result = Some(lock.clone());
     });
@@ -146,11 +203,13 @@ pub(crate) async fn handle_build_completed(
     }
 }
 
-/// Route a failed Structure-Lock Gauntlet (feature #3) at the verification gate:
-/// when the bounded auto-fix budget (shared with the reviewer's `CHANGES_REQUESTED`
-/// loop, [`MAX_FIX_ATTEMPTS`]) has room, feed the failing harness check into a
-/// fix-build over the same worktree so the agent self-corrects; once the budget is
-/// spent, park the task for human approval (never silently verify). The build
+/// Route a failed Structure-Lock Gauntlet (feature #3) — or one of the built-in
+/// checks appended to the same result (the anti-gaming sweep, the strictness
+/// ratchet) — at the verification gate: when the bounded auto-fix budget (shared
+/// with the reviewer's `CHANGES_REQUESTED` loop, [`MAX_FIX_ATTEMPTS`]) has room,
+/// feed the failing check into a fix-build over the same worktree so the agent
+/// self-corrects; once the budget is spent, park the task for human approval
+/// (never silently verify). The build
 /// session was already forgotten by the caller and the slot is still leased, so a
 /// dispatched fix correlates to the same task via the FIFO — exactly like the
 /// reviewer's auto-fix path.
