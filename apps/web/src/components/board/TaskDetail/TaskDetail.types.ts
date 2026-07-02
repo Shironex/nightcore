@@ -89,6 +89,10 @@ export interface TaskDetailProps {
    *  `merge`) is in flight for this task, so the matching footer button disables
    *  itself between the click and the `nc:task` echo. Defaults to never-pending. */
   isActionPending?: (action: string, id: string) => boolean;
+  /** Navigate to the scan item this task was converted from (the provenance
+   *  chip's click). A routing concern, so it travels beside `onClose` rather
+   *  than in the board-action group; absent ⇒ the chip renders inert. */
+  onOpenSourceRef?: (sourceRef: string) => void;
 }
 
 /** Props for the memoized `TaskDetailChrome` — the static drawer shell around the
@@ -128,4 +132,5 @@ export interface TaskDetailChromeProps {
   onClose: () => void;
   actions: TaskDetailActions;
   isActionPending?: (action: string, id: string) => boolean;
+  onOpenSourceRef?: (sourceRef: string) => void;
 }
