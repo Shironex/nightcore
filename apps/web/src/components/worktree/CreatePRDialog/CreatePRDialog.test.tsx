@@ -16,6 +16,7 @@ import { createPrTask } from '@/lib/bridge';
 
 import { makeTask } from '../../board/_fixtures';
 import { CreatePRDialog } from './CreatePRDialog';
+import { baseBranchOptions } from './CreatePRDialog.hooks';
 
 const TASK: Task = makeTask({
   id: 't-pr',
@@ -137,6 +138,52 @@ test('the confirm button single-flights while the create is pending', async () =
 
   resolveCreate!();
   await vi.waitFor(() => expect(onClose).toHaveBeenCalled());
+});
+
+test('baseBranchOptions offers only gh-valid base names', () => {
+  const remote = (name: string): BranchInfo => ({
+    name,
+    isRemote: true,
+    isCurrent: false,
+    ahead: 0,
+    behind: 0,
+  });
+  const shaped = baseBranchOptions([
+    ...BRANCHES,
+    remote('origin/main'), // dupe of a local — dropped
+    remote('origin/develop'), // dupe of a local — dropped
+    remote('origin/release/2.0'), // remote-only — mapped to its short name
+    remote('upstream/release/2.0'), // short-name dupe across remotes — dropped
+    remote('origin/hotfix'), // remote-only — mapped
+  ]);
+  expect(shaped.map((b) => b.name)).toEqual(['main', 'develop', 'release/2.0', 'hotfix']);
+  // Nothing gh pr create would reject as --base (AFTER the push already
+  // happened) survives the shaping.
+  expect(shaped.some((b) => b.name.includes('origin/'))).toBe(false);
+});
+
+test('the base picker dropdown never offers remote-tracking spellings', async () => {
+  stubCommands({
+    list_branches: () =>
+      Promise.resolve([
+        ...BRANCHES,
+        { name: 'origin/main', isRemote: true, isCurrent: false, ahead: 0, behind: 0 },
+        { name: 'origin/hotfix', isRemote: true, isCurrent: false, ahead: 0, behind: 0 },
+      ]),
+  });
+  const screen = render(
+    <CreatePRDialog open task={TASK} onCreate={onCreate} onClose={() => {}} />,
+  );
+  await expect.element(screen.getByLabelText('Title')).toHaveValue('feat: auth guard');
+
+  // Open the dropdown (the combobox opens on focus) with an empty filter so
+  // every option is listed. Target the combobox role — the open listbox
+  // shares the same accessible name.
+  const picker = screen.getByRole('combobox', { name: 'Base branch' });
+  await picker.fill('');
+  await picker.click();
+  await expect.element(screen.getByRole('option', { name: /hotfix/ })).toBeInTheDocument();
+  expect(screen.getByRole('option', { name: /origin\// }).query()).toBeNull();
 });
 
 test('picking a different base re-drafts against it while the fields are pristine', async () => {
