@@ -328,6 +328,7 @@ export function HarnessView(props: HarnessViewProps) {
           pending={view.pending}
           onClose={view.closeProposal}
           onConvert={view.onConvertProposal}
+          onApply={view.onApplyProposal}
           onDismiss={view.onDismissProposal}
           onRestore={view.onRestoreProposal}
           onGotoBoard={view.onGotoBoard}
@@ -375,6 +376,43 @@ export function HarnessView(props: HarnessViewProps) {
           }
           onConfirm={view.confirmArm}
           onCancel={view.cancelArm}
+        />
+      )}
+
+      {view.applyProposalTarget !== null && (
+        <ConfirmDialog
+          title="Apply this bundle to disk?"
+          confirmLabel={`Apply ${view.applyProposalPaths.length} ${
+            view.applyProposalPaths.length === 1 ? 'file' : 'files'
+          }`}
+          message={
+            <>
+              Write {view.applyProposalPaths.length}{' '}
+              {view.applyProposalPaths.length === 1 ? 'artifact' : 'artifacts'} from{' '}
+              <span className="font-semibold text-foreground">
+                {view.applyProposalTarget.title}
+              </span>{' '}
+              directly into the project (no agent). Existing files are never clobbered by a{' '}
+              <code className="rounded border border-border bg-white/[0.04] px-1 py-0.5 font-mono text-[12px] text-foreground">
+                create
+              </code>{' '}
+              artifact.
+              {view.applyProposalPaths.length > 0 && (
+                <span className="mt-2 block space-y-0.5">
+                  {view.applyProposalPaths.map((path) => (
+                    <code
+                      key={path}
+                      className="block break-all rounded border border-border bg-white/[0.04] px-2 py-1 font-mono text-[12px] text-foreground"
+                    >
+                      {path}
+                    </code>
+                  ))}
+                </span>
+              )}
+            </>
+          }
+          onConfirm={view.confirmApplyProposal}
+          onCancel={view.cancelApplyProposal}
         />
       )}
     </div>

@@ -1357,12 +1357,24 @@ export interface HarnessProposalConvertedEvent {
   taskId: string;
 }
 
+/** A non-`NightcoreEvent` notice the Rust core emits on `nc:harness` when an
+ *  `apply-artifacts` proposal is applied as a bundle (all its artifacts written to disk),
+ *  so the open Harness view can mark the proposal applied in place. */
+export interface HarnessProposalAppliedEvent {
+  type: 'proposal-applied';
+  runId: string;
+  proposalId: string;
+  /** How many artifacts the bundle wrote. */
+  count: number;
+}
+
 /** Everything that arrives on the `nc:harness` channel. */
 export type HarnessEvent =
   | HarnessScanEvent
   | ArtifactAppliedEvent
   | HarnessFindingConvertedEvent
   | HarnessProposalConvertedEvent
+  | HarnessProposalAppliedEvent
   | HarnessCheckArmedEvent;
 
 /** Start a Harness scan over the active project. Returns the `runId` the
@@ -1502,6 +1514,18 @@ export async function applyHarnessArtifact(
   return invoke<HarnessRun>('apply_harness_artifact', { runId, artifactId });
 }
 
+/** Apply an `apply-artifacts` proposal as a bundle — WRITES every referenced artifact to
+ *  disk through the same hardened path as {@link applyHarnessArtifact}, then marks the
+ *  proposal applied. Idempotent + partial-failure-aware (a failed write leaves the
+ *  succeeded artifacts applied and rejects with the error). Rejecting an `agent-task`
+ *  proposal (no artifacts) is expected — convert it instead. Rejects outside Tauri. */
+export async function applyHarnessProposal(
+  runId: string,
+  proposalId: string,
+): Promise<HarnessRun> {
+  return invoke<HarnessRun>('apply_harness_proposal', { runId, proposalId });
+}
+
 /** Arm a Structure-Lock check into the scanned project's `.nightcore/harness.json` so
  *  the zero-cost gauntlet runs it before every future reviewer + at merge. The `command`
  *  is what the user reviewed and confirmed (the human gate) — never model-derived. Uses
@@ -1517,7 +1541,7 @@ export async function armHarnessGauntletCheck(
 
 /** Narrow an unknown `nc:harness` payload to a `HarnessEvent`. The channel carries the
  *  `harness-*` wire family plus several non-`NightcoreEvent` notices (`finding-converted`,
- *  `proposal-converted`, `check-armed`, `artifact-applied`). `parseChannelEvent` handles
+ *  `proposal-converted`, `proposal-applied`, `check-armed`, `artifact-applied`). `parseChannelEvent` handles
  *  the `artifact-applied` notice + the wire events, so the object-shaped notices are
  *  shape-checked here first, then the rest is delegated. */
 function parseHarnessEvent(value: unknown): HarnessEvent | null {
@@ -1549,6 +1573,21 @@ function parseHarnessEvent(value: unknown): HarnessEvent | null {
           runId: v.runId,
           proposalId: v.proposalId,
           taskId: v.taskId,
+        };
+      }
+      return null;
+    }
+    if (v.type === 'proposal-applied') {
+      if (
+        typeof v.runId === 'string' &&
+        typeof v.proposalId === 'string' &&
+        typeof v.count === 'number'
+      ) {
+        return {
+          type: 'proposal-applied',
+          runId: v.runId,
+          proposalId: v.proposalId,
+          count: v.count,
         };
       }
       return null;

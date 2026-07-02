@@ -15,9 +15,10 @@ export type FindingStatus = 'open' | 'dismissed' | 'converted';
 /** Proposed-artifact lifecycle, narrowed from the persisted `string`. */
 export type ArtifactStatus = 'proposed' | 'applied' | 'dismissed';
 
-/** Task-shaped-proposal lifecycle, narrowed from the persisted `string`. Mirrors the
- *  convention-finding lifecycle (a proposal converts to a board task). */
-export type ProposalStatus = 'proposed' | 'dismissed' | 'converted';
+/** Task-shaped-proposal lifecycle, narrowed from the persisted `string`. A proposal is
+ *  either converted to a board task (`agent-task`) or applied as a bundle of artifacts
+ *  directly (`apply-artifacts` → `applied`). */
+export type ProposalStatus = 'proposed' | 'dismissed' | 'converted' | 'applied';
 
 /** A convention finding as the view renders it: the unified, union-typed shape
  *  both the live wire `ConventionFinding` (contract) and the persisted

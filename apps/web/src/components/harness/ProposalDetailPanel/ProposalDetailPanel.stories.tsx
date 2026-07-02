@@ -36,6 +36,7 @@ const meta = {
     pending: false,
     onClose: fn(),
     onConvert: fn(),
+    onApply: fn(),
     onDismiss: fn(),
     onRestore: fn(),
     onGotoBoard: fn(),
@@ -68,4 +69,18 @@ export const Dismissed: Story = {
 
 export const Converted: Story = {
   args: { proposal: proposal({ status: 'converted', linkedTaskId: 'task-1' }) },
+};
+
+export const Applied: Story = {
+  args: {
+    proposal: proposal({
+      kind: 'apply-artifacts',
+      title: 'Adopt the folder-per-component agent contract',
+      prompt: null,
+      verifyCommand: null,
+      harnessCheck: null,
+      artifactIds: ['a1', 'a2'],
+      status: 'applied',
+    }),
+  },
 };

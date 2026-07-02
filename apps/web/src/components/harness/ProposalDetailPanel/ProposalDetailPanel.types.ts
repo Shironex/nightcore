@@ -9,6 +9,8 @@ export interface ProposalDetailPanelProps {
   onClose: () => void;
   /** Convert the proposal into a board task. */
   onConvert: (proposalId: string) => void;
+  /** Apply an `apply-artifacts` proposal as a bundle (opens the confirm dialog). */
+  onApply: (proposalId: string) => void;
   onDismiss: (proposalId: string) => void;
   onRestore: (proposalId: string) => void;
   /** Navigate to the linked task on the board (for a converted proposal). */

@@ -31,6 +31,11 @@ function ProposalCard({
             converted
           </span>
         )}
+        {proposal.status === 'applied' && (
+          <span className="ml-auto rounded-md bg-success/[0.12] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-success">
+            applied
+          </span>
+        )}
         {proposal.status === 'dismissed' && (
           <span className="ml-auto rounded-md bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-muted-foreground">
             dismissed

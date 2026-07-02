@@ -12,6 +12,7 @@ import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
 import type { RunConfig } from '@/lib/useRunConfig';
 import {
   applyHarnessArtifact,
+  applyHarnessProposal,
   armHarnessGauntletCheck,
   cancelHarnessScan,
   convertHarnessFindingToTask,
@@ -71,6 +72,9 @@ export interface UseHarnessResult {
   restoreProposal: (proposalId: string) => Promise<void>;
   /** Convert a task-shaped proposal into a board task (idempotent). Returns the task. */
   convertProposal: (proposalId: string) => Promise<Task | null>;
+  /** Apply an `apply-artifacts` proposal as a bundle (writes every artifact to disk).
+   *  Resolves on success; REJECTS with the write error (surfaced inline). */
+  applyProposal: (proposalId: string) => Promise<void>;
   dismissArtifact: (artifactId: string) => Promise<void>;
   restoreArtifact: (artifactId: string) => Promise<void>;
   /** Apply an artifact to disk. Resolves on success; REJECTS with the write error
@@ -188,6 +192,23 @@ export function useHarness(hasProject: boolean): UseHarnessResult {
                     p.id === event.proposalId
                       ? { ...p, status: 'converted', linkedTaskId: event.taskId }
                       : p,
+                  ),
+                }
+              : prev,
+          );
+          void refreshRuns();
+          return;
+        }
+        if (event.type === 'proposal-applied') {
+          // The bundle's per-artifact writes each emit their own `artifact-applied`
+          // notice (which flips the artifact rows); this one flips the PROPOSAL to
+          // applied. Matches on stream.runId so a displayed-but-not-live run updates too.
+          setStream((prev) =>
+            prev.runId === event.runId
+              ? {
+                  ...prev,
+                  proposals: prev.proposals.map((p) =>
+                    p.id === event.proposalId ? { ...p, status: 'applied' } : p,
                   ),
                 }
               : prev,
@@ -354,6 +375,24 @@ export function useHarness(hasProject: boolean): UseHarnessResult {
     [stream.runId, refreshRuns],
   );
 
+  const applyProposal = useCallback(
+    async (proposalId: string) => {
+      if (stream.runId === null) return;
+      // Writes every bundled artifact to disk — `apply_harness_proposal` rejects on a
+      // refused overwrite (or an agent-task proposal with no artifacts); let it
+      // propagate so the confirm dialog can surface the error inline.
+      const run = await applyHarnessProposal(stream.runId, proposalId);
+      // The write succeeded. The `proposal-applied` + per-artifact `artifact-applied`
+      // notices already drive authoritative state; the run-list reconcile is
+      // best-effort, so a `listHarnessRuns` failure here must NOT re-open the dialog.
+      setStream(streamFromRun(run));
+      await refreshRuns().catch((err) => {
+        console.error('listHarnessRuns failed', err);
+      });
+    },
+    [stream.runId, refreshRuns],
+  );
+
   const dismissArtifact = useCallback(
     async (artifactId: string) => {
       if (stream.runId === null) return;
@@ -417,6 +456,7 @@ export function useHarness(hasProject: boolean): UseHarnessResult {
     dismissProposal,
     restoreProposal,
     convertProposal,
+    applyProposal,
     dismissArtifact,
     restoreArtifact,
     applyArtifact,
@@ -549,10 +589,20 @@ export interface HarnessViewModel {
   onRestoreFinding: (findingId: string) => void;
   /** Task-shaped proposal lifecycle actions. */
   onConvertProposal: (proposalId: string) => void;
+  /** Open the bundle-apply confirmation for an `apply-artifacts` proposal. */
+  onApplyProposal: (proposalId: string) => void;
   onDismissProposal: (proposalId: string) => void;
   onRestoreProposal: (proposalId: string) => void;
   /** Convert every still-convertible proposal in one action. */
   onConvertAllProposals: () => void;
+  /** The proposal awaiting bundle-apply confirmation, or `null` (drives the dialog). */
+  applyProposalTarget: HarnessProposalVM | null;
+  /** The repo-relative paths the bundle-apply would write (shown in the dialog). */
+  applyProposalPaths: string[];
+  /** Confirm the bundle apply (writes every referenced artifact to disk). */
+  confirmApplyProposal: () => void;
+  /** Dismiss the bundle-apply confirmation. */
+  cancelApplyProposal: () => void;
   /** Navigate to the board (after convert-to-task / for a converted finding). */
   onGotoBoard?: () => void;
   onDismissArtifact: (artifactId: string) => void;
@@ -598,6 +648,7 @@ export function useHarnessView({
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [armTargetId, setArmTargetId] = useState<string | null>(null);
+  const [applyProposalTargetId, setApplyProposalTargetId] = useState<string | null>(null);
 
   // Lifted CONFIGURE run config (the shared shape Insight uses too). It lives here
   // (not in RunControls) so the config survives the CONFIGURE → RUNNING → RESULTS
@@ -737,6 +788,18 @@ export function useHarnessView({
     () => stream.artifacts.find((a) => a.id === armTargetId) ?? null,
     [stream.artifacts, armTargetId],
   );
+  const applyProposalTarget = useMemo(
+    () => stream.proposals.find((p) => p.id === applyProposalTargetId) ?? null,
+    [stream.proposals, applyProposalTargetId],
+  );
+  // The repo-relative paths the bundle would write (resolved from the referenced
+  // artifacts), shown verbatim in the confirm dialog so the user sees exactly what lands.
+  const applyProposalPaths = useMemo(() => {
+    if (applyProposalTarget === null) return [];
+    return applyProposalTarget.artifactIds
+      .map((id) => stream.artifacts.find((a) => a.id === id)?.targetPath)
+      .filter((p): p is string => typeof p === 'string');
+  }, [applyProposalTarget, stream.artifacts]);
 
   const runHistory: MenuItem[] = useMemo(
     () =>
@@ -842,6 +905,26 @@ export function useHarnessView({
 
   const cancelArm = useCallback(() => setArmTargetId(null), []);
 
+  // Bundle-apply confirmation: writing every referenced artifact to disk is a
+  // consequential action, so it goes through a confirm dialog (like arm-check). On
+  // confirm, `runAction` surfaces any partial-failure/agent-task error as a toast.
+  const confirmApplyProposal = useCallback(() => {
+    if (applyProposalTargetId === null) return;
+    const id = applyProposalTargetId;
+    const count = applyProposalPaths.length;
+    setApplyProposalTargetId(null);
+    void runAction('apply proposal bundle', async () => {
+      await harness.applyProposal(id);
+      toast.push({
+        tone: 'success',
+        title: 'Proposal applied',
+        description: `${count} ${count === 1 ? 'artifact' : 'artifacts'} written to disk.`,
+      });
+    });
+  }, [applyProposalTargetId, applyProposalPaths.length, runAction, harness, toast]);
+
+  const cancelApplyProposal = useCallback(() => setApplyProposalTargetId(null), []);
+
   // Convert every still-convertible proposal (status `proposed`) in one action, mirroring
   // Insight's convert-all. Sequential so a mid-flight failure surfaces without racing the
   // store; the `proposal-converted` notice keeps the stream in sync as each lands.
@@ -924,9 +1007,14 @@ export function useHarnessView({
     onDismissFinding: (id) => void runAction('dismiss convention', () => harness.dismissFinding(id)),
     onRestoreFinding: (id) => void runAction('restore convention', () => harness.restoreFinding(id)),
     onConvertProposal: (id) => void runAction('convert proposal', () => harness.convertProposal(id)),
+    onApplyProposal: (id) => setApplyProposalTargetId(id),
     onDismissProposal: (id) => void runAction('dismiss proposal', () => harness.dismissProposal(id)),
     onRestoreProposal: (id) => void runAction('restore proposal', () => harness.restoreProposal(id)),
     onConvertAllProposals,
+    applyProposalTarget,
+    applyProposalPaths,
+    confirmApplyProposal,
+    cancelApplyProposal,
     onGotoBoard,
     onDismissArtifact: (id) => void runAction('dismiss artifact', () => harness.dismissArtifact(id)),
     onRestoreArtifact: (id) => void runAction('restore artifact', () => harness.restoreArtifact(id)),
