@@ -256,3 +256,82 @@ describe('HookBus — workspace confinement gate (worktree isolation)', () => {
     ).toEqual({ continue: true });
   });
 });
+
+describe('HookBus — harness runtime policy gate (module #3)', () => {
+  async function pre(bus: HookBus, toolName: string, toolInput: unknown) {
+    return bus.hooks().PreToolUse![0]!.hooks[0]!({
+      hook_event_name: 'PreToolUse',
+      tool_name: toolName,
+      tool_input: toolInput,
+    });
+  }
+  const decision = (r: unknown) =>
+    (r as { hookSpecificOutput?: { permissionDecision?: string } })
+      .hookSpecificOutput?.permissionDecision;
+  const reason = (r: unknown) =>
+    (r as { hookSpecificOutput?: { permissionDecisionReason?: string } })
+      .hookSpecificOutput?.permissionDecisionReason;
+
+  const CWD = '/repo';
+  const POLICY = {
+    protectedPaths: ['bun.lock', 'migrations/**'],
+    denyBashPatterns: ['--no-verify'],
+  };
+
+  test('denies a Write to a protected path with the harness-policy reason', async () => {
+    const bus = new HookBus(undefined, { cwd: CWD, harnessPolicy: POLICY });
+    const r = await pre(bus, 'Write', { file_path: 'migrations/002.sql' });
+    expect(decision(r)).toBe('deny');
+    expect(reason(r)).toContain('harness policy');
+  });
+
+  test('denies a Bash command matching a project deny pattern', async () => {
+    const bus = new HookBus(undefined, { cwd: CWD, harnessPolicy: POLICY });
+    const r = await pre(bus, 'Bash', { command: 'git commit --no-verify' });
+    expect(decision(r)).toBe('deny');
+    expect(reason(r)).toContain('--no-verify');
+  });
+
+  test('the implicit .nightcore/** self-protection holds with an empty policy', async () => {
+    const bus = new HookBus(undefined, {
+      cwd: CWD,
+      harnessPolicy: { protectedPaths: [], denyBashPatterns: [] },
+    });
+    const r = await pre(bus, 'Edit', { file_path: '.nightcore/harness.json' });
+    expect(decision(r)).toBe('deny');
+  });
+
+  test('allows unprotected work under the same policy', async () => {
+    const bus = new HookBus(undefined, { cwd: CWD, harnessPolicy: POLICY });
+    expect(await pre(bus, 'Write', { file_path: 'src/app.ts' })).toEqual({
+      continue: true,
+    });
+    expect(await pre(bus, 'Bash', { command: 'git commit -m ok' })).toEqual({
+      continue: true,
+    });
+  });
+
+  test('the destructive deny list still wins first (rule id precedence)', async () => {
+    const logger = fakeLogger();
+    const bus = new HookBus(logger, { cwd: CWD, harnessPolicy: POLICY });
+    const r = await pre(bus, 'Bash', { command: 'rm -rf / --no-verify' });
+    expect(decision(r)).toBe('deny');
+    expect(reason(r)).toContain('Nightcore safety policy');
+  });
+
+  test('without a harnessPolicy the gate is OFF (back-compat)', async () => {
+    const bus = new HookBus(undefined, { cwd: CWD });
+    expect(
+      await pre(bus, 'Write', { file_path: 'migrations/002.sql' }),
+    ).toEqual({ continue: true });
+    expect(await pre(bus, 'Bash', { command: 'git commit --no-verify' })).toEqual({
+      continue: true,
+    });
+  });
+
+  test('a policy WITHOUT cwd still enforces Bash rules', async () => {
+    const bus = new HookBus(undefined, { harnessPolicy: POLICY });
+    const r = await pre(bus, 'Bash', { command: 'git commit --no-verify' });
+    expect(decision(r)).toBe('deny');
+  });
+});

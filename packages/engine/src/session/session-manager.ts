@@ -471,6 +471,13 @@ export class SessionManager {
         ...(command.appendContextPack !== undefined
           ? { appendContextPack: command.appendContextPack }
           : {}),
+        // Harness runtime policy (module #3): the manifest-declared protected
+        // paths + Bash deny patterns the Rust core resolved for this project.
+        // Enforced by the runner's PreToolUse gate (holds under bypass). Absent ⇒
+        // no policy layer (pre-feature shape).
+        ...(command.harnessPolicy !== undefined
+          ? { harnessPolicy: command.harnessPolicy }
+          : {}),
         ...(preset.allowedTools !== undefined
           ? { allowedTools: preset.allowedTools }
           : {}),

@@ -80,8 +80,10 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { BASH_TOOL, parseCommandLine, type ToolDenyVerdict } from './tool-deny-policy.js';
 
-/** Mutation tools whose target path is inspected → the input key holding it. */
-const FILE_MUTATION_TARGET_KEY: Record<string, 'file_path' | 'notebook_path'> = {
+/** Mutation tools whose target path is inspected → the input key holding it.
+ *  Exported so the harness-policy gate (protected paths) confines the SAME tool
+ *  set — one source of the "which native tools mutate files" fact. */
+export const FILE_MUTATION_TARGET_KEY: Record<string, 'file_path' | 'notebook_path'> = {
   Write: 'file_path',
   Edit: 'file_path',
   MultiEdit: 'file_path',
@@ -125,14 +127,16 @@ function sensitiveReadReason(target: string, cwd: string): string {
 }
 
 /** Lexically resolve `p` against `cwd` (an absolute `p` stands alone). No fs
- *  access, so a not-yet-created `Write` target still resolves. */
-function resolveAgainst(cwd: string, p: string): string {
+ *  access, so a not-yet-created `Write` target still resolves. Exported for the
+ *  harness-policy gate (same resolution, same limits — lexical, not realpath). */
+export function resolveAgainst(cwd: string, p: string): string {
   return path.isAbsolute(p) ? path.resolve(p) : path.resolve(cwd, p);
 }
 
 /** True when `child` is `parent` itself or nested beneath it. Both are resolved
- *  absolute; the trailing-separator guard stops `/repo-evil` matching `/repo`. */
-function isWithin(child: string, parent: string): boolean {
+ *  absolute; the trailing-separator guard stops `/repo-evil` matching `/repo`.
+ *  Exported for the harness-policy gate. */
+export function isWithin(child: string, parent: string): boolean {
   const c = path.resolve(child);
   const p = path.resolve(parent);
   return c === p || c.startsWith(p + path.sep);
@@ -157,8 +161,8 @@ function isAllowedTarget(resolved: string, roots: readonly string[]): boolean {
 }
 
 /** Extract the string target held under `key` in a tool's input, or undefined
- *  when absent / not a non-empty string. */
-function targetUnderKey(toolInput: unknown, key: string): string | undefined {
+ *  when absent / not a non-empty string. Exported for the harness-policy gate. */
+export function targetUnderKey(toolInput: unknown, key: string): string | undefined {
   if (toolInput === null || typeof toolInput !== 'object') return undefined;
   const value = (toolInput as Record<string, unknown>)[key];
   return typeof value === 'string' && value.length > 0 ? value : undefined;

@@ -18,6 +18,7 @@
  */
 import type {
   EffortLevel,
+  HarnessPolicy,
   McpServerEntry,
   PermissionMode,
   PermissionPolicy,
@@ -193,6 +194,11 @@ export interface SessionRunnerConfig {
    *  then the persona — and truncated to [`CONTEXT_PACK_MAX_CHARS`] so it can't
    *  crowd out the task. Absent/empty ⇒ no pack folded in. */
   appendContextPack?: string;
+  /** The project's harness runtime policy (protected paths + Bash deny patterns),
+   *  resolved by the Rust core from `.nightcore/harness.json` and enforced by the
+   *  session's PreToolUse gate — the layer that holds even under
+   *  `bypassPermissions`. Absent ⇒ no policy layer (pre-feature shape). */
+  harnessPolicy?: HarnessPolicy;
 }
 
 /**

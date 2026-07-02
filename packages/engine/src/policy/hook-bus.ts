@@ -3,6 +3,7 @@ import type {
   HookEvent,
   HookJSONOutput,
 } from '@anthropic-ai/claude-agent-sdk';
+import type { HarnessPolicy } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 import {
   evaluateToolDeny,
@@ -11,20 +12,27 @@ import {
   type ToolDenyVerdict,
 } from './tool-deny-policy.js';
 import { evaluateWorkspaceConfinement } from './workspace-confinement.js';
+import {
+  compileHarnessPolicy,
+  evaluateHarnessPolicy,
+  type CompiledHarnessPolicy,
+} from './harness-policy.js';
 
 /**
  * Registers a small set of SDK hooks and re-emits them to local observers.
  *
  * `PreToolUse` is also a **blocking enforcement gate**: it evaluates each tool
- * call against (1) a safe default destructive-command deny list and (2) the
+ * call against (1) a safe default destructive-command deny list, (2) the
  * workspace-confinement gate — a file mutation that resolves outside the run
- * `cwd` — and returns a `permissionDecision: 'deny'` for a match. Crucially, SDK
- * hooks fire **regardless of `permissionMode`** — including `bypassPermissions`,
- * where the `canUseTool` permission layer is never consulted — so this is the one
+ * `cwd` — and (3) the project's harness runtime policy (protected paths + Bash
+ * deny patterns from `.nightcore/harness.json`), and returns a
+ * `permissionDecision: 'deny'` for a match. Crucially, SDK hooks fire
+ * **regardless of `permissionMode`** — including `bypassPermissions`, where the
+ * `canUseTool` permission layer is never consulted — so this is the one
  * guardrail that contains the studio's default unattended config. See
- * {@link DEFAULT_DESTRUCTIVE_RULES} and {@link evaluateWorkspaceConfinement} for
- * scope and limits (heuristic, not a sandbox). `SessionStart` stays a pure
- * non-blocking observer.
+ * {@link DEFAULT_DESTRUCTIVE_RULES}, {@link evaluateWorkspaceConfinement}, and
+ * {@link evaluateHarnessPolicy} for scope and limits (heuristic, not a sandbox).
+ * `SessionStart` stays a pure non-blocking observer.
  *
  * Local plugins subscribe via `on()` to react to lifecycle events.
  */
@@ -38,6 +46,9 @@ export class HookBus {
    *  so a future workspace-trust gate can widen the set (e.g. WebFetch off) for
    *  an untrusted repo; defaults to the studio's safe baseline. */
   private readonly denyRules: readonly ToolDenyRule[];
+  /** The project's harness runtime policy (module #3), compiled once for the
+   *  session. Undefined ⇒ no policy layer (no manifest / disabled). */
+  private readonly harnessPolicy?: CompiledHarnessPolicy;
 
   constructor(
     private readonly logger?: Logger,
@@ -46,10 +57,18 @@ export class HookBus {
       cwd?: string;
       /** Override the destructive-command deny rules (defaults to the baseline). */
       denyRules?: readonly ToolDenyRule[];
+      /** The project's harness runtime policy (protected paths + Bash deny
+       *  patterns), resolved by the Rust core from `.nightcore/harness.json` and
+       *  carried on `start-session`. Path rules need `cwd` to resolve against;
+       *  Bash rules enforce regardless. */
+      harnessPolicy?: HarnessPolicy;
     },
   ) {
     this.cwd = opts?.cwd;
     this.denyRules = opts?.denyRules ?? DEFAULT_DESTRUCTIVE_RULES;
+    if (opts?.harnessPolicy !== undefined) {
+      this.harnessPolicy = compileHarnessPolicy(opts.harnessPolicy, logger);
+    }
   }
 
   /** Subscribe to all observed hook events. Returns an unsubscribe fn. */
@@ -98,6 +117,20 @@ export class HookBus {
         this.cwd,
       );
       if (confinement.denied) return this.denyOutput(tool_name, confinement);
+    }
+
+    // (3) Harness runtime policy — the project's declared protected paths + Bash
+    // deny patterns. AFTER confinement so its fail-closed unreadable-target denial
+    // owns that shape (the policy gate deliberately leaves it alone); Bash rules
+    // enforce even without a cwd.
+    if (this.harnessPolicy !== undefined) {
+      const policy = evaluateHarnessPolicy(
+        tool_name,
+        tool_input,
+        this.harnessPolicy,
+        this.cwd,
+      );
+      if (policy.denied) return this.denyOutput(tool_name, policy);
     }
 
     return undefined;
