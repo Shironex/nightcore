@@ -33,6 +33,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 - Architectural boundaries are lint rules, not docs. A new legitimate cross-layer need adds a named seam (façade method / bridge command), it does not relax a rule.
 - `.editorconfig` is the sole formatting authority for TS/JS (no Prettier/Biome; style beyond indent/EOL/final-newline is intentionally unenforced).
 - Import ordering is enforced by `simple-import-sort/imports` + `/exports` (error, autofixable): side-effect imports → node/bun builtins → third-party → `@nightcore/*` + `@/` → relative, blank-line separated. Run `eslint . --fix` rather than hand-sorting.
+- The Rust core has its own lint gate in the `rust-checks` CI job: `cargo fmt --check` (style pinned by `apps/desktop/src-tauri/rustfmt.toml`) and `cargo clippy --all-targets -- -D warnings`. It lives there, NOT in lint-meta — the Bun lint job has no Tauri system deps.
 
 ## Enforced harness additions (lint-meta + plugin)
 
