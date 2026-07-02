@@ -55,14 +55,27 @@ pub fn resolve_permission_mode(app: &AppHandle, task_override: Option<&str>) -> 
 /// instead of starting cold, and the resolved enabled external MCP servers
 /// (`resolve_mcp_servers`). Reviewer/fix sub-runs build their own [`Guardrails`]
 /// inline (ceilings inherited, never resumed) but resolve the SAME MCP list.
-pub fn build_guardrails(app: &AppHandle, task: &Task) -> crate::provider::Guardrails {
+pub fn build_guardrails(
+    app: &AppHandle,
+    task: &Task,
+    project_root: Option<&std::path::Path>,
+) -> crate::provider::Guardrails {
     crate::provider::Guardrails {
         max_turns: task.max_turns,
         max_budget_usd: task.max_budget_usd,
         resume_session_id: task.sdk_session_id.clone(),
         mcp_servers: resolve_mcp_servers(app),
         append_context_pack: resolve_context_pack(app),
-        harness_policy: resolve_harness_policy(app),
+        // Resolve the enforcement policy from the project root the RUN CWD was
+        // pinned to (threaded from `resolve_worktree`), NOT a fresh `active()`
+        // read — so a project switch during the launch's sidecar-cold-start await
+        // can't arm the wrong project's rails (or none) over this run. Falls back
+        // to the active project only when the caller has no pinned root (there is
+        // then no cwd/project mismatch to guard against).
+        harness_policy: match project_root {
+            Some(root) => crate::store::harness_policy::read_policy(&root.to_string_lossy()),
+            None => resolve_harness_policy(app),
+        },
     }
 }
 
@@ -71,9 +84,11 @@ pub fn build_guardrails(app: &AppHandle, task: &Task) -> crate::provider::Guardr
 /// [`crate::store::harness_policy::read_policy`]. `None` when no project is active,
 /// no manifest exists, or the project disabled it (`policy.enabled: false`) — each
 /// yielding the pre-feature shape (no policy layer armed). The manifest is the
-/// opt-in itself, so there is no separate settings toggle. Shared by the build
-/// path, reviewer, and fix sub-runs so every session that can MUTATE the project
-/// runs under the same protected-path rules.
+/// opt-in itself, so there is no separate settings toggle. Used by the reviewer
+/// and fix sub-runs (whose cwd is a caller-supplied worktree already pinned to
+/// this project, with no cold-start await between the task read and this call);
+/// the main build path threads the pinned project root through
+/// [`build_guardrails`] instead, to close the wider launch-window race.
 pub fn resolve_harness_policy(app: &AppHandle) -> Option<crate::contracts::HarnessPolicy> {
     let project = app.state::<ProjectStore>().active()?;
     crate::store::harness_policy::read_policy(&project.path)

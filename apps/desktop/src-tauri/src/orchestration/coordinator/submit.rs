@@ -68,6 +68,10 @@ pub(crate) async fn submit_run(
     // Only a worktree-mode run carries a `nc/<taskId>` branch chip; a `main`-mode
     // run edits the project's current branch directly, so it has no chip.
     let is_worktree = resolved.as_ref().map(|r| r.is_worktree).unwrap_or(false);
+    // The project ROOT the cwd was pinned to, captured from the SAME `active()`
+    // read — threaded into `build_guardrails` so the harness policy resolves from
+    // this project, not a later `active()` that a mid-launch switch could change.
+    let project_root = resolved.as_ref().map(|r| r.project_root.clone());
     let cwd = resolved.map(|r| r.path);
     // The chip is the picker-chosen branch (stored at create) or the default
     // `nc/<taskId>`; `cwd.rs` allocated the worktree on the same branch.
@@ -106,7 +110,7 @@ pub(crate) async fn submit_run(
     // instead of starting cold (the recovery path). Also injects the project's
     // enabled MCP servers. The reviewer/fix sub-runs are fresh prompts and never
     // resume.
-    let guardrails = crate::sidecar::build_guardrails(app, &task);
+    let guardrails = crate::sidecar::build_guardrails(app, &task, project_root.as_deref());
     // Load the task's image attachments from app-data into wire blocks. An
     // unreadable file is skipped (logged) inside the loader, so a missing
     // attachment never blocks the run; no attachments ⇒ an empty list ⇒ a
