@@ -3,11 +3,13 @@
  *  proposal's verifyCommand onto the task's gauntlet check). */
 import {
   Button,
+  CheckIcon,
   CodeBlock,
   DetailPanelShell,
   DetailSection,
   Markdown,
   MoveIcon,
+  PlusIcon,
   RetryIcon,
   TrashIcon,
 } from '@/components/ui';
@@ -16,17 +18,24 @@ import type { ProposalDetailPanelProps } from './ProposalDetailPanel.types';
 
 /** The proposal detail sheet: kind + confidence chrome, description, rationale, the
  *  agent-task prompt, the verify command, any suggested gauntlet check + bundled
- *  artifacts, and the convert / dismiss / restore / go-to-task lifecycle actions. */
+ *  artifacts, and the apply / convert / dismiss / restore / go-to-task lifecycle actions. */
 export function ProposalDetailPanel({
   proposal,
   pending,
   onClose,
   onConvert,
+  onApply,
   onDismiss,
   onRestore,
   onGotoBoard,
 }: ProposalDetailPanelProps) {
   const meta = PROPOSAL_KIND_META[proposal.kind];
+  // An `apply-artifacts` proposal bundles safe file writes → it can be applied directly
+  // (the deterministic half of propose-then-convert); an `agent-task` has no artifacts.
+  const canApply =
+    proposal.kind === 'apply-artifacts' && proposal.artifactIds.length > 0;
+  const applied = proposal.status === 'applied';
+  const dismissed = proposal.status === 'dismissed';
 
   return (
     <DetailPanelShell
@@ -53,17 +62,34 @@ export function ProposalDetailPanel({
               <MoveIcon size={15} />
               Go to task
             </Button>
-          ) : (
-            <Button
-              disabled={pending || proposal.status === 'dismissed'}
-              onClick={() => onConvert(proposal.id)}
-            >
-              <MoveIcon size={15} />
-              Convert to task
+          ) : applied ? (
+            <Button variant="secondary" disabled>
+              <CheckIcon size={15} />
+              Applied
             </Button>
+          ) : (
+            <>
+              {canApply && (
+                <Button
+                  disabled={pending || dismissed}
+                  onClick={() => onApply(proposal.id)}
+                >
+                  <PlusIcon size={15} />
+                  Apply bundle
+                </Button>
+              )}
+              <Button
+                variant={canApply ? 'secondary' : undefined}
+                disabled={pending || dismissed}
+                onClick={() => onConvert(proposal.id)}
+              >
+                <MoveIcon size={15} />
+                Convert to task
+              </Button>
+            </>
           )}
 
-          {proposal.status === 'dismissed' ? (
+          {dismissed ? (
             <Button
               variant="ghost"
               disabled={pending}
@@ -73,7 +99,8 @@ export function ProposalDetailPanel({
               Restore
             </Button>
           ) : (
-            proposal.status !== 'converted' && (
+            proposal.status !== 'converted' &&
+            !applied && (
               <Button
                 variant="ghost"
                 disabled={pending}
@@ -126,8 +153,10 @@ export function ProposalDetailPanel({
       {proposal.artifactIds.length > 0 && (
         <DetailSection title={`Bundles ${proposal.artifactIds.length} artifact(s)`}>
           <p className="text-[12px] text-muted-foreground">
-            Converting this task tracks applying the bundled artifacts from the Artifacts
-            tab.
+            <span className="font-semibold text-foreground">Apply bundle</span> writes all{' '}
+            {proposal.artifactIds.length}{' '}
+            {proposal.artifactIds.length === 1 ? 'artifact' : 'artifacts'} to disk directly
+            (no agent, no cost), through the same hardened path as the Artifacts tab.
           </p>
         </DetailSection>
       )}

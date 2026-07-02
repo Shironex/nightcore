@@ -3,7 +3,7 @@ import { render } from 'vitest-browser-react';
 import { expect, test, vi } from 'vitest';
 import * as stories from './ProposalDetailPanel.stories';
 
-const { Open, Dismissed, Converted } = composeStories(stories);
+const { Open, Dismissed, Converted, ApplyArtifacts, Applied } = composeStories(stories);
 
 test('renders the proposal title, prompt, and verify command', async () => {
   const screen = render(<Open />);
@@ -43,4 +43,19 @@ test('a dismissed proposal offers a restore action', async () => {
   const screen = render(<Dismissed onRestore={onRestore} />);
   await screen.getByRole('button', { name: /restore/i }).click();
   expect(onRestore).toHaveBeenCalledWith('hp-1');
+});
+
+test('an apply-artifacts proposal offers a bundle-apply action', async () => {
+  const onApply = vi.fn();
+  const screen = render(<ApplyArtifacts onApply={onApply} />);
+  await screen.getByRole('button', { name: /apply bundle/i }).click();
+  expect(onApply).toHaveBeenCalledWith('hp-2');
+});
+
+test('an applied proposal shows an Applied state with no apply/convert action', async () => {
+  const screen = render(<Applied />);
+  await expect
+    .element(screen.getByRole('button', { name: 'Applied' }))
+    .toBeInTheDocument();
+  expect(screen.container.querySelector('button:disabled')).not.toBeNull();
 });
