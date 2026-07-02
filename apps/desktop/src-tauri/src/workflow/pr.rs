@@ -53,7 +53,9 @@ const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 
 /// Whether the machine can create PRs for the active project: `gh` on PATH and
 /// an `origin` remote configured. Sent to the UI so the Create PR button gates
-/// honestly instead of failing on click.
+/// honestly instead of failing on click. Booleans ONLY — the raw remote URL can
+/// embed credentials (`https://user:token@host/…`) and must never cross the IPC
+/// boundary into the renderer.
 #[derive(Debug, Clone, Serialize)]
 #[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
@@ -61,8 +63,9 @@ const GH_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(120);
 pub struct PrSupport {
     /// `which`-probed presence of the GitHub CLI.
     pub gh_installed: bool,
-    /// The project's `origin` remote URL; `None` when the repo has no remote.
-    pub remote: Option<String>,
+    /// Whether the project has an `origin` remote configured (the URL itself
+    /// stays on the Rust side — it may carry embedded credentials).
+    pub has_remote: bool,
 }
 
 /// An AI-drafted (or deterministically fallen-back) PR title + markdown body,
@@ -95,7 +98,7 @@ fn pr_support_blocking(app: &AppHandle, id: &str) -> Result<PrSupport, String> {
     let project_path = std::path::PathBuf::from(&project.path);
     Ok(PrSupport {
         gh_installed: which::which(GH_BINARY).is_ok(),
-        remote: worktree::remote_url(&project_path),
+        has_remote: worktree::remote_url(&project_path).is_some(),
     })
 }
 

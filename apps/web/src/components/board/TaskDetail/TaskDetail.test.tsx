@@ -234,7 +234,7 @@ test('swaps the button for a PR #<n> chip once prUrl is set, linking out', async
 });
 
 test('canCreatePr enforces the full eligibility contract', () => {
-  const green = { ghInstalled: true, remote: 'git@github.com:acme/nightcore.git' };
+  const green = { ghInstalled: true, hasRemote: true };
   const eligible = makeTask({
     status: 'done',
     verified: true,
@@ -253,8 +253,8 @@ test('canCreatePr enforces the full eligibility contract', () => {
   // Capability gates: unknown probe, missing gh, and missing remote all hide it.
   expect(canCreatePr(eligible, null)).toBe(false);
   expect(canCreatePr(eligible, undefined)).toBe(false);
-  expect(canCreatePr(eligible, { ghInstalled: false, remote: 'git@x' })).toBe(false);
-  expect(canCreatePr(eligible, { ghInstalled: true, remote: null })).toBe(false);
+  expect(canCreatePr(eligible, { ghInstalled: false, hasRemote: true })).toBe(false);
+  expect(canCreatePr(eligible, { ghInstalled: true, hasRemote: false })).toBe(false);
 });
 
 test('prChipLabel folds in the PR number when present', () => {
