@@ -40,7 +40,7 @@ jobs:
       - run: bun run test
 
   rust-checks:
-    name: cargo test · ts-rs drift (Rust core)
+    name: cargo test · clippy · fmt · ts-rs drift (Rust core)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -62,10 +62,24 @@ jobs:
             librsvg2-dev \
             patchelf
       - run: bun install --frozen-lockfile
+      # Style half of the Rust lint gate: rustfmt.toml pins the style, so a
+      # formatting diff is a CI failure, not editor noise. Runs before the
+      # compile steps because it needs no build artifacts.
+      - name: cargo fmt --check
+        run: cargo fmt --check
+        working-directory: apps/desktop/src-tauri
       # `bun run test:rust` compiles the sidecar (Tauri externalBin) then runs
       # `cargo test`, which also re-exports the Rust structs into
       # apps/web/src/lib/generated/ via ts-rs.
       - run: bun run test:rust
+      # Static-analysis half of the Rust lint gate — the TS side's error-or-off
+      # discipline applied to Rust. Runs AFTER test:rust so the sidecar
+      # externalBin exists (the Tauri build script requires it) and the cargo
+      # cache is warm. Lives here, NOT in lint-meta: the Bun lint job has no
+      # Tauri system deps and would red the gate.
+      - name: cargo clippy -D warnings
+        run: cargo clippy --all-targets -- -D warnings
+        working-directory: apps/desktop/src-tauri
       # ts-rs regenerate-and-diff guard. cargo test rewrote the bindings above; if
       # they differ from what is committed, a Rust struct changed without the
       # generated TS being regenerated. This makes the "CI asserts no git diff"
