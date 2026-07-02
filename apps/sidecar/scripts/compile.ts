@@ -37,6 +37,20 @@ const outfile = join(OUT_DIR, `nightcore-sidecar-${triple}${ext}`);
 
 mkdirSync(dirname(outfile), { recursive: true });
 
+// The bundle resolves every `@nightcore/*` dep through its package.json
+// `exports` (`./dist/index.js`), so the workspace chain must be BUILT first:
+// a fresh checkout (CI's rust-checks job) has no dist/ at all — bun reports
+// that as `Could not resolve "@nightcore/…"` — and a stale local dist/ would
+// be bundled silently. `tsc -b` over this package's project references builds
+// exactly the dep closure. `--force` because incremental mode trusts
+// `.tsbuildinfo` even when dist/ was deleted out from under it, and a binary
+// we ship is worth a few seconds of deterministic rebuild.
+console.log("building workspace references (tsc -b --force)");
+execFileSync("bun", ["x", "tsc", "-b", "--force", "."], {
+  stdio: "inherit",
+  cwd: SIDECAR_ROOT,
+});
+
 console.log(`compiling sidecar → ${outfile}`);
 execFileSync(
   "bun",
