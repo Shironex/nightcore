@@ -132,7 +132,7 @@ export function prEligibleTask(task: Task): boolean {
 export function canCreatePr(task: Task, support: PrSupport | null | undefined): boolean {
   if (!prEligibleTask(task)) return false;
   if (support === null || support === undefined) return false;
-  return support.ghInstalled && support.remote !== null;
+  return support.ghInstalled && support.hasRemote;
 }
 
 /** The PR chip's label once `prUrl` is set — `PR #123`, or a plain `PR` when the
@@ -143,7 +143,7 @@ export function prChipLabel(task: Task): string {
 
 /** A red probe, cached for a task whose `pr_support` call itself failed — the
  *  button hides rather than lying about capability. */
-const PROBE_FAILED: PrSupport = { ghInstalled: false, remote: null };
+const PROBE_FAILED: PrSupport = { ghInstalled: false, hasRemote: false };
 
 /** Lazily probe PR support (`gh` on PATH + an `origin` remote) for the open
  *  task, only once it passes the task-side eligibility gate, cached per task id

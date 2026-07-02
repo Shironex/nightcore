@@ -596,9 +596,11 @@ export interface CreatePrOptions {
 }
 
 /** Probe PR support for a task's project: `gh` on PATH + an `origin` remote.
- *  Returns a red probe outside Tauri (browser preview) so the button hides. */
+ *  Booleans only — the raw remote URL may embed credentials and never crosses
+ *  the IPC boundary. Returns a red probe outside Tauri (browser preview) so the
+ *  button hides. */
 export async function prSupport(id: string): Promise<PrSupport> {
-  return tauriInvoke<PrSupport>('pr_support', { id }, { ghInstalled: false, remote: null });
+  return tauriInvoke<PrSupport>('pr_support', { id }, { ghInstalled: false, hasRemote: false });
 }
 
 /** Draft a PR title/body for a task via a one-shot `claude -p` pass. The command

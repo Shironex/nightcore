@@ -3,7 +3,9 @@
 /**
  * Whether the machine can create PRs for the active project: `gh` on PATH and
  * an `origin` remote configured. Sent to the UI so the Create PR button gates
- * honestly instead of failing on click.
+ * honestly instead of failing on click. Booleans ONLY — the raw remote URL can
+ * embed credentials (`https://user:token@host/…`) and must never cross the IPC
+ * boundary into the renderer.
  */
 export type PrSupport = { 
 /**
@@ -11,6 +13,7 @@ export type PrSupport = {
  */
 ghInstalled: boolean, 
 /**
- * The project's `origin` remote URL; `None` when the repo has no remote.
+ * Whether the project has an `origin` remote configured (the URL itself
+ * stays on the Rust side — it may carry embedded credentials).
  */
-remote: string | null, };
+hasRemote: boolean, };

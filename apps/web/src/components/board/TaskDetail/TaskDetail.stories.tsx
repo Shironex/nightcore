@@ -311,7 +311,7 @@ export const ReadyForPr: Story = {
       review: SAMPLE_REVIEW_PASS,
     }),
     gauntlet: GAUNTLET_PASSED,
-    prSupport: { ghInstalled: true, remote: 'git@github.com:acme/nightcore.git' },
+    prSupport: { ghInstalled: true, hasRemote: true },
     stream: undefined,
   },
 };
@@ -321,7 +321,7 @@ export const ReadyForPr: Story = {
 export const PrSupportRed: Story = {
   args: {
     ...ReadyForPr.args,
-    prSupport: { ghInstalled: false, remote: null },
+    prSupport: { ghInstalled: false, hasRemote: false },
   },
 };
 
