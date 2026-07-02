@@ -1,7 +1,7 @@
 # The Pull Request System — full-arc design
 
 **Date:** 2026-07-02
-**Status:** DESIGN — phase 1 not yet built
+**Status:** phases 1–3 SHIPPED (Create PR / status+finalize+push / address-review-comments); phase 4 (AI PR reviewer) not yet built. NOT dogfooded against a real remote — all `gh` interactions fake-binary tested; E2E deferred to after the build phases.
 **Reference implementation studied:** Auto-Claude (`AndyMik90/Auto-Claude`, Electron+React) — its local task-review + `gh pr create` escape hatch, and its separate multi-agent GitHub PR reviewer.
 
 ---
