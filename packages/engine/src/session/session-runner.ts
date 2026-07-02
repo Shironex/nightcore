@@ -110,9 +110,15 @@ export class SessionRunner {
     private readonly logger?: Logger,
   ) {
     this.optionsBuilder = new SessionOptionsBuilder(cfg, logger);
-    // Confine file mutations to the run cwd (worktree isolation) — the PreToolUse
-    // gate enforces it even under `bypassPermissions`.
-    this.hooks = new HookBus(logger, { cwd: cfg.cwd });
+    // Confine file mutations to the run cwd (worktree isolation) and enforce the
+    // project's harness runtime policy (protected paths + Bash deny patterns) —
+    // the PreToolUse gate enforces both even under `bypassPermissions`.
+    this.hooks = new HookBus(logger, {
+      cwd: cfg.cwd,
+      ...(cfg.harnessPolicy !== undefined
+        ? { harnessPolicy: cfg.harnessPolicy }
+        : {}),
+    });
     this.permissions = new PermissionLayer(
       cfg.permissionPolicy,
       (req) =>
