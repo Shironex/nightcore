@@ -64,6 +64,34 @@ function normalizeBase(base: string, current: string): string {
  *  each keypress would race a fresh `claude -p` drafting pass. */
 const REDRAFT_DEBOUNCE_MS = 300;
 
+/** Shape the raw branch list for the BASE picker. `gh pr create` rejects a
+ *  remote-tracking spelling (`origin/develop`) as `--base` — and only AFTER the
+ *  push already happened — so those names must never be offered. Locals pass
+ *  through; remote-tracking entries are mapped to their short name
+ *  (`origin/develop` → `develop`, keeping a base that only exists on the remote
+ *  pickable — GitHub resolves `--base` server-side) and deduped against locals
+ *  and each other. Exported for tests. */
+export function baseBranchOptions(branches: BranchInfo[]): BranchInfo[] {
+  const seen = new Set<string>();
+  const out: BranchInfo[] = [];
+  for (const branch of branches) {
+    if (branch.isRemote) continue;
+    if (seen.has(branch.name)) continue;
+    seen.add(branch.name);
+    out.push(branch);
+  }
+  for (const branch of branches) {
+    if (!branch.isRemote) continue;
+    // `origin/feature/x` → `feature/x` (the first segment is the remote name).
+    const slash = branch.name.indexOf('/');
+    const short = slash >= 0 ? branch.name.slice(slash + 1) : branch.name;
+    if (short === '' || seen.has(short)) continue;
+    seen.add(short);
+    out.push({ ...branch, name: short });
+  }
+  return out;
+}
+
 /** Orchestrate the Create PR dialog. On every open (or task switch while open)
  *  the fields reset and `draftPrMessage` pre-fills the title/body — a drafting
  *  failure (or the empty browser-preview fallback) degrades to the task's own
@@ -144,15 +172,18 @@ export function useCreatePrDialog({
     };
   }, [open, taskId, fallbackTitle, fallbackBody, defaultBase]);
 
-  // Load the branch list for the base picker on open. Returns [] outside Tauri;
-  // a failure just leaves free-form entry. When no base was chosen at create
-  // time, default to the repo's checked-out branch (the merge default).
+  // Load the branch list for the base picker on open, shaped to gh-valid base
+  // names only (remote-tracking spellings mapped/deduped — see
+  // `baseBranchOptions`). Returns [] outside Tauri; a failure just leaves
+  // free-form entry. When no base was chosen at create time, default to the
+  // repo's checked-out branch (the merge default).
   useEffect(() => {
     if (!open) return;
     let alive = true;
     void listBranches()
-      .then((b) => {
+      .then((raw) => {
         if (!alive) return;
+        const b = baseBranchOptions(raw);
         setBranches(b);
         setBase((prev) => (prev === '' ? (b.find((x) => x.isCurrent)?.name ?? '') : prev));
       })
