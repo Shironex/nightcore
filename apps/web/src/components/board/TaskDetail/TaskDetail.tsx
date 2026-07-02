@@ -18,7 +18,7 @@ import { ActivityLog } from '../ActivityLog';
 import { GauntletResults } from '../GauntletResults';
 import { InteractionDock } from '../InteractionDock';
 import { ProposedSubtasksPanel } from '../ProposedSubtasksPanel';
-import { PrStatusCard } from '../PrStatusCard';
+import { PrStatusCard, usePrStatus } from '../PrStatusCard';
 import { ReviewPanel } from '../ReviewPanel';
 import { GroupLabel, HistoryCard, SessionCard } from '../SessionCard';
 import { formatCost, STATUS_LABEL, STATUS_TEXT } from '../status';
@@ -65,6 +65,12 @@ export function TaskDetail({
   // Lazy PR capability probe (gh + origin remote), cached per task id; the
   // `prSupport` prop (stories/tests) overrides and skips the fetch entirely.
   const resolvedPrSupport = usePrSupport(task, prSupport);
+  // The PR status hook is LIFTED here (not owned by the card) so the footer
+  // shares the fetched state — Merge disables when the PR is already merged on
+  // GitHub. Enabled only once a PR exists; `prStatus` (stories/tests) overrides
+  // and skips the fetch. The returned view is memoized, so the chrome memo
+  // below still bails on stream flushes.
+  const prStatusView = usePrStatus(task.id, prStatus, task.prUrl !== undefined);
   return (
     <TaskStreamContext.Provider value={sessions}>
       <TaskDetailChrome
@@ -81,7 +87,7 @@ export function TaskDetail({
         gauntlet={gauntlet}
         gauntletRunning={gauntletRunning}
         prSupport={resolvedPrSupport}
-        prStatus={prStatus}
+        prStatusView={prStatusView}
         onClose={onClose}
         actions={actions}
         isActionPending={isActionPending}
@@ -120,13 +126,18 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
   gauntlet,
   gauntletRunning,
   prSupport,
-  prStatus,
+  prStatusView,
   onClose,
   actions,
   isActionPending,
   onOpenSourceRef,
 }: TaskDetailChromeProps) {
   const mergeable = canMerge(task, gauntlet);
+  // Freshly-fetched PR state (from the lifted status view): a PR already
+  // merged ON GitHub must not arm the local Merge — the worktree branch was
+  // integrated remotely, and a local merge would re-apply it against a base
+  // that may already contain it. Finalize is the correct exit.
+  const remoteMerged = prStatusView.status?.state === 'MERGED';
   // Whether the Result band has anything to show (verdict and/or the Done-column
   // readiness gauntlet) — its label is suppressed otherwise so it never sits empty.
   const structureLockFailed =
@@ -250,12 +261,12 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
             <PrStatusCard
               key={task.id}
               task={task}
+              view={prStatusView}
               onOpenPr={actions.onOpenPr}
               onPushUpdates={actions.onPushPrUpdates}
               onFinalize={actions.onFinalizePr}
               onPullBase={actions.onPullBaseFf}
               isActionPending={isActionPending}
-              statusOverride={prStatus}
             />
           </div>
         )}
@@ -389,12 +400,14 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
             ) : task.committed ? (
               <Button
                 onClick={() => actions.onMerge?.(task.id)}
-                disabled={!mergeable || pending('merge')}
+                disabled={!mergeable || remoteMerged || pending('merge')}
                 aria-busy={pending('merge')}
                 title={
-                  mergeable
-                    ? undefined
-                    : 'Merge needs a verified task and a passing gauntlet — run the checks first'
+                  remoteMerged
+                    ? 'Merged on GitHub — use Finalize'
+                    : mergeable
+                      ? undefined
+                      : 'Merge needs a verified task and a passing gauntlet — run the checks first'
                 }
               >
                 {pending('merge') ? <Spinner /> : <BranchIcon size={14} />}

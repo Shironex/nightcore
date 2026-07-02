@@ -2,7 +2,7 @@
  *  manual-refresh status state, the confirm-gated mutation flow, and the pure
  *  gh-vocabulary → friendly-label mappers. NO polling — a fetch happens on
  *  mount, on the Refresh button, and after a successful push; that's it. */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type { PrStatus, Task } from '@/lib/bridge';
 import { prStatus } from '@/lib/bridge';
@@ -33,8 +33,16 @@ function errorText(err: unknown): string {
 }
 
 /** Fetch the PR status on mount (per task id) and on demand. `override` is the
- *  story/test seam — when provided (including `null`) no fetch ever fires. */
-export function usePrStatus(taskId: string, override?: PrStatus | null): PrStatusView {
+ *  story/test seam — when provided (including `null`) no fetch ever fires.
+ *  `enabled=false` (a task with no PR yet) renders the inert empty view and
+ *  fetches nothing — the OWNER of this hook is TaskDetail, which mounts it for
+ *  every open task so the footer can read the fetched state (`pr_status` on a
+ *  PR-less task would only error). */
+export function usePrStatus(
+  taskId: string,
+  override?: PrStatus | null,
+  enabled: boolean = true,
+): PrStatusView {
   const [status, setStatus] = useState<PrStatus | null>(null);
   const [fetching, setFetching] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,7 +50,7 @@ export function usePrStatus(taskId: string, override?: PrStatus | null): PrStatu
   const [refreshedAt, setRefreshedAt] = useState<number | null>(null);
   // Bumping the epoch re-runs the fetch effect (manual refresh / post-push).
   const [epoch, setEpoch] = useState(0);
-  const skip = override !== undefined;
+  const skip = override !== undefined || !enabled;
 
   // Task-switch reset (belt — the `key={task.id}` at the render site is the
   // suspenders, and dies if the hook is ever lifted above the keyed node): the
@@ -88,17 +96,32 @@ export function usePrStatus(taskId: string, override?: PrStatus | null): PrStatu
 
   const refresh = useCallback(() => setEpoch((n) => n + 1), []);
 
-  if (skip) {
-    return {
-      status: override,
-      fetching: false,
-      error: null,
-      unavailable: override === null,
-      refreshedAt: null,
-      refresh,
-    };
-  }
-  return { status, fetching, error, unavailable, refreshedAt, refresh };
+  // Memoized: the view crosses the memoized TaskDetailChrome as a prop, so its
+  // identity must only turn over when the VIEW changes — an unmemoized object
+  // literal would re-identify on every stream flush and defeat the chrome memo.
+  return useMemo<PrStatusView>(() => {
+    if (override !== undefined) {
+      return {
+        status: override,
+        fetching: false,
+        error: null,
+        unavailable: override === null,
+        refreshedAt: null,
+        refresh,
+      };
+    }
+    if (!enabled) {
+      return {
+        status: null,
+        fetching: false,
+        error: null,
+        unavailable: false,
+        refreshedAt: null,
+        refresh,
+      };
+    }
+    return { status, fetching, error, unavailable, refreshedAt, refresh };
+  }, [override, enabled, status, fetching, error, unavailable, refreshedAt, refresh]);
 }
 
 /** The card's three confirm-gated mutations. */

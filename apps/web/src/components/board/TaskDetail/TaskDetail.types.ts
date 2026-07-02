@@ -12,6 +12,7 @@ import type {
   TaskKind,
 } from '@/lib/bridge';
 
+import type { PrStatusView } from '../PrStatusCard';
 import type { TaskTranscript } from '../session-stream';
 
 /** The drawer's action callbacks, grouped into one object so the ~25 `on*`
@@ -160,9 +161,12 @@ export interface TaskDetailChromeProps {
    *  the Create PR button hides). Resolved by the outer drawer's `usePrSupport`
    *  so this memoized chrome stays hook-free. */
   prSupport: PrSupport | null;
-  /** Story/test override for the PR status card (forwarded as its
-   *  `statusOverride`); `undefined` in the app, so the card fetches itself. */
-  prStatus?: PrStatus | null;
+  /** The LIFTED PR-status view, resolved by the outer drawer's `usePrStatus`
+   *  (fetch once `task.prUrl` exists; the `prStatus` prop overrides for
+   *  stories/tests). Shared by the status card (which renders it) and the
+   *  footer (Merge disables when the fetched state is MERGED). Memoized by the
+   *  hook, so this memo still bails on stream flushes. */
+  prStatusView: PrStatusView;
   onClose: () => void;
   actions: TaskDetailActions;
   isActionPending?: (action: string, id: string) => boolean;

@@ -153,6 +153,25 @@ test('disables Merge until the gauntlet has run', async () => {
   await expect.element(screen.getByRole('button', { name: /^merge$/i })).toBeDisabled();
 });
 
+test('disables Merge with an explanatory title when the PR is merged on GitHub', async () => {
+  // PrRemoteMerged: committed + verified + passing gauntlet (locally Merge
+  // would be armed) but the freshly-fetched PR state is MERGED — the branch
+  // was integrated remotely, so the local Merge must point at Finalize.
+  const screen = render(<PrRemoteMerged />);
+  const merge = screen.getByRole('button', { name: /^merge$/i });
+  await expect.element(merge).toBeDisabled();
+  await expect
+    .element(merge)
+    .toHaveAttribute('title', 'Merged on GitHub — use Finalize');
+});
+
+test('an OPEN PR keeps local Merge armed (the disable keys on MERGED)', async () => {
+  // Same task fixture as the remote-merged case, but the PR is OPEN: local
+  // merge stays available (offline-capable, by design).
+  const screen = render(<PrStatusTracked />);
+  await expect.element(screen.getByRole('button', { name: /^merge$/i })).toBeEnabled();
+});
+
 test('disables Merge when the gauntlet failed', async () => {
   const screen = render(<GauntletFailed />);
   await expect.element(screen.getByRole('button', { name: /^merge$/i })).toBeDisabled();
