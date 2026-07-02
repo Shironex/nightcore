@@ -170,6 +170,7 @@ mod tests {
             resume_session_id: None,
             mcp_servers: None,
             append_context_pack: None,
+            harness_policy: None,
             images: None,
         };
         let wire = serde_json::to_value(&cmd).expect("serializes");
@@ -190,6 +191,7 @@ mod tests {
             "resumeSessionId",
             "mcpServers",
             "appendContextPack",
+            "harnessPolicy",
             "images",
         ] {
             assert!(

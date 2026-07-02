@@ -246,6 +246,29 @@ export type HarnessCheck = z.infer<typeof HarnessCheckSchema>;
  * `agent-task` (carrying a `prompt` + optional `verifyCommand` gauntlet gate). The
  * lifecycle (status/linked task) is owned by the Rust store, not here.
  */
+/**
+ * The runtime enforcement policy a project's `.nightcore/harness.json` declares
+ * under its `policy` key, carried on `start-session` so the engine's PreToolUse
+ * gate (hardening module #3: protected paths + bypass-flag denial) can enforce it
+ * for the whole run — including under `bypassPermissions`, where `canUseTool` is
+ * never consulted. The Rust core READS the manifest (it owns the file; the engine
+ * never touches the target repo) and passes the RESOLVED effective policy here:
+ * a disabled policy (`policy.enabled: false`) or an absent manifest is simply not
+ * sent. Patterns are project-authored config, never model output.
+ */
+export const HarnessPolicySchema = z.object({
+  /** Repo-relative paths/globs the native mutation tools (Write/Edit/…) may not
+   *  touch (lockfiles, migrations, generated code, …). `*` matches within a path
+   *  segment, `**` across segments; a pattern without `/` matches its basename at
+   *  any depth; a non-glob pattern also protects its whole subtree. */
+  protectedPaths: z.array(z.string()).default([]),
+  /** Regex patterns (JS syntax, case-sensitive) matched against the RAW Bash
+   *  command line; a match denies the call (e.g. `--no-verify`, `git commit
+   *  \\s+--amend`). An invalid pattern is warn-and-skipped by the engine. */
+  denyBashPatterns: z.array(z.string()).default([]),
+});
+export type HarnessPolicy = z.infer<typeof HarnessPolicySchema>;
+
 export const HarnessProposalSchema = z.object({
   /** Stable id assigned by the engine (convert/dismiss, UI keys). */
   id: z.string(),

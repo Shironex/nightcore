@@ -12,7 +12,9 @@ use crate::project::ProjectStore;
 use crate::store::TaskStore;
 use crate::task::{Task, TaskKind};
 
-use crate::sidecar::commands::{resolve_context_pack, resolve_mcp_servers, resolve_permission_mode};
+use crate::sidecar::commands::{
+    resolve_context_pack, resolve_harness_policy, resolve_mcp_servers, resolve_permission_mode,
+};
 
 /// The bounded auto-fix budget for the verification gate (M4 §B). On a
 /// `CHANGES_REQUESTED` verdict the core dispatches up to this many fix-build
@@ -74,6 +76,9 @@ pub(crate) async fn dispatch_reviewer(
                 // Lock (feature #4): the reviewer judges against the project's own
                 // Constitution, so it starts knowing the rules it's enforcing.
                 append_context_pack: resolve_context_pack(app),
+                // Module #3: the reviewer session runs under the same protected-path
+                // rules as the build (it can run tools too).
+                harness_policy: resolve_harness_policy(app),
             },
         )
         .await
@@ -120,6 +125,9 @@ pub(crate) async fn dispatch_fix(
                 // Lock (feature #4): a fix-build still edits the project, so it gets
                 // the same on-rails Constitution as the original build.
                 append_context_pack: resolve_context_pack(app),
+                // Module #3: a fix-build mutates the project under the same
+                // protected-path rules as the original build.
+                harness_policy: resolve_harness_policy(app),
             },
         )
         .await

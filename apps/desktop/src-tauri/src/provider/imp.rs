@@ -137,6 +137,11 @@ impl Provider for SidecarProvider {
             // compose into the SDK `appendSystemPrompt`. `None` serializes as an
             // OMITTED field — byte-identical to the pre-feature `start-session`.
             append_context_pack: guardrails.append_context_pack,
+            // Harness runtime policy (hardening module #3): the manifest-declared
+            // protected paths + Bash deny patterns the engine's PreToolUse gate
+            // enforces. `None` serializes as an OMITTED field — byte-identical to
+            // the pre-feature `start-session` (no policy layer).
+            harness_policy: guardrails.harness_policy,
             // Task image attachments → SDK image content blocks. An empty list
             // serializes as an OMITTED field — byte-identical to the pre-feature
             // `start-session` (a text-only user message).

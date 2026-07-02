@@ -62,7 +62,21 @@ pub fn build_guardrails(app: &AppHandle, task: &Task) -> crate::provider::Guardr
         resume_session_id: task.sdk_session_id.clone(),
         mcp_servers: resolve_mcp_servers(app),
         append_context_pack: resolve_context_pack(app),
+        harness_policy: resolve_harness_policy(app),
     }
+}
+
+/// The harness runtime policy (hardening module #3) to arm for a run in the active
+/// project: the `policy` key of `<project>/.nightcore/harness.json`, resolved by
+/// [`crate::store::harness_policy::read_policy`]. `None` when no project is active,
+/// no manifest exists, or the project disabled it (`policy.enabled: false`) — each
+/// yielding the pre-feature shape (no policy layer armed). The manifest is the
+/// opt-in itself, so there is no separate settings toggle. Shared by the build
+/// path, reviewer, and fix sub-runs so every session that can MUTATE the project
+/// runs under the same protected-path rules.
+pub fn resolve_harness_policy(app: &AppHandle) -> Option<crate::contracts::HarnessPolicy> {
+    let project = app.state::<ProjectStore>().active()?;
+    crate::store::harness_policy::read_policy(&project.path)
 }
 
 /// The Pre-flight Context Pack (Lock, feature #4) to inject for a run in the active
