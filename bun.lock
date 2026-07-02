@@ -95,6 +95,7 @@
         "@nightcore/contracts": "workspace:*",
         "@nightcore/shared": "workspace:*",
         "@nightcore/storage": "workspace:*",
+        "zod": "^4.4.3",
       },
     },
     "packages/eslint-plugin": {
