@@ -79,6 +79,8 @@ Auto-Claude's shape, adapted: a **Create PR** terminal action beside Merge on a 
 
 **Remote-merged finalize:** when `state == MERGED` — offer **Finalize** (human-gated): set `t.merged = true`, honor `cleanup_worktrees` (worktree remove + `delete_branch_named`), and offer a fast-forward-only pull of the base on the project root (`git pull --ff-only`, refuse otherwise). This closes the loop Auto-Claude leaves dangling (task says `pr_created` forever).
 
+**Residual gap (UI-level Merge disable):** the footer disables local Merge when the *fetched* status says MERGED, but `merge_task` itself does no network re-check (local merge must stay offline-capable) — a stale or never-fetched status can still let a remotely-merged branch merge locally.
+
 **Push updates:** the phase-1 push is already re-runnable; expose it as **Push updates** on a task whose PR is open and whose worktree is ahead (`WorktreeStatus.ahead_of_base` twin computed vs the remote ref). Behind-base ⇒ report it; do **not** auto-rebase (abort-not-force).
 
 ## 5. Phase 3 — Address review comments

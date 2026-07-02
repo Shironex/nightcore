@@ -33,6 +33,7 @@ const BADGE_BASE =
 
 export function PrStatusCard({
   task,
+  view: liftedView,
   onOpenPr,
   onPushUpdates,
   onFinalize,
@@ -40,7 +41,11 @@ export function PrStatusCard({
   isActionPending,
   statusOverride,
 }: PrStatusCardProps) {
-  const view = usePrStatus(task.id, statusOverride);
+  // Self-fetch ONLY when no lifted view is provided (stories/tests): the app
+  // path lifts `usePrStatus` into TaskDetail so the footer shares the fetched
+  // state — the hook here stays mounted (rules of hooks) but inert.
+  const selfView = usePrStatus(task.id, statusOverride, liftedView === undefined);
+  const view = liftedView ?? selfView;
   const confirm = usePrConfirm(task.id, view.refresh, onPushUpdates, onFinalize, onPullBase);
   const { status } = view;
   const pending = (action: string): boolean => isActionPending?.(action, task.id) ?? false;
