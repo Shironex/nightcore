@@ -341,6 +341,8 @@ export function useInsightView({
   projectPath,
   projectName,
   onGotoBoard,
+  preselect,
+  onPreselectConsumed,
 }: InsightViewProps): InsightViewModel {
   const hasProject = projectPath !== null;
   const toast = useToast();
@@ -377,6 +379,25 @@ export function useInsightView({
     setBulkDone(0);
     setBulkFailed(0);
   }, []);
+
+  // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
+  // a run + finding to open. Consume the target FIRST (so it can never refire),
+  // land on that run's RESULTS, and open the finding's detail panel. A deleted
+  // run/finding degrades to the current stream with no panel — never an error.
+  const { selectRun } = insight;
+  useEffect(() => {
+    if (preselect === null || preselect === undefined) return;
+    const { runId, itemId } = preselect;
+    onPreselectConsumed?.();
+    setReconfiguring(false);
+    setPeekCategory(null);
+    resetBulk();
+    setActiveTab('all');
+    void (async () => {
+      await selectRun(runId);
+      setSelectedId(itemId);
+    })();
+  }, [preselect, onPreselectConsumed, selectRun, resetBulk]);
 
   // `isStarting` is folded into the phase so the optimistic-running IPC gap shows
   // the RUNNING screen, not a flash of the previous run's RESULTS (the persisted

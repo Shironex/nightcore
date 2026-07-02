@@ -243,6 +243,8 @@ export function AppShell() {
                 // card/column deletes).
                 actions={board.detailActions}
                 isActionPending={board.isActionPending}
+                // Provenance chip → the originating scan run/item (routing concern).
+                onOpenSourceRef={routing.gotoSourceRef}
               />
               </Suspense>
             )}
@@ -261,6 +263,8 @@ export function AppShell() {
               projectPath={active?.path ?? null}
               projectName={active?.name ?? null}
               onGotoBoard={() => routing.goto('board')}
+              preselect={routing.scanTarget?.view === 'insight' ? routing.scanTarget : null}
+              onPreselectConsumed={routing.clearScanTarget}
             />
           </Suspense>
         )}
@@ -271,6 +275,8 @@ export function AppShell() {
               projectPath={active?.path ?? null}
               projectName={active?.name ?? null}
               onGotoBoard={() => routing.goto('board')}
+              preselect={routing.scanTarget?.view === 'scorecard' ? routing.scanTarget : null}
+              onPreselectConsumed={routing.clearScanTarget}
             />
           </Suspense>
         )}
@@ -281,6 +287,8 @@ export function AppShell() {
               projectPath={active?.path ?? null}
               projectName={active?.name ?? null}
               onGotoBoard={() => routing.goto('board')}
+              preselect={routing.scanTarget?.view === 'harness' ? routing.scanTarget : null}
+              onPreselectConsumed={routing.clearScanTarget}
             />
           </Suspense>
         )}

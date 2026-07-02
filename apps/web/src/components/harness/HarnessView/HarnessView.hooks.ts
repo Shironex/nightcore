@@ -633,6 +633,8 @@ export function useHarnessView({
   projectPath,
   projectName,
   onGotoBoard,
+  preselect,
+  onPreselectConsumed,
 }: HarnessViewProps): HarnessViewModel {
   const hasProject = projectPath !== null;
   const harness = useHarness(hasProject);
@@ -657,6 +659,31 @@ export function useHarnessView({
   const config = useRunConfig(!hasProject);
   const [reconfiguring, setReconfiguring] = useState(false);
   const [peekCategory, setPeekCategory] = useState<ConventionCategory | null>(null);
+
+  // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
+  // a run + item to open. Consume the target FIRST (so it can never refire), land
+  // on that run's RESULTS in the owning section, and open the item's detail
+  // panel — a convention finding or a proposal, per the token's `kind`. A deleted
+  // run/item degrades to the current stream with no panel — never an error.
+  const { selectRun } = harness;
+  useEffect(() => {
+    if (preselect === null || preselect === undefined) return;
+    const { runId, itemId, kind } = preselect;
+    onPreselectConsumed?.();
+    setReconfiguring(false);
+    setPeekCategory(null);
+    void (async () => {
+      await selectRun(runId);
+      if (kind === 'proposal') {
+        setSection('proposals');
+        setSelectedProposalId(itemId);
+      } else {
+        setSection('conventions');
+        setActiveTab('all');
+        setSelectedFindingId(itemId);
+      }
+    })();
+  }, [preselect, onPreselectConsumed, selectRun]);
 
   // `isStarting` folds the launch round-trip into RUNNING: between clicking Scan
   // and the optimistic running stream landing, `stream.status` is still the prior
