@@ -44,6 +44,22 @@ export function usePrStatus(taskId: string, override?: PrStatus | null): PrStatu
   const [epoch, setEpoch] = useState(0);
   const skip = override !== undefined;
 
+  // Task-switch reset (belt — the `key={task.id}` at the render site is the
+  // suspenders, and dies if the hook is ever lifted above the keyed node): the
+  // hook instance survives a task switch, so task A's snapshot (status/error/
+  // refreshedAt) would render — and ARM confirm dialogs — against task B until
+  // B's fetch lands. The React render-adjust pattern resets synchronously
+  // BEFORE paint (an effect-time reset would still flash one stale frame where
+  // a merged-A snapshot arms Finalize against B).
+  const [lastTaskId, setLastTaskId] = useState(taskId);
+  if (lastTaskId !== taskId) {
+    setLastTaskId(taskId);
+    setStatus(null);
+    setError(null);
+    setUnavailable(false);
+    setRefreshedAt(null);
+  }
+
   useEffect(() => {
     if (skip) return;
     let stale = false;
