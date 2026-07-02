@@ -150,6 +150,8 @@ export type { StoredReviewFinding } from './generated/ReviewFinding';
 // zod contract (the engine's wire shape); the generated `StoredReviewFinding` keeps
 // `lens`/`severity`/`status` as `string`, so the PR Review view casts to these unions.
 export type { ReviewFinding, ReviewLens, ReviewSeverity } from '@nightcore/contracts';
+// Open-PR summaries for the PR Review config picker (ts-rs from `workflow/pr_list.rs`).
+export type { PrSummary } from './generated/PrSummary';
 
 /** The kind preset a task runs under and the four UI permission modes are
  *  generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
@@ -192,6 +194,7 @@ import type { PermissionMode } from './generated/PermissionMode';
 import type { Project } from './generated/Project';
 import type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
 import type { PrReviewRun } from './generated/PrReviewRun';
+import type { PrSummary } from './generated/PrSummary';
 import type { RunMode } from './generated/RunMode';
 import type { ScorecardRun } from './generated/ScorecardRun';
 import type { SessionInfo } from './generated/SessionInfo';
@@ -1383,6 +1386,14 @@ export async function startPrReview(
 /** Cancel an in-flight PR Review run (aborts every lens pass). No-op outside Tauri. */
 export async function cancelPrReview(runId: string): Promise<void> {
   await tauriInvoke<void>('cancel_pr_review', { runId }, undefined);
+}
+
+/** The active project's OPEN pull requests (newest first, capped), for the PR
+ *  Review config picker. `[]` outside Tauri. Rejects (throws) on a gh failure so
+ *  the picker can surface "not a repo / gh not installed / auth" inline. */
+export async function listOpenPrs(): Promise<PrSummary[]> {
+  if (!isTauri()) return [];
+  return invoke<PrSummary[]>('list_open_prs');
 }
 
 /** All PR Review runs for the active project, newest first. `[]` outside Tauri. */

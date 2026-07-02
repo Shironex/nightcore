@@ -197,6 +197,7 @@ pub fn run() {
             sidecar::convert_review_finding_to_task,
             sidecar::delete_pr_review_run,
             workflow::pr_review_post::post_review_to_github,
+            workflow::pr_list::list_open_prs,
             transcript::read_transcript,
             plan_approval::approve_task,
             plan_approval::reject_task,

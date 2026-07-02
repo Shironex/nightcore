@@ -51,6 +51,7 @@ fn export_all_bindings() {
         TaskStatus,
     };
     use crate::workflow::pr::{PrDraft, PrSupport};
+    use crate::workflow::pr_list::PrSummary;
     use crate::workflow::pr_status::PrStatus;
     use crate::worktree::{
         BranchInfo, DiffFileStat, DiffStatus, MergePreview, MergePreviewStatus, WorktreeDiff,
@@ -142,6 +143,8 @@ fn export_all_bindings() {
         PrDraft,
         // PR arc (phase 2): the status-card snapshot.
         PrStatus,
+        // PR arc (phase 4): open-PR summaries for the PR Review picker.
+        PrSummary,
     );
 }
 
@@ -219,6 +222,7 @@ mod tests {
             "PrSupport.ts",
             "PrDraft.ts",
             "PrStatus.ts",
+            "PrSummary.ts",
         ] {
             assert!(
                 dir.join(file).exists(),
