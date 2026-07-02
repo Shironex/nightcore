@@ -71,12 +71,12 @@ pub(crate) fn resolve_worktree(
                 .unwrap_or_else(|| worktree::base_branch(&project_path));
             let dir = worktree::allocate_branch(&project_path, task_id, &branch, &base)?;
             tracing::info!(target: "nightcore", task_id, worktree = %dir.display(), "allocated worktree");
-            Ok(Some(ResolvedCwd::worktree(dir)))
+            Ok(Some(ResolvedCwd::worktree(dir, project_path)))
         }
         WorktreePlan::DefaultBranch => {
             let dir = worktree::allocate(&project_path, task_id)?;
             tracing::info!(target: "nightcore", task_id, worktree = %dir.display(), "allocated worktree");
-            Ok(Some(ResolvedCwd::worktree(dir)))
+            Ok(Some(ResolvedCwd::worktree(dir, project_path)))
         }
     }
 }
@@ -129,19 +129,31 @@ fn plan_worktree(
 pub struct ResolvedCwd {
     pub path: PathBuf,
     pub is_worktree: bool,
+    /// The active project's ROOT at cwd-resolution time. Captured HERE — from the
+    /// SAME `active()` read that produced the cwd — so downstream project-scoped
+    /// enforcement config (the harness runtime policy, whose manifest lives at the
+    /// project root even for a worktree run) resolves from the same project
+    /// snapshot the cwd came from. Without this the policy is re-read from
+    /// `active()` after `submit_run`'s sidecar-cold-start await, where a
+    /// mid-launch project switch could arm the WRONG project's rails (or none)
+    /// over a run whose cwd is already pinned to this project. In main mode this
+    /// equals `path`; in worktree mode it is the parent of the worktree.
+    pub project_root: PathBuf,
 }
 
 impl ResolvedCwd {
     fn root(path: PathBuf) -> Self {
         Self {
+            project_root: path.clone(),
             path,
             is_worktree: false,
         }
     }
-    fn worktree(path: PathBuf) -> Self {
+    fn worktree(path: PathBuf, project_root: PathBuf) -> Self {
         Self {
             path,
             is_worktree: true,
+            project_root,
         }
     }
 }

@@ -10,11 +10,15 @@
 //! output, so the patterns resolved here are trusted project config.
 //!
 //! ## Resolution semantics (mirrors the gauntlet's lenient posture)
-//! - Manifest ABSENT / unreadable ⇒ `None` — no policy layer at all (the
-//!   pre-feature shape; projects without a manifest are completely unaffected).
+//! - Manifest ABSENT ⇒ `None` — no policy layer at all (the pre-feature shape;
+//!   projects without a manifest are completely unaffected).
+//! - Present but UNREADABLE (EACCES/EIO, not `NotFound`) ⇒ warn + `None` — a
+//!   security layer going dark deserves a log line, unlike a plain absent file.
 //! - Malformed JSON / non-object root ⇒ warn + `None` — the gauntlet already
 //!   warn-and-skips such a file, and there is no parseable intent to honor.
-//! - `policy.enabled == false` ⇒ `None` — the documented wholesale opt-out.
+//! - `policy.enabled == false` ⇒ `None` — the documented wholesale opt-out. A
+//!   present-but-non-bool `enabled` (`"false"`, `0`) is NOT the opt-out: it warns
+//!   and the layer still arms (fail toward protection, but visibly).
 //! - `policy` key ABSENT (or not an object) ⇒ `Some(empty policy)`: the layer
 //!   still arms so the engine's IMPLICIT `.nightcore/**` self-protection guards
 //!   the manifest — a project that armed gauntlet checks must not have an agent
@@ -61,7 +65,21 @@ fn string_entries(policy: &Value, key: &str) -> Vec<String> {
 /// policy layer should be armed (no manifest, malformed manifest, or
 /// `policy.enabled: false`). See the module header for the full semantics.
 pub fn read_policy(project_path: &str) -> Option<HarnessPolicy> {
-    let raw = std::fs::read_to_string(manifest_file(project_path)).ok()?;
+    let raw = match std::fs::read_to_string(manifest_file(project_path)) {
+        Ok(raw) => raw,
+        // A plain absent file is the pre-feature shape (no manifest → no layer),
+        // silent by design. Any OTHER IO error (EACCES/EIO on a present file) is a
+        // security layer going dark, so it warns before failing open.
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return None,
+        Err(e) => {
+            tracing::warn!(
+                target: "nightcore::harness_policy",
+                error = %e,
+                "cannot read .nightcore/harness.json; not arming the policy layer"
+            );
+            return None;
+        }
+    };
     let root: Value = match serde_json::from_str(&raw) {
         Ok(v) => v,
         Err(e) => {
@@ -86,6 +104,17 @@ pub fn read_policy(project_path: &str) -> Option<HarnessPolicy> {
         // The wholesale opt-out: `"policy": { "enabled": false, … }`.
         if p.get("enabled").and_then(Value::as_bool) == Some(false) {
             return None;
+        }
+        // A present-but-non-bool `enabled` is NOT the opt-out spelling — warn so a
+        // `"enabled": "false"` / `0` typo doesn't silently keep the layer armed
+        // while the author believes they disabled it.
+        if let Some(enabled) = p.get("enabled") {
+            if !enabled.is_boolean() {
+                tracing::warn!(
+                    target: "nightcore::harness_policy",
+                    "`policy.enabled` in .nightcore/harness.json is not a boolean; the layer stays armed (use `false` to opt out)"
+                );
+            }
         }
         if !p.is_object() {
             tracing::warn!(
@@ -176,6 +205,19 @@ mod tests {
         );
         let policy = read_policy(&root).expect("policy armed");
         assert_eq!(policy.protected_paths, vec!["bun.lock", "Cargo.lock"]);
+    }
+
+    #[test]
+    fn non_bool_enabled_still_arms_the_layer() {
+        // `"enabled": "false"` (string) is NOT the boolean opt-out spelling — the
+        // layer stays armed (fail toward protection) rather than silently disabling.
+        let tmp = TempDir::new().expect("temp dir");
+        let root = write_manifest(
+            &tmp,
+            r#"{ "policy": { "enabled": "false", "protectedPaths": ["bun.lock"] } }"#,
+        );
+        let policy = read_policy(&root).expect("layer stays armed for a non-bool enabled");
+        assert_eq!(policy.protected_paths, vec!["bun.lock"]);
     }
 
     #[test]
