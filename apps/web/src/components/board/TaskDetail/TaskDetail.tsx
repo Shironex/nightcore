@@ -244,7 +244,11 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
         {task.prUrl !== undefined && (
           <div className="space-y-3">
             <GroupLabel>Pull request</GroupLabel>
+            {/* Keyed per task (suspenders — the hook's own task-switch reset is
+                the belt) so a switch remounts the card: no stale status/error
+                snapshot or armed confirm dialog can carry from task A to B. */}
             <PrStatusCard
+              key={task.id}
               task={task}
               onOpenPr={actions.onOpenPr}
               onPushUpdates={actions.onPushPrUpdates}

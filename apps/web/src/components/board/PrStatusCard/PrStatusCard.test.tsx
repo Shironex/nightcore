@@ -312,6 +312,45 @@ test('Update base branch shows once finalized and fires pull_base_ff from its co
   await vi.waitFor(() => expect(invoke).toHaveBeenCalledWith('pull_base_ff', { id: 't-pr' }));
 });
 
+test('switching tasks never leaks the previous task&apos;s status, badges, or actions', async () => {
+  // Task A resolves to a MERGED snapshot (which arms Finalize); task B's fetch
+  // NEVER lands. The same hook instance is reused (no key here — the key lives
+  // in TaskDetail as the second layer), so this pins the in-hook reset: after
+  // the switch, nothing of A may render against B — with a merged-A snapshot
+  // the Finalize dialog would cite A's PR while acting on B.
+  const taskB = makeTask({
+    ...TASK,
+    id: 't-pr-b',
+    prUrl: 'https://github.com/acme/nightcore/pull/456',
+    prNumber: 456,
+  });
+  stubCommands({
+    pr_status: (args) =>
+      (args as { id: string }).id === 't-pr'
+        ? Promise.resolve(makePrStatus({ state: 'MERGED' }))
+        : new Promise<PrStatus>(() => {}),
+  });
+  const screen = renderCard();
+  await expect.element(screen.getByText('Merged')).toBeInTheDocument();
+  await expect.element(screen.getByRole('button', { name: /finalize/i })).toBeInTheDocument();
+
+  screen.rerender(
+    <PrStatusCard
+      task={taskB}
+      onOpenPr={() => {}}
+      onPushUpdates={(id) => pushPrUpdates(id)}
+      onFinalize={(id) => finalizeMergedPr(id)}
+      onPullBase={(id) => pullBaseFf(id)}
+    />,
+  );
+  // B's fetch is pending forever: the card must show ITS pending state, not
+  // A's merged snapshot or armed actions.
+  await expect.element(screen.getByText('Fetching PR status…')).toBeInTheDocument();
+  expect(screen.getByText('Merged').query()).toBeNull();
+  expect(screen.getByRole('button', { name: /finalize/i }).query()).toBeNull();
+  expect(screen.getByText(/^Refreshed /).query()).toBeNull();
+});
+
 test('pullBaseLine grounds the confirm copy like the backend resolves the base', () => {
   const status = makePrStatus({ baseRefName: 'main' });
   // Legacy task (no persisted base): the server-reported base, explicitly
