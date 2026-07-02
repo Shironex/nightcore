@@ -141,6 +141,15 @@ export type {
   RepoProfile,
   WorkspaceTool,
 } from '@nightcore/contracts';
+// PR Review (fourth scan sibling) persisted shapes (ts-rs from `store/pr_review.rs`).
+// `PrReviewRun` reuses the shared `InsightUsage` token totals; `StoredReviewFinding`
+// is the Rust `StoredReviewFinding` (its ts-rs `export_to="ReviewFinding.ts"`).
+export type { PrReviewRun } from './generated/PrReviewRun';
+export type { StoredReviewFinding } from './generated/ReviewFinding';
+// The PR-review lens/severity taxonomy + the live wire `ReviewFinding` come from the
+// zod contract (the engine's wire shape); the generated `StoredReviewFinding` keeps
+// `lens`/`severity`/`status` as `string`, so the PR Review view casts to these unions.
+export type { ReviewFinding, ReviewLens, ReviewSeverity } from '@nightcore/contracts';
 
 /** The kind preset a task runs under and the four UI permission modes are
  *  generated FROM the Rust enums (`TaskKind` / `PermissionMode` in
@@ -165,6 +174,7 @@ import type {
   ConventionCategory,
   EffortLevel,
   FindingCategory,
+  ReviewLens,
   ScorecardDimension,
 } from '@nightcore/contracts';
 
@@ -181,6 +191,7 @@ import type { MergePreview } from './generated/MergePreview';
 import type { PermissionMode } from './generated/PermissionMode';
 import type { Project } from './generated/Project';
 import type { ProviderConfigSnapshot } from './generated/ProviderConfigSnapshot';
+import type { PrReviewRun } from './generated/PrReviewRun';
 import type { RunMode } from './generated/RunMode';
 import type { ScorecardRun } from './generated/ScorecardRun';
 import type { SessionInfo } from './generated/SessionInfo';
@@ -1319,6 +1330,142 @@ export async function onInsightEvent(
   handler: (event: InsightEvent) => void,
 ): Promise<UnlistenFn> {
   return subscribeChannel('nc:insight', parseInsightEvent, handler);
+}
+
+// --- PR Review (fourth scan sibling) --------------------------------------
+
+/** The PR Review event family streamed over `nc:pr-review`, narrowed from the
+ *  authoritative `NightcoreEvent` union. Unlike Insight — whose `finding-converted`
+ *  is a non-schema notice shape-checked in place — the convert acknowledgement
+ *  `pr-review-finding-converted` is itself a `NightcoreEvent`, so the whole channel
+ *  narrows as one validated family. */
+export type PrReviewEvent = Extract<
+  NcEvent,
+  {
+    type:
+      | 'pr-review-started'
+      | 'pr-review-lens-started'
+      | 'pr-review-lens-completed'
+      | 'pr-review-completed'
+      | 'pr-review-failed'
+      | 'pr-review-finding-converted';
+  }
+>;
+
+/** One inline review comment posted alongside a GitHub review: a diff anchor
+ *  (`path` + 1-based `line`) plus the Nightcore-composed body. */
+export interface ReviewInlineComment {
+  path: string;
+  line: number;
+  body: string;
+}
+
+/** The three GitHub review verdicts in the web's kebab wire form (the Rust core
+ *  maps them to gh's `APPROVE` / `REQUEST_CHANGES` / `COMMENT`). */
+export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
+
+/** Start a PR Review run over the active project's pull request `prNumber`. Returns
+ *  the `runId` the `pr-review-*` events correlate by. The project path is resolved
+ *  server-side from the active project (never passed). Rejects outside Tauri. */
+export async function startPrReview(
+  prNumber: number,
+  lenses: ReviewLens[],
+  options: { model?: string | null; effort?: EffortLevel | null } = {},
+): Promise<string> {
+  return invoke<string>('start_pr_review', {
+    prNumber,
+    lenses,
+    model: options.model ?? null,
+    effort: options.effort ?? null,
+  });
+}
+
+/** Cancel an in-flight PR Review run (aborts every lens pass). No-op outside Tauri. */
+export async function cancelPrReview(runId: string): Promise<void> {
+  await tauriInvoke<void>('cancel_pr_review', { runId }, undefined);
+}
+
+/** All PR Review runs for the active project, newest first. `[]` outside Tauri. */
+export async function listPrReviewRuns(): Promise<PrReviewRun[]> {
+  return tauriInvoke<PrReviewRun[]>('list_pr_review_runs', {}, []);
+}
+
+/** One PR Review run by id, or `null`. `null` outside Tauri. */
+export async function getPrReviewRun(runId: string): Promise<PrReviewRun | null> {
+  return tauriInvoke<PrReviewRun | null>('get_pr_review_run', { runId }, null);
+}
+
+/** Mark a review finding dismissed (it stays dismissed across future re-runs).
+ *  Returns the updated run. No-op (`null`) outside Tauri. */
+export async function dismissReviewFinding(
+  runId: string,
+  findingId: string,
+): Promise<PrReviewRun | null> {
+  return tauriInvoke<PrReviewRun | null>(
+    'dismiss_review_finding',
+    { runId, findingId },
+    null,
+  );
+}
+
+/** Restore a dismissed review finding back to open. Returns the updated run. */
+export async function restoreReviewFinding(
+  runId: string,
+  findingId: string,
+): Promise<PrReviewRun | null> {
+  return tauriInvoke<PrReviewRun | null>(
+    'restore_review_finding',
+    { runId, findingId },
+    null,
+  );
+}
+
+/** Convert a review finding into a board task (idempotent). Returns the created task. */
+export async function convertReviewFindingToTask(
+  runId: string,
+  findingId: string,
+): Promise<Task> {
+  return invoke<Task>('convert_review_finding_to_task', { runId, findingId });
+}
+
+/** Delete a PR Review run and its file. No-op outside Tauri. */
+export async function deletePrReviewRun(runId: string): Promise<void> {
+  await tauriInvoke<void>('delete_pr_review_run', { runId }, undefined);
+}
+
+/** Post a review to GitHub — the terminal, human-gated action. The Rust core
+ *  composes ONE `gh api POST …/reviews` carrying `{event, body, comments[]}`.
+ *  `verdict` is the web kebab form; `body` + `comments` are Nightcore-composed from
+ *  the SELECTED findings (our own trusted text — never raw foreign diff). Uses raw
+ *  `invoke` (like {@link applyHarnessArtifact}) so a gh failure surfaces to the
+ *  caller. Rejects outside Tauri (no active project). */
+export async function postReviewToGithub(
+  prNumber: number,
+  verdict: ReviewVerdict,
+  body: string,
+  comments: ReviewInlineComment[],
+): Promise<void> {
+  await invoke<void>('post_review_to_github', { prNumber, verdict, body, comments });
+}
+
+/** Narrow an unknown `nc:pr-review` payload to a `PrReviewEvent`. The whole
+ *  `pr-review-*` family (including the convert acknowledgement) is a
+ *  `NightcoreEvent`, so a single `NightcoreEventSchema` validation + prefix check
+ *  is enough — no separate notice branch (unlike Insight). */
+function parsePrReviewEvent(value: unknown): PrReviewEvent | null {
+  const parsed = NightcoreEventSchema.safeParse(value);
+  if (parsed.success && parsed.data.type.startsWith('pr-review-')) {
+    return parsed.data as PrReviewEvent;
+  }
+  return null;
+}
+
+/** Subscribe to `nc:pr-review` streamed review events. Returns an unlisten
+ *  function (a no-op outside Tauri). */
+export async function onPrReviewEvent(
+  handler: (event: PrReviewEvent) => void,
+): Promise<UnlistenFn> {
+  return subscribeChannel('nc:pr-review', parsePrReviewEvent, handler);
 }
 
 // --- Readiness Scorecard (Profile) ----------------------------------------
