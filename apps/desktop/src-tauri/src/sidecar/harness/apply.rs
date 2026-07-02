@@ -62,6 +62,18 @@ const DENIED_TARGET_BASENAMES: &[&str] = &[
     ".pre-commit-config.yaml", // pre-commit — runs hook commands on every commit
     ".gitlab-ci.yml",         // GitLab CI
     ".gitlab-ci.yaml",
+    // lefthook — its recipe bodies run as git hooks once `lefthook install` has wired
+    // the repo, and dropping a config re-arms an already-wired one. Same class as
+    // `.pre-commit-config.yaml`; commit-discipline output (hardening module #18) must
+    // route through a human-reviewed agent task instead. All names lefthook resolves.
+    "lefthook.yml",
+    ".lefthook.yml",
+    "lefthook.yaml",
+    ".lefthook.yaml",
+    "lefthook.toml",
+    ".lefthook.toml",
+    "lefthook.json",
+    ".lefthook.json",
 ];
 
 /// Basenames a `merge-section` write may target. `merge-section` is the ONLY write mode
@@ -460,6 +472,12 @@ mod tests {
             "sub/.envrc",
             ".pre-commit-config.yaml",
             ".GitLab-CI.yml", // case-insensitive basename bypass attempt
+            // lefthook configs are git-hook bodies once installed — rejected at any
+            // depth and in every format/dotted variant lefthook resolves.
+            "lefthook.yml",
+            ".lefthook.yaml",
+            "tools/lefthook.toml",
+            "packages/web/Lefthook.json", // case-insensitive basename bypass attempt
         ] {
             assert!(
                 safe_join(tmp.path(), bad).is_err(),
