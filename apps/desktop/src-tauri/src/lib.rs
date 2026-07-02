@@ -180,6 +180,7 @@ pub fn run() {
             sidecar::dismiss_harness_artifact,
             sidecar::restore_harness_artifact,
             sidecar::apply_harness_artifact,
+            sidecar::apply_harness_proposal,
             sidecar::arm_harness_gauntlet_check,
             sidecar::start_scorecard,
             sidecar::cancel_scorecard,
