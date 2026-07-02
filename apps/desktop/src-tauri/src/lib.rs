@@ -205,6 +205,8 @@ pub fn run() {
             workflow::pr_status::push_pr_updates,
             workflow::pr_status::finalize_merged_pr,
             workflow::pr_status::pull_base_ff,
+            workflow::pr_comments::list_pr_comments,
+            workflow::pr_comments::address_pr_comments,
             gauntlet::run_gauntlet,
             workflow::ratchet::snapshot_ratchet_baseline,
             store::injection_scan::scan_injection_surface,
