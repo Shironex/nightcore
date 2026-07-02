@@ -1,11 +1,14 @@
 // @ts-check
 import { agentContractParityRule } from './rules/agent-contract-parity';
+import { agentsDocPresenceRule } from './rules/agents-doc-presence';
 import { codegenDriftRule } from './rules/codegen-drift';
+import { decisionRegisterIntegrityRule } from './rules/decision-register-integrity';
 import { layerRankRule } from './rules/layer-rank';
 import { noWarnSeverityRule } from './rules/no-warn-severity';
 import { packageShapeRule } from './rules/package-shape';
 import { testRunnerSegregationRule } from './rules/test-runner-segregation';
 import { testWorkspaceEnrollmentRule } from './rules/test-workspace-enrollment';
+import { uiPrimitiveShapeRule } from './rules/ui-primitive-shape';
 import { workspaceGraphParityRule } from './rules/workspace-graph-parity';
 import type { IMetaRule } from './types';
 
@@ -22,4 +25,7 @@ export const META_RULES: IMetaRule[] = [
   noWarnSeverityRule,
   testWorkspaceEnrollmentRule,
   testRunnerSegregationRule,
+  decisionRegisterIntegrityRule,
+  agentsDocPresenceRule,
+  uiPrimitiveShapeRule,
 ];

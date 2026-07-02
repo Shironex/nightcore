@@ -31,6 +31,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 ## Lint discipline
 - Always run `bun run lint` (it rebuilds `@nightcore/eslint-plugin` to `dist/` first) — never a bare `eslint .`.
 - Architectural boundaries are lint rules, not docs. A new legitimate cross-layer need adds a named seam (façade method / bridge command), it does not relax a rule.
+- `.editorconfig` is the sole formatting authority for TS/JS (no Prettier/Biome; style beyond indent/EOL/final-newline is intentionally unenforced).
 
 ## Enforced harness additions (lint-meta + plugin)
 
@@ -43,5 +44,8 @@ These guardrails are mechanical — `bun run lint` runs the ESLint plugin then `
 - `no-warn-severity` (lint-meta): no ESLint rule may be set to `'warn'` — error or off only.
 - `test-workspace-enrollment` (lint-meta): a node package with `*.test.ts` must be listed in the `test:node` script.
 - `test-runner-segregation` (lint-meta): `bun:test` for node packages + `apps/{cli,sidecar,tui}`; Vitest for `apps/web` + `packages/eslint-plugin`. Never mix runners.
+- `decision-register-integrity` (lint-meta): every `docs/decisions/INDEX.md` row must carry a date and cite only paths that resolve on disk; every dated doc under `docs/decisions/` must be linked from a row.
+- `agents-doc-presence` (lint-meta): an `AGENTS.md` must exist at the repo root, in every `apps/*`, and in every non-leaf `packages/*` (leaf packages are an explicit opt-out list in the rule).
+- `ui-primitive-shape` (lint-meta): a `components/ui` primitive that graduates to a folder (own dir + `index.ts`) must ship `<Name>.test.tsx` and `<Name>.stories.tsx`; flat single-file primitives stay pure presentational.
 
 Architectural decisions are recorded in `docs/decisions/INDEX.md` (status: active/superseded) — update the register in the SAME change that reverses a decision.
