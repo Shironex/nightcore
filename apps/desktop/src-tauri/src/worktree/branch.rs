@@ -9,12 +9,17 @@ use std::path::Path;
 use std::time::Duration;
 
 use super::path::validate_ref;
-use super::{git, git_status_success, git_with_deadline};
+use super::{git, git_status_success, git_with_deadline, parse_left_right_count};
 
 /// Wall-clock bound on the network-facing `git push`. Generous — a slow first
 /// push of a big branch is legitimate — but finite, so a black-holed origin
 /// can't pin the blocking thread (and the task's PR lease) forever.
 const PUSH_TIMEOUT: Duration = Duration::from_secs(120);
+
+/// Wall-clock bound on the network-facing `git fetch` behind [`fetch_base`]
+/// (the pull-base fast-forward, PR arc phase 2). Same rationale as
+/// [`PUSH_TIMEOUT`].
+const FETCH_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// The fallback base branch when `HEAD` can't be resolved to a named branch (e.g.
 /// detached HEAD). Used by [`base_branch`] and the reviewer's no-project fallback.
@@ -28,6 +33,65 @@ pub fn base_branch(project_path: &Path) -> String {
         .ok()
         .filter(|b| !b.is_empty() && b != "HEAD")
         .unwrap_or_else(|| DEFAULT_BASE_BRANCH.to_string())
+}
+
+/// The branch `HEAD` points at in `repo`, or `None` when it can't be resolved to
+/// a NAMED branch (detached HEAD, a git failure). The STRICT sibling of
+/// [`base_branch`] — no `main` fallback — for guards that must refuse rather
+/// than guess (the pull-base fast-forward's wrong-branch check: a detached HEAD
+/// must not read as "on main" when the base happens to be `main`).
+pub fn current_branch(repo: &Path) -> Option<String> {
+    git(repo, &["rev-parse", "--abbrev-ref", "HEAD"])
+        .ok()
+        .filter(|b| !b.is_empty() && b != "HEAD")
+}
+
+/// How many commits the worktree's checked-out branch carries that its UPSTREAM
+/// does not (`git rev-list --left-right --count @{upstream}...HEAD`, the ahead
+/// side) — the unpushed-commits count for the PR status card, computed LOCALLY
+/// (no network). Tolerant like the other monitor reads: `0` when the branch has
+/// no upstream (never pushed), on detached HEAD, or when the read fails. The
+/// range is a fixed string (no user input reaches the argv).
+pub fn ahead_of_upstream(dir: &Path) -> u32 {
+    git(
+        dir,
+        &["rev-list", "--left-right", "--count", "@{upstream}...HEAD"],
+    )
+    .ok()
+    .and_then(|s| parse_left_right_count(&s))
+    .map(|(_behind, ahead)| ahead)
+    .unwrap_or(0)
+}
+
+/// Fetch `base` from `origin` into its remote-tracking ref (`git fetch origin
+/// <base>`), bounded by [`FETCH_TIMEOUT`] — the network half of the pull-base
+/// fast-forward (PR arc phase 2). The ref is validated at ingestion AND fenced
+/// from option parsing (`--end-of-options` before the positionals).
+pub fn fetch_base(project_path: &Path, base: &str) -> Result<(), String> {
+    validate_ref(base)?;
+    git_with_deadline(
+        project_path,
+        &["fetch", "--end-of-options", "origin", base],
+        FETCH_TIMEOUT,
+        "timed out fetching from origin — check your network and try again",
+    )
+    .map(|_| ())
+}
+
+/// Fast-forward the checked-out branch to `origin/<base>` — `git merge
+/// --ff-only`, NEVER a real merge: when the local base has diverged the command
+/// fails and git's error surfaces verbatim (the abort-not-force philosophy; the
+/// caller must never fall back to a merge commit). The caller has already
+/// verified the root is clean and checked out on `base`; the ref is validated
+/// here too (defence in depth) before it reaches the argv.
+pub fn merge_ff_only(project_path: &Path, base: &str) -> Result<(), String> {
+    validate_ref(base)?;
+    let remote_ref = format!("origin/{base}");
+    git(
+        project_path,
+        &["merge", "--ff-only", "--end-of-options", &remote_ref],
+    )
+    .map(|_| ())
 }
 
 /// The URL of the `origin` remote, or `None` when the repo has no `origin` remote

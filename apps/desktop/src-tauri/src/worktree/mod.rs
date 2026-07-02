@@ -48,8 +48,8 @@ mod tests;
 // Re-exported so every prior `crate::worktree::X` call site resolves unchanged.
 
 pub use branch::{
-    base_branch, delete_branch_named, list_branches, push_branch, remote_url, BranchInfo,
-    DEFAULT_BASE_BRANCH,
+    ahead_of_upstream, base_branch, current_branch, delete_branch_named, fetch_base, list_branches,
+    merge_ff_only, push_branch, remote_url, BranchInfo, DEFAULT_BASE_BRANCH,
 };
 pub use commit::{commit, commit_staged, has_staged_changes, stage_all, staged_diff};
 pub use diff::{base_diff, worktree_diff, WorktreeDiff};
