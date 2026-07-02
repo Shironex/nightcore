@@ -681,6 +681,73 @@ fn push_branch_pushes_to_origin_idempotently_and_rejects_dash_refs() {
 }
 
 #[test]
+fn ahead_of_upstream_counts_unpushed_commits_tolerantly() {
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    // A local bare repo stands in for the remote (no network).
+    let bare = tempfile::TempDir::new().expect("bare dir");
+    assert!(Command::new("git")
+        .args(["init", "-q", "--bare"])
+        .current_dir(bare.path())
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false));
+    assert!(run_in(
+        &repo,
+        &["remote", "add", "origin", bare.path().to_str().unwrap()],
+    ));
+
+    let dir = allocate(&repo, "task-1").expect("allocate");
+    // No upstream yet (never pushed): tolerant 0, not an error.
+    assert_eq!(ahead_of_upstream(&dir), 0, "no upstream reads as 0");
+    std::fs::write(dir.join("f.txt"), "x").expect("write");
+    commit(&repo, "task-1", "work").expect("commit");
+    assert_eq!(ahead_of_upstream(&dir), 0, "still no upstream");
+
+    // Pushing sets the upstream (`push -u`); level ⇒ 0.
+    push_branch(&dir, &branch_name("task-1")).expect("push");
+    assert_eq!(ahead_of_upstream(&dir), 0, "level with upstream after push");
+
+    // A local commit that never reached the remote counts as unpushed.
+    std::fs::write(dir.join("g.txt"), "y").expect("write");
+    commit(&repo, "task-1", "more").expect("commit 2");
+    assert_eq!(ahead_of_upstream(&dir), 1, "one unpushed commit");
+    push_branch(&dir, &branch_name("task-1")).expect("re-push");
+    assert_eq!(ahead_of_upstream(&dir), 0, "re-pushing clears the count");
+}
+
+#[test]
+fn current_branch_is_strict_about_detached_head() {
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    // On a named branch it agrees with base_branch…
+    assert_eq!(current_branch(&repo).as_deref(), Some(&*base_branch(&repo)));
+    // …but a detached HEAD reads as None (base_branch would fall back to
+    // "main" — the strict read must refuse to guess).
+    assert!(run_in(&repo, &["checkout", "-q", "--detach"]));
+    assert_eq!(current_branch(&repo), None);
+}
+
+#[test]
+fn fetch_base_and_merge_ff_only_reject_dash_refs() {
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    for bad in ["--force", "-D"] {
+        assert!(
+            fetch_base(&repo, bad).is_err(),
+            "a dash-ref fetch must be rejected"
+        );
+        assert!(
+            merge_ff_only(&repo, bad).is_err(),
+            "a dash-ref ff-merge must be rejected"
+        );
+    }
+}
+
+#[test]
 fn base_diff_reports_committed_changes_and_rejects_dash_base() {
     let Some((_tmp, repo)) = temp_repo() else {
         return;
