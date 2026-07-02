@@ -24,7 +24,7 @@ use crate::sidecar::scan::{
 use crate::sidecar::HARNESS_EVENT;
 use crate::store::harness::{
     ApplyOutcome, HarnessRun, HarnessStore, HarnessUsage, StoredConventionFinding,
-    StoredHarnessProposal, StoredRepoProfile,
+    StoredHarnessProposal, StoredProposedArtifact, StoredRepoProfile,
 };
 use crate::store::TaskStore;
 use crate::task::{Task, TaskKind, TASK_EVENT};
@@ -407,15 +407,37 @@ pub fn apply_harness_artifact(
         .get_artifact(&run_id, &artifact_id)
         .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
 
-    // Idempotent: an already-applied artifact returns the run without re-writing.
+    apply_one_artifact(&app, &harness_store, &run_id, &run.project_path, &artifact)?;
+    // Return the up-to-date run (the write above may have flipped this or a concurrent
+    // artifact's status); fall back to the pre-apply snapshot only if the run vanished.
+    Ok(harness_store.get(&run_id).unwrap_or(run))
+}
+
+/// Write ONE proposed artifact into the target repo and commit its `applied` status,
+/// emitting `artifact-applied` on success. Shared by [`apply_harness_artifact`] (one
+/// artifact) and [`apply_harness_proposal`] (a whole `apply-artifacts` bundle). This is the
+/// only place the feature mutates a user's files, so the destination is resolved + contained
+/// inside `project_path` before any write. Idempotent: an already-`applied` artifact — or
+/// one whose file a concurrent / pruned apply already wrote + committed — is treated as
+/// success without re-writing (mirrors the proven convert-to-task idempotent-loser path).
+fn apply_one_artifact(
+    app: &AppHandle,
+    harness_store: &HarnessStore,
+    run_id: &str,
+    project_path: &str,
+    artifact: &StoredProposedArtifact,
+) -> Result<(), String> {
+    let artifact_id = &artifact.id;
+
+    // Idempotent: an already-applied artifact needs no re-write.
     if artifact.status == "applied" {
-        return Ok(run);
+        return Ok(());
     }
 
     // Resolve + contain the destination inside the project root the scan ran against.
     // A rejection here is a security-relevant event (a proposed artifact resolved
     // outside the repo / through a symlink) — log it, don't just bubble silently.
-    let dest = safe_join(Path::new(&run.project_path), &artifact.target_path).map_err(|e| {
+    let dest = safe_join(Path::new(project_path), &artifact.target_path).map_err(|e| {
         tracing::warn!(target: "nightcore", run_id = %run_id, artifact_id = %artifact_id, path = %artifact.target_path, error = %e, "harness artifact path rejected (containment)");
         e
     })?;
@@ -428,13 +450,12 @@ pub fn apply_harness_artifact(
     if let Err(e) = write_result {
         // `create` refuses to clobber. If a concurrent apply — or a prior apply whose
         // source run was pruned past MAX_RUNS — already wrote AND committed this
-        // artifact, the file existing is idempotent SUCCESS, not a failure (mirror the
-        // proven convert-to-task idempotent-loser path). Only a file that exists for an
-        // unrelated reason (the user's own file) surfaces the clobber error.
+        // artifact, the file existing is idempotent SUCCESS, not a failure. Only a file
+        // that exists for an unrelated reason (the user's own file) surfaces the error.
         if artifact.write_mode == "create" {
-            if let Some(current) = harness_store.get_artifact(&run_id, &artifact_id) {
+            if let Some(current) = harness_store.get_artifact(run_id, artifact_id) {
                 if current.status == "applied" {
-                    return Ok(harness_store.get(&run_id).unwrap_or(run));
+                    return Ok(());
                 }
             }
         }
@@ -444,15 +465,15 @@ pub fn apply_harness_artifact(
 
     // Record the applied status atomically. A failure HERE is the worst case — the file
     // is already on disk but its lifecycle is uncommitted — so it gets its own log.
-    let (outcome, updated) = harness_store
-        .mark_artifact_applied(&run_id, &artifact_id, &artifact.target_path)
+    let (outcome, _) = harness_store
+        .mark_artifact_applied(run_id, artifact_id, &artifact.target_path)
         .map_err(|e| {
             tracing::error!(target: "nightcore", run_id = %run_id, artifact_id = %artifact_id, path = %artifact.target_path, error = %e, "harness artifact written but applied-status not committed");
             e
         })?;
     if let ApplyOutcome::AlreadyApplied(path) = &outcome {
         // A concurrent apply won the status race after our write; the file is on disk
-        // either way. Log and return the up-to-date run rather than erroring.
+        // either way. Log and treat as success rather than erroring.
         tracing::debug!(target: "nightcore", run_id = %run_id, artifact_id = %artifact_id, path = %path, "artifact already applied by a concurrent request");
     }
 
@@ -466,6 +487,72 @@ pub fn apply_harness_artifact(
         }),
     );
     tracing::info!(target: "nightcore", run_id = %run_id, artifact_id = %artifact_id, path = %artifact.target_path, "harness artifact applied");
+    Ok(())
+}
+
+/// Apply an `apply-artifacts` proposal as a BUNDLE: write every artifact it references into
+/// the target repo (each through the same hardened, path-contained per-artifact writer as
+/// [`apply_harness_artifact`]), then mark the proposal `applied`. This is the deterministic
+/// half of the Harness-v2 propose-then-convert split — safe file artifacts land directly on
+/// the hardened `apply.rs` path with no agent + no cost, while execution-adjacent work stays
+/// an `agent-task` proposal you convert to a board task.
+///
+/// Idempotent per artifact (already-applied ones are skipped) and partial-failure-aware: if
+/// an artifact fails to write, the ones that already succeeded stay applied, the proposal is
+/// NOT marked applied, and the first failure is returned so the user can fix + retry (the
+/// retry re-runs cleanly — succeeded artifacts short-circuit). An `agent-task` proposal has
+/// no artifacts to write and is rejected (convert it to a board task instead).
+#[tauri::command]
+pub fn apply_harness_proposal(
+    app: AppHandle,
+    harness_store: State<'_, HarnessStore>,
+    run_id: String,
+    proposal_id: String,
+) -> Result<HarnessRun, String> {
+    let run = harness_store
+        .get(&run_id)
+        .ok_or_else(|| format!("no harness run with id {run_id}"))?;
+    let proposal = harness_store
+        .get_proposal(&run_id, &proposal_id)
+        .ok_or_else(|| format!("proposal {proposal_id} not found in run {run_id}"))?;
+
+    if proposal.kind != "apply-artifacts" {
+        return Err(format!(
+            "proposal {proposal_id} is an agent task with no artifacts to apply — convert it to a board task instead"
+        ));
+    }
+    if proposal.artifact_ids.is_empty() {
+        return Err(format!(
+            "proposal {proposal_id} references no artifacts to apply"
+        ));
+    }
+
+    // Apply each referenced artifact through the shared hardened writer. An id that no
+    // longer resolves (its artifact was pruned / edited out of a re-scan) is skipped with a
+    // warn rather than aborting the whole bundle.
+    let mut applied = 0usize;
+    for artifact_id in &proposal.artifact_ids {
+        let Some(artifact) = harness_store.get_artifact(&run_id, artifact_id) else {
+            tracing::warn!(target: "nightcore", run_id = %run_id, proposal_id = %proposal_id, artifact_id = %artifact_id, "proposal references an unknown artifact; skipping");
+            continue;
+        };
+        apply_one_artifact(&app, &harness_store, &run_id, &run.project_path, &artifact)?;
+        applied += 1;
+    }
+
+    // Every referenced artifact is on disk → mark the proposal applied (an unconditional
+    // overwrite; re-applying is idempotent). The link field is left untouched.
+    let updated = harness_store.set_proposal_status(&run_id, &proposal_id, "applied", None)?;
+    let _ = app.emit(
+        HARNESS_EVENT,
+        json!({
+            "type": "proposal-applied",
+            "runId": run_id,
+            "proposalId": proposal_id,
+            "count": applied,
+        }),
+    );
+    tracing::info!(target: "nightcore", run_id = %run_id, proposal_id = %proposal_id, count = applied, "harness proposal bundle applied");
     Ok(updated)
 }
 
