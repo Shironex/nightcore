@@ -41,6 +41,8 @@ pub enum SurfaceCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         append_context_pack: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
+        harness_policy: Option<HarnessPolicy>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
         images: Option<Vec<WireImage>>,
     },
     #[serde(rename_all = "camelCase")]
@@ -634,6 +636,15 @@ pub struct HarnessCheck {
     pub name: String,
     pub kind: String,
     pub command: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HarnessPolicy {
+    #[serde(default)]
+    pub protected_paths: Vec<String>,
+    #[serde(default)]
+    pub deny_bash_patterns: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

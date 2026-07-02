@@ -8,7 +8,7 @@ import {
 import { PermissionDecisionSchema, QuestionAnswerSchema } from './tools.js';
 import { AnalysisScopeSchema, FindingCategorySchema } from './insight.js';
 import { ScorecardDimensionSchema } from './scorecard.js';
-import { ConventionCategorySchema } from './harness.js';
+import { ConventionCategorySchema, HarnessPolicySchema } from './harness.js';
 
 /**
  * `SurfaceCommand` — the typed stream flowing surface → engine.
@@ -89,6 +89,12 @@ export const StartSessionCommand = z.object({
    *  so it stays TRUSTED Nightcore content (unlike the repo's own auto-loaded
    *  `CLAUDE.md`). Absent ⇒ no pack injected. */
   appendContextPack: z.string().optional(),
+  /** The project's harness runtime policy (protected paths + Bash deny patterns)
+   *  read by the Rust core from `<project>/.nightcore/harness.json` (`policy` key).
+   *  The engine enforces it in the PreToolUse gate for the whole session — the
+   *  gate that holds even under `bypassPermissions`. Absent ⇒ no policy layer
+   *  (no manifest, or the project disabled it). */
+  harnessPolicy: HarnessPolicySchema.optional(),
   /** Image attachments to include on the user message as SDK image content blocks.
    *  The Rust core loads these from the task's persisted app-data files at launch.
    *  Absent/empty ⇒ a text-only message.

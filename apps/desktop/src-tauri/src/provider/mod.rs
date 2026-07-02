@@ -168,6 +168,13 @@ pub struct Guardrails {
     /// kind-preset persona. `None` ⇒ inject no pack (the pre-feature shape: either no
     /// `context.md`, or the per-project toggle is off).
     pub append_context_pack: Option<String>,
+    /// Harness runtime policy (hardening module #3): the `policy` key of
+    /// `<project>/.nightcore/harness.json`, resolved by
+    /// [`crate::store::harness_policy::read_policy`] → engine `harnessPolicy` →
+    /// enforced by the engine's PreToolUse gate (protected paths + Bash deny
+    /// patterns), which holds even under `bypassPermissions`. `None` ⇒ no policy
+    /// layer (no manifest, or `policy.enabled: false` — the pre-feature shape).
+    pub harness_policy: Option<crate::contracts::HarnessPolicy>,
 }
 
 /// The child's piped output streams, handed to `sidecar::ensure_reader` once on

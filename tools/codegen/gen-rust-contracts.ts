@@ -283,6 +283,9 @@ const STRUCT_NAMES: Record<string, string> = {
   // One task-shaped harness proposal (apply-artifacts bundle | agent-task).
   'artifactIds|confidence|description|fingerprint|harnessCheck|id|kind|prompt|rationale|title|verifyCommand':
     'HarnessProposal',
+  // The manifest-declared runtime policy the engine's PreToolUse gate enforces
+  // (hardening module #3), carried on `start-session`.
+  'denyBashPatterns|protectedPaths': 'HarnessPolicy',
 };
 
 /** Stable Rust enum name for a referenced/inline `z.enum`. Named enums in the
