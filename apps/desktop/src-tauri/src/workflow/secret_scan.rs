@@ -12,10 +12,20 @@
 //! - **Fail-closed once armed**: any non-zero gitleaks exit blocks the commit
 //!   and surfaces a redacted tail of the report. Nothing is unstaged — the index
 //!   is deliberately left as-is so the user can inspect exactly what was caught.
-//! - **Fail-open on a broken launcher**: a scanner that resolves on PATH but
-//!   cannot launch (permissions, corrupt binary) warn-logs and passes. Tradeoff:
-//!   a broken scanner must not brick every commit — this gate is defence-in-
-//!   depth in an opt-in tool, not the only line against leaked secrets.
+//! - **Fail-CLOSED on a broken launcher**: a scanner that resolves on PATH but
+//!   errors at spawn (permissions, corrupt binary) BLOCKS the commit
+//!   ([`ScanOutcome::ScannerError`]). Once gitleaks is installed the gate is armed,
+//!   and an armed gate that cannot execute must not silently wave a commit through
+//!   — that was the fail-open hole. The user sees a clear error naming the scanner
+//!   failure (not a secret finding) and can retry/repair.
+//!
+//! RESIDUAL (documented, not closed here): the gate is still opt-in by install —
+//! with NO gitleaks on PATH it passes ([`ScanOutcome::ToolAbsent`]), because
+//! failing closed there would block every commit on the many machines without
+//! gitleaks and brick the first-party commit button. And it still runs only on this
+//! in-app `commit_task` path: agent-authored worktree commits (made inside the SDK
+//! session, pre-review) and PR-push (`pr.rs`, which pushes an already-committed
+//! branch) are not yet gated — a diff-range scan there is a larger change.
 //! - **No raw secret values, ever**: `--redact` makes gitleaks mask matched
 //!   values in its own output, and only a bounded [`crate::gauntlet::tail_output`]
 //!   of that already-redacted text reaches the error string. The report body is
@@ -30,14 +40,17 @@ use std::path::Path;
 /// blocks a commit; the other two both mean "proceed" but are distinct so the
 /// caller (and the log) can tell "scanned clean" from "gate not armed".
 pub enum ScanOutcome {
-    /// gitleaks ran and found nothing (exit 0) — or could not launch despite
-    /// resolving on PATH (fail-open, see the module doc for the tradeoff).
+    /// gitleaks ran and found nothing (exit 0).
     Clean,
     /// gitleaks is not installed: the gate is opt-in by install, so this passes.
     ToolAbsent,
     /// gitleaks exited non-zero: a redacted, bounded tail of its report. The
     /// caller must abort the commit and surface this to the user.
     Findings { summary: String },
+    /// gitleaks resolved on PATH but could not be run to completion (spawn
+    /// failure, permissions, corrupt binary). FAIL-CLOSED: the caller must block
+    /// the commit — an armed gate that cannot execute must not pass silently.
+    ScannerError { detail: String },
 }
 
 /// Scan the staged changes in `dir` with gitleaks. See the module doc for the
@@ -97,16 +110,42 @@ fn scan_staged_with(dir: &Path, binary: &str) -> ScanOutcome {
             ScanOutcome::ToolAbsent
         }
         Err(e) => {
-            // Fail-open (see module doc): an installed-but-broken scanner must
-            // not brick every commit.
+            // Fail-CLOSED (see module doc): gitleaks is installed (it resolved on
+            // PATH) but errored at spawn — an armed gate that can't execute must
+            // block, not wave the commit through.
             tracing::warn!(
                 target: "nightcore::secret_scan",
                 error = %e,
-                "gitleaks failed to launch — secret gate skipped this commit"
+                "gitleaks failed to launch — blocking the commit (fail-closed)"
             );
-            ScanOutcome::Clean
+            ScanOutcome::ScannerError {
+                detail: e.to_string(),
+            }
         }
     }
+}
+
+/// Decide whether an outcome permits the commit. The single enforcement point so
+/// the fail-open/fail-closed policy lives in ONE place: [`ScanOutcome::Clean`] and
+/// [`ScanOutcome::ToolAbsent`] pass (clean scan / gate not armed); `Findings` and
+/// `ScannerError` block with a user-facing message.
+pub fn enforce(outcome: ScanOutcome) -> Result<(), String> {
+    match outcome {
+        ScanOutcome::Clean | ScanOutcome::ToolAbsent => Ok(()),
+        ScanOutcome::Findings { summary } => Err(blocked_message(&summary)),
+        ScanOutcome::ScannerError { detail } => Err(scanner_error_message(&detail)),
+    }
+}
+
+/// The user-facing error when the secret scanner is installed but could not run.
+/// Distinct from [`blocked_message`] so the user knows this is a gate FAILURE
+/// (retry/repair gitleaks), not a detected secret.
+pub fn scanner_error_message(detail: &str) -> String {
+    format!(
+        "secret scan could not run and the commit was blocked (fail-closed): the \
+         gitleaks binary is installed but failed to execute — repair or remove your \
+         gitleaks install, then retry.\n\n{detail}"
+    )
 }
 
 /// The user-facing error for a blocked commit: names the gate, the finding count
@@ -218,6 +257,45 @@ mod tests {
         let msg = blocked_message("Failed to load config");
         assert!(msg.contains("one or more potential secret(s)"), "{msg}");
         assert!(msg.contains("Failed to load config"), "{msg}");
+    }
+
+    #[test]
+    fn enforce_passes_clean_and_tool_absent_blocks_findings_and_scanner_error() {
+        // The single enforcement point encodes the fail-open/fail-closed policy:
+        // clean scans and an unarmed gate pass; findings and an armed-but-broken
+        // scanner both BLOCK.
+        assert!(enforce(ScanOutcome::Clean).is_ok(), "clean scan proceeds");
+        assert!(
+            enforce(ScanOutcome::ToolAbsent).is_ok(),
+            "unarmed gate (no gitleaks) proceeds — opt-in by install"
+        );
+
+        let findings = enforce(ScanOutcome::Findings {
+            summary: "WRN leaks found: 1".to_string(),
+        });
+        assert!(findings.is_err(), "findings block the commit");
+        assert!(findings
+            .unwrap_err()
+            .contains("secret scan blocked this commit"));
+
+        // The regression this task fixes: an installed scanner that errors at spawn
+        // must FAIL CLOSED (previously it returned Clean and waved the commit through).
+        let scanner_err = enforce(ScanOutcome::ScannerError {
+            detail: "Permission denied (os error 13)".to_string(),
+        });
+        assert!(
+            scanner_err.is_err(),
+            "a broken scanner blocks (fail-closed)"
+        );
+        let msg = scanner_err.unwrap_err();
+        assert!(
+            msg.contains("fail-closed"),
+            "names the fail-closed posture: {msg}"
+        );
+        assert!(
+            msg.contains("Permission denied"),
+            "surfaces the detail: {msg}"
+        );
     }
 
     #[test]
