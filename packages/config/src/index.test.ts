@@ -4,7 +4,9 @@ import * as os from 'node:os';
 import * as path from 'node:path';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 
-import { resolveConfig } from './index.js';
+import type { ConfigFile } from '@nightcore/contracts';
+
+import { mergeLayers, resolveConfig } from './index.js';
 
 let tmp: string;
 let home: string;
@@ -119,6 +121,43 @@ describe('resolveConfig precedence', () => {
     const config = resolveConfig({ home, cwd: project });
     expect(config.permissions.mode).toBe('acceptEdits');
     expect(config.permissions.allow).toEqual(['Read']);
+  });
+});
+
+describe('mergeLayers is key-driven, not hand-enumerated', () => {
+  // Guards the regression class this refactor closed: a NEW field added to
+  // `ConfigFileSchema` must layer (last-defined-wins, absent-inherits) with no
+  // edit to `mergeLayers`. We simulate a not-yet-enumerated field to prove the
+  // merge copies whatever keys a layer carries — the old per-field enumeration
+  // silently dropped any field it didn't name.
+  test('a field mergeLayers does not name still layers (last-defined-wins)', () => {
+    const user: ConfigFile & Record<string, unknown> = {
+      model: 'claude-sonnet-4-6',
+      futureField: 'from-user',
+    };
+    const project: ConfigFile & Record<string, unknown> = {
+      futureField: 'from-project',
+    };
+    const merged = mergeLayers(user, project) as Record<string, unknown>;
+    expect(merged.model).toBe('claude-sonnet-4-6'); // inherited from user
+    expect(merged.futureField).toBe('from-project'); // project overrides user
+  });
+
+  test('an absent field inherits rather than clobbers, across the spread', () => {
+    const user: ConfigFile = { model: 'claude-sonnet-4-6', maxTurns: 42 };
+    const project: ConfigFile = { model: 'claude-haiku-4-5' };
+    const merged = mergeLayers(user, project);
+    expect(merged.model).toBe('claude-haiku-4-5'); // project wins
+    expect(merged.maxTurns).toBe(42); // inherited (project omitted it)
+  });
+
+  test('permissions still merge one level deep despite the shallow spread', () => {
+    const user: ConfigFile = {
+      permissions: { allow: ['Read'], mode: 'default' },
+    };
+    const project: ConfigFile = { permissions: { mode: 'acceptEdits' } };
+    const merged = mergeLayers(user, project);
+    expect(merged.permissions).toEqual({ allow: ['Read'], mode: 'acceptEdits' });
   });
 });
 
