@@ -9,7 +9,19 @@ export interface MarkdownProps {
   children: string;
   /** Extra classes merged onto the rendered container. */
   className?: string;
+  /** True while `children` is a still-streaming turn that grows one delta at a
+   *  time. Skips the heavy `marked`+`DOMPurify` pass and renders escaped plain
+   *  text so each delta is a cheap text update instead of a full re-parse of the
+   *  whole accumulated document (which is O(n²) over a turn). The full markdown
+   *  pass runs once, on the settled body, when this flips back to false. */
+  streaming?: boolean;
 }
+
+/** Bodies larger than this render as escaped plain text rather than parsed
+ *  markdown: `marked`+`DOMPurify` over a 100KB+ document is a synchronous
+ *  main-thread stall, and a body that big is invariably a raw log/diff dump
+ *  where the prose styling adds nothing. */
+export const MAX_MARKDOWN_LENGTH = 50_000;
 
 /** Parse markdown to HTML (GitHub-flavored, no raw HTML passthrough) and sanitize
  *  it. Synchronous: `marked.parse` returns a string with `async: false`. Exported
@@ -23,9 +35,27 @@ export function renderMarkdown(source: string): string {
  *  the reviewer verdict, and plan text. `marked` parses to HTML, `DOMPurify`
  *  strips anything unsafe (scripts, event handlers, raw HTML injection). Prose
  *  styling is scoped to `.nc-markdown` in styles.css so code blocks, lists,
- *  headings, and inline code match the app surface. */
-export function Markdown({ children, className }: MarkdownProps) {
-  const html = useMemo(() => renderMarkdown(children), [children]);
+ *  headings, and inline code match the app surface.
+ *
+ *  While a turn streams (`streaming`) or for a very large body, the parse is
+ *  skipped and the text renders raw — React escapes the text node, so this path
+ *  is safe without `dangerouslySetInnerHTML`. */
+export function Markdown({ children, className, streaming = false }: MarkdownProps) {
+  const plain = streaming || children.length > MAX_MARKDOWN_LENGTH;
+  // `useMemo` runs unconditionally (stable hook order); the parse itself is
+  // gated so a streaming/oversized body never pays for it.
+  const html = useMemo(() => (plain ? null : renderMarkdown(children)), [children, plain]);
+
+  if (html === null) {
+    return (
+      <div
+        className={`nc-markdown whitespace-pre-wrap text-sm leading-relaxed text-foreground/90 ${className ?? ''}`}
+      >
+        {children}
+      </div>
+    );
+  }
+
   return (
     <div
       className={`nc-markdown text-sm leading-relaxed text-foreground/90 ${className ?? ''}`}
