@@ -1,27 +1,17 @@
-/** The PR Review pull-request picker: a filterable list of the project's open PRs
- *  so the user SELECTS one instead of memorizing a number. The filter box doubles
- *  as a manual-number entry for PRs not in the list (closed / old / beyond the cap). */
+/** The PR Review list pane (left side of the master-detail): the project's open
+ *  PRs as selectable cards, with a filter box that doubles as a manual-number
+ *  entry for PRs not in the list (closed / old / beyond the cap). */
 import {
   BranchIcon,
-  CheckIcon,
   GithubIcon,
   RetryIcon,
   SearchIcon,
   Spinner,
+  TagIcon,
 } from '@/components/ui';
 
 import { usePrPicker } from './PrPicker.hooks';
 import type { PrPickerProps } from './PrPicker.types';
-
-/** gh timestamps are ISO-8601; show a short local date, or nothing if unparseable. */
-function shortDate(iso: string): string | null {
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return null;
-  return new Date(t).toLocaleDateString(undefined, {
-    month: 'short',
-    day: 'numeric',
-  });
-}
 
 export function PrPicker({
   prs,
@@ -36,27 +26,25 @@ export function PrPicker({
   const showEmpty = !loading && rows.length === 0 && manualNumber === null;
 
   return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
-          Pull request
+    <div className="flex h-full min-h-0 flex-col gap-2.5 p-3">
+      <div className="flex items-center justify-between px-1">
+        <span className="flex items-center gap-2">
+          <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
+            Pull requests
+          </span>
+          <span className="rounded-full border border-border px-1.5 py-px text-[10.5px] text-muted-foreground">
+            {prs.length}
+          </span>
         </span>
-        <div className="flex items-center gap-3">
-          {value !== null && (
-            <span className="font-mono text-[11px] text-primary">
-              #{value} selected
-            </span>
-          )}
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={disabled || loading}
-            className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
-          >
-            {loading ? <Spinner size={11} /> : <RetryIcon size={11} />}
-            Refresh
-          </button>
-        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={disabled || loading}
+          className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+        >
+          {loading ? <Spinner size={11} /> : <RetryIcon size={11} />}
+          Refresh
+        </button>
       </div>
 
       {/* Filter box — also the manual PR-number entry (BranchPicker pattern). */}
@@ -72,7 +60,7 @@ export function PrPicker({
           value={query}
           disabled={disabled}
           onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter open PRs, or type a number…"
+          placeholder="Filter PRs, or type a number…"
           aria-label="Filter open pull requests, or type a PR number"
           autoComplete="off"
           spellCheck={false}
@@ -108,15 +96,14 @@ export function PrPicker({
         </p>
       )}
 
-      {rows.length > 0 && (
-        <ul
-          role="listbox"
-          aria-label="Open pull requests"
-          className="flex max-h-[280px] flex-col gap-1 overflow-y-auto"
-        >
-          {rows.map(({ pr, selected }) => {
-            const date = shortDate(pr.updatedAt);
-            return (
+      <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-y-auto">
+        {rows.length > 0 && (
+          <ul
+            role="listbox"
+            aria-label="Open pull requests"
+            className="flex flex-col gap-2"
+          >
+            {rows.map(({ pr, selected }) => (
               <li key={pr.number} role="presentation">
                 <button
                   type="button"
@@ -124,67 +111,68 @@ export function PrPicker({
                   aria-selected={selected}
                   disabled={disabled}
                   onClick={() => onChange(pr.number)}
-                  className={`flex w-full items-start gap-2.5 rounded-[10px] border px-3 py-2 text-left transition-colors disabled:cursor-not-allowed ${
+                  className={`flex w-full flex-col gap-1.5 rounded-[12px] border px-3.5 py-3 text-left transition-colors disabled:cursor-not-allowed ${
                     selected
-                      ? 'border-primary/60 bg-primary/[0.1]'
+                      ? 'border-primary/60 bg-primary/[0.08]'
                       : 'border-border bg-white/[0.02] hover:border-white/20'
                   }`}
                 >
-                  <GithubIcon
-                    size={14}
-                    className="mt-0.5 shrink-0 text-muted-foreground"
-                  />
-                  <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                    <span className="flex items-center gap-2">
-                      <span className="font-mono text-[12.5px] text-primary">
-                        #{pr.number}
-                      </span>
-                      <span className="truncate text-[13px] text-foreground">
-                        {pr.title || '(no title)'}
-                      </span>
-                      {pr.isDraft && (
-                        <span className="shrink-0 rounded-full border border-border px-1.5 py-px text-[10px] uppercase tracking-wide text-muted-foreground">
-                          Draft
-                        </span>
-                      )}
+                  <span className="flex items-center gap-2">
+                    <span className="rounded-full border border-emerald-500/40 bg-emerald-500/10 px-1.5 py-px text-[10px] font-semibold uppercase tracking-wide text-emerald-400">
+                      Open
                     </span>
-                    <span className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
-                      <span className="truncate">@{pr.author}</span>
-                      <span className="inline-flex min-w-0 items-center gap-1">
-                        <BranchIcon size={11} className="shrink-0" />
-                        <span className="truncate">{pr.headRefName}</span>
-                      </span>
-                      {date !== null && <span className="shrink-0">· {date}</span>}
+                    <span className="font-mono text-[11.5px] text-muted-foreground">
+                      #{pr.number}
                     </span>
+                    {pr.isDraft && (
+                      <span className="rounded-full border border-border px-1.5 py-px text-[9.5px] uppercase tracking-wide text-muted-foreground">
+                        Draft
+                      </span>
+                    )}
                   </span>
-                  {selected && (
-                    <CheckIcon size={15} className="mt-0.5 shrink-0 text-primary" />
-                  )}
+                  <span className="truncate text-[13.5px] font-medium text-foreground">
+                    {pr.title || '(no title)'}
+                  </span>
+                  <span className="flex items-center gap-3 text-[11.5px] text-muted-foreground">
+                    <span className="inline-flex items-center gap-1">
+                      <GithubIcon size={11} className="shrink-0" />@{pr.author}
+                    </span>
+                    <span className="inline-flex min-w-0 items-center gap-1">
+                      <BranchIcon size={11} className="shrink-0" />
+                      <span className="truncate">{pr.headRefName}</span>
+                    </span>
+                    {pr.labels.length > 0 && (
+                      <span className="inline-flex shrink-0 items-center gap-1">
+                        <TagIcon size={11} />
+                        {pr.labels.length}
+                      </span>
+                    )}
+                  </span>
                 </button>
               </li>
-            );
-          })}
-        </ul>
-      )}
+            ))}
+          </ul>
+        )}
 
-      {manualNumber !== null && (
-        <button
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(manualNumber)}
-          className={`flex w-full items-center gap-2 rounded-[10px] border px-3 py-2 text-left text-[13px] transition-colors disabled:cursor-not-allowed ${
-            value === manualNumber
-              ? 'border-primary/60 bg-primary/[0.1] text-foreground'
-              : 'border-dashed border-border text-muted-foreground hover:border-white/20 hover:text-foreground'
-          }`}
-        >
-          <GithubIcon size={14} className="shrink-0 text-primary" />
-          Review PR&nbsp;<span className="font-mono text-primary">#{manualNumber}</span>
-          <span className="text-[11.5px] text-muted-foreground">
-            — not in the open list, review it anyway
-          </span>
-        </button>
-      )}
+        {manualNumber !== null && (
+          <button
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(manualNumber)}
+            className={`flex w-full items-center gap-2 rounded-[12px] border px-3.5 py-3 text-left text-[13px] transition-colors disabled:cursor-not-allowed ${
+              value === manualNumber
+                ? 'border-primary/60 bg-primary/[0.08] text-foreground'
+                : 'border-dashed border-border text-muted-foreground hover:border-white/20 hover:text-foreground'
+            }`}
+          >
+            <GithubIcon size={14} className="shrink-0 text-primary" />
+            Select PR&nbsp;<span className="font-mono text-primary">
+              #{manualNumber}
+            </span>
+            <span className="text-[11.5px] text-muted-foreground">— not in the list</span>
+          </button>
+        )}
+      </div>
     </div>
   );
 }

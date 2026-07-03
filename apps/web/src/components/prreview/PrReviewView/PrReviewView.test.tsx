@@ -14,11 +14,13 @@ test('renders the PR Review header for an active project', async () => {
   await expect.element(screen.getByText('acme')).toBeInTheDocument();
 });
 
-test('shows the CONFIGURE screen with the Review control when idle', async () => {
+test('shows the CONFIGURE master-detail (PR list + empty detail) when idle', async () => {
   const screen = render(<Idle />);
-  await expect.element(screen.getByText('Run config')).toBeInTheDocument();
   await expect
-    .element(screen.getByRole('button', { name: /^review pr$/i }))
+    .element(screen.getByText('Pull requests', { exact: true }))
+    .toBeInTheDocument();
+  await expect
+    .element(screen.getByText(/select a pull request to review/i))
     .toBeInTheDocument();
 });
 
