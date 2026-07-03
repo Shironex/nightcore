@@ -5,37 +5,56 @@ import type { PrSummary } from '@/lib/bridge';
 
 import { PrPicker } from './PrPicker';
 
+function sample(over: Partial<PrSummary> & Pick<PrSummary, 'number'>): PrSummary {
+  return {
+    title: 'Untitled',
+    state: 'OPEN',
+    headRefName: 'branch',
+    author: 'octocat',
+    isDraft: false,
+    createdAt: '2026-06-20T09:00:00Z',
+    updatedAt: '2026-07-02T12:00:00Z',
+    url: `https://github.com/o/r/pull/${over.number}`,
+    labels: [],
+    body: '',
+    ...over,
+  };
+}
+
 const SAMPLE: PrSummary[] = [
-  {
+  sample({
     number: 128,
     title: 'Harden the worktree isolation gate',
     headRefName: 'nc/worktree-gate',
     author: 'shirone',
-    isDraft: false,
-    updatedAt: '2026-07-02T12:00:00Z',
-  },
-  {
+    labels: [{ name: 'security', color: 'd73a4a' }],
+  }),
+  sample({
     number: 127,
     title: 'Add the PR review scan sibling',
     headRefName: 'feat/pr-review',
     author: 'alice',
     isDraft: true,
-    updatedAt: '2026-07-01T09:30:00Z',
-  },
-  {
+  }),
+  sample({
     number: 119,
     title: 'Flight-recorder ledger for the runtime tiers',
     headRefName: 'feat/ledger',
     author: 'bob',
-    isDraft: false,
-    updatedAt: '2026-06-28T15:45:00Z',
-  },
+  }),
 ];
 
 const meta = {
   title: 'PrReview/PrPicker',
   component: PrPicker,
-  parameters: { layout: 'padded' },
+  parameters: { layout: 'fullscreen' },
+  decorators: [
+    (Story) => (
+      <div className="flex h-[560px] w-[400px] flex-col border border-border">
+        <Story />
+      </div>
+    ),
+  ],
   args: {
     prs: SAMPLE,
     loading: false,

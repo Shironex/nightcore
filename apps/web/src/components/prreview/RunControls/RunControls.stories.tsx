@@ -15,8 +15,12 @@ function ConfiguredRunControls({
   onReview: () => void;
 }) {
   const config = useRunConfig(false);
+  // Mirror the RunLifecycleShell's block `children` container (definite height,
+  // NOT flex) so the two-pane's `h-full` resolves as it does in the app.
   return (
-    <RunControls config={config} isStarting={isStarting} onReview={onReview} />
+    <div style={{ height: 720 }}>
+      <RunControls config={config} isStarting={isStarting} onReview={onReview} />
+    </div>
   );
 }
 

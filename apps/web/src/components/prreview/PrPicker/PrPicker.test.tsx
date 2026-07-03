@@ -23,13 +23,13 @@ test('filtering narrows the list by title/author/branch', async () => {
     .not.toBeInTheDocument();
 });
 
-test('typing a number not in the list offers a manual review affordance', async () => {
+test('typing a number not in the list offers a manual select affordance', async () => {
   const onChange = vi.fn();
   const screen = render(<Loaded onChange={onChange} />);
   await screen
     .getByRole('textbox', { name: /filter open pull requests/i })
     .fill('999');
-  const manual = screen.getByRole('button', { name: /review pr #999/i });
+  const manual = screen.getByRole('button', { name: /select pr #999/i });
   await expect.element(manual).toBeInTheDocument();
   await manual.click();
   expect(onChange).toHaveBeenCalledWith(999);
@@ -44,7 +44,7 @@ test('the empty state still lets the user type a number', async () => {
   await screen
     .getByRole('textbox', { name: /filter open pull requests/i })
     .fill('42');
-  await screen.getByRole('button', { name: /review pr #42/i }).click();
+  await screen.getByRole('button', { name: /select pr #42/i }).click();
   expect(onChange).toHaveBeenCalledWith(42);
 });
 

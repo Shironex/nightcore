@@ -33,6 +33,7 @@ export {
   Palette as DesignIcon,
   MoreVertical as DotsIcon,
   Pencil as EditIcon,
+  ExternalLink as ExternalLinkIcon,
   Folder as FolderIcon,
   Settings as GearIcon,
   History as HistoryIcon,
