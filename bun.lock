@@ -77,14 +77,14 @@
       "dependencies": {
         "@nightcore/contracts": "workspace:*",
         "@nightcore/shared": "workspace:*",
-        "zod": "^4.4.3",
+        "zod": "4.4.3",
       },
     },
     "packages/contracts": {
       "name": "@nightcore/contracts",
       "version": "0.0.0",
       "dependencies": {
-        "zod": "^4.4.3",
+        "zod": "4.4.3",
       },
     },
     "packages/engine": {
@@ -95,7 +95,7 @@
         "@nightcore/contracts": "workspace:*",
         "@nightcore/shared": "workspace:*",
         "@nightcore/storage": "workspace:*",
-        "zod": "^4.4.3",
+        "zod": "4.4.3",
       },
     },
     "packages/eslint-plugin": {

@@ -68,7 +68,7 @@ type AnyZod = z.ZodType;
  *  lives. We read this directly rather than via a JSON-schema bridge so the
  *  numeric and enum distinctions survive intact. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function def(schema: AnyZod): any {
+export function def(schema: AnyZod): any {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const s = schema as any;
   return s?._zod?.def ?? s?._def;
@@ -155,22 +155,62 @@ function rustType(schema: AnyZod, fieldPath: string, ctx: EmitCtx): string {
   }
 }
 
+/** The `z.number()` check kinds this emitter reads via zod's internal AST. Any
+ *  check kind OUTSIDE this set means the introspection contract shifted (almost
+ *  always a zod dependency bump reshaping `_zod.def.checks`) and int/float
+ *  inference can no longer be trusted — see `numberRustType` for why that must
+ *  throw rather than fall through. Extend this set (and the logic below) when a
+ *  new numeric constraint is intentionally introduced to the contract. */
+const KNOWN_NUMBER_CHECKS = new Set([
+  'number_format', // `.int()` — carries the `safeint`/`uint*` format tag
+  'greater_than', // `.positive()` / `.nonnegative()` / `.min()` lower bound
+  'greater_than_or_equal', // tolerated: a future zod shape for an inclusive `>=`
+  'less_than', // `.max()` upper bound — unused today, tolerated
+  'less_than_or_equal',
+  'multiple_of', // `.multipleOf()` / `.step()` — unused today, tolerated
+]);
+
 /** Pick the Rust numeric type from a `z.number()`'s checks: a safe-int with a
  *  `>=0` / `>0` bound → `u64` (the reader uses
  *  `as_u64`); a safe-int without a non-negative bound → `i64`; a plain number
- *  (no int format) → `f64`. */
+ *  (no int format) → `f64`.
+ *
+ *  Fails LOUD on any UNRECOGNIZED check shape. This is the crux: JSON has no
+ *  int/float distinction, so a `u64 → f64` regression deserializes the same
+ *  fixture bytes fine and sails past the Rust round-trip conformance test. A
+ *  silent `if (!isInt) return 'f64'` fallback would therefore let a zod-internals
+ *  reshape downgrade every bounded integer to `f64` undetected. We distinguish an
+ *  ABSENT check set (a genuine plain `z.number()` → f64, intentional) from an
+ *  UNRECOGNIZED one (the drift signal → throw). The `gen-rust-contracts.test.ts`
+ *  canary additionally locks the u64/i64/f64 mapping so a reshape that RELOCATES
+ *  `.checks` (leaving it empty) also fails a test rather than silently drifting. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-function numberRustType(d: any, fieldPath: string): string {
+export function numberRustType(d: any, fieldPath: string): string {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const checks: any[] = (d.checks ?? []).map((c: any) => c?._zod?.def ?? c);
+  for (const c of checks) {
+    if (typeof c?.check !== 'string' || !KNOWN_NUMBER_CHECKS.has(c.check)) {
+      throw new Error(
+        `unrecognized z.number() check ${JSON.stringify(
+          c?.check,
+        )} at ${fieldPath}: zod's internal check AST may have changed. Review ` +
+          `numberRustType()/KNOWN_NUMBER_CHECKS in tools/codegen/gen-rust-contracts.ts ` +
+          `rather than let a bounded integer silently degrade to f64.`,
+      );
+    }
+  }
   const isInt = checks.some(
     (c) => c.check === 'number_format' && String(c.format).includes('int'),
   );
   if (!isInt) {
+    // Reached only after every present check was recognized above, so this is a
+    // genuine floating-point wire value (costUsd, confidence, timestamps) → f64.
     return 'f64';
   }
   const nonNegative = checks.some(
-    (c) => c.check === 'greater_than' && c.value === 0,
+    (c) =>
+      (c.check === 'greater_than' || c.check === 'greater_than_or_equal') &&
+      c.value === 0,
   );
   void fieldPath;
   return nonNegative ? 'u64' : 'i64';
@@ -1571,4 +1611,9 @@ function main(): void {
   );
 }
 
-main();
+// Guard the entry side effect: running the file directly
+// (`bun run …/gen-rust-contracts.ts [--check]`) regenerates/verifies as before,
+// but importing it (the unit-test canary) must NOT write files.
+if (import.meta.main) {
+  main();
+}
