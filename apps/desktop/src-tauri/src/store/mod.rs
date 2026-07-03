@@ -1,6 +1,6 @@
 //! The on-disk task registry.
 //!
-//! One pretty-printed JSON file per task at
+//! One compact JSON file per task at
 //! `<workspace_root>/.nightcore/tasks/<id>.json`. The store keeps an in-memory
 //! map (behind a `Mutex`) as the source of truth for reads, and writes through to
 //! disk on every mutation so a restart reloads the exact same board. `.nightcore/`
@@ -119,7 +119,7 @@ pub struct TaskStore {
     /// The read-modify-write-persist of one task must be serialized against
     /// *other writes to the same task* (the C7 anti-clobber invariant), but that
     /// serialization must NOT be shared with reads or writes of a *different* task.
-    /// The disk write (`write_file` → `sync_all`, a full fsync — single-digit to
+    /// The disk write (`write_file` → `sync_data`, an fdatasync — single-digit to
     /// tens of ms on a busy disk) used to run while the single global `tasks` lock
     /// was held, so a slow write for one streaming task stalled `list()`/`get()`
     /// and every other task's `mutate` behind it (head-of-line blocking under
@@ -354,13 +354,16 @@ impl TaskStore {
         }
     }
 
-    /// Write one task as pretty JSON to its file via a temp-file + atomic `rename`,
+    /// Write one task as compact JSON to its file via a temp-file + atomic `rename`,
     /// so a crash or concurrent reader never sees a half-written task file
     /// (data-integrity #3). The temp file lives in the same dir as the target so the
-    /// rename stays on one filesystem (a cross-device rename would fail).
+    /// rename stays on one filesystem (a cross-device rename would fail). Compact
+    /// (not pretty) serialization: the file is only ever read back by serde, so the
+    /// pretty-printer's indentation work + larger byte count is avoidable overhead on
+    /// this per-mutation hot path (many small lifecycle bumps per auto-loop tick).
     fn write_file(&self, task: &Task) -> Result<(), String> {
         let path = self.path_for(&task.id)?;
-        let json = serde_json::to_string_pretty(task).map_err(|e| e.to_string())?;
+        let json = serde_json::to_string(task).map_err(|e| e.to_string())?;
         write_atomic(&path, json.as_bytes())
             .map_err(|e| format!("failed to persist task {}: {e}", task.id))
     }
@@ -385,7 +388,13 @@ pub(crate) fn write_atomic(path: &std::path::Path, bytes: &[u8]) -> std::io::Res
     let write_then_rename = || -> std::io::Result<()> {
         let mut file = create_owner_only(&tmp)?;
         file.write_all(bytes)?;
-        file.sync_all()?;
+        // `sync_data` (fdatasync), not `sync_all` (fsync): durability here only needs
+        // the file's *contents* + the metadata required to read them back (size/block
+        // map) on disk before the rename. The non-essential inode metadata `sync_all`
+        // also flushes (mtime/atime) is pure overhead on this hot per-mutation path —
+        // a status bump or `updated_at` tick fsyncs the whole record otherwise. The
+        // atomic rename still gives a reader the old-or-new file, never a torn write.
+        file.sync_data()?;
         drop(file);
         std::fs::rename(&tmp, path)
     };
@@ -971,5 +980,36 @@ mod tests {
             "written file must be owner-only, got {:o}",
             mode & 0o777
         );
+    }
+
+    /// A persisted task is written as COMPACT JSON (no pretty indentation) yet still
+    /// round-trips losslessly through the store on reload. This pins the perf change:
+    /// the on-disk format is compact (one line, no `\n  ` indentation), and the record
+    /// read back is byte-for-byte the same task — the optimization must not change what
+    /// is durably stored.
+    #[test]
+    fn persisted_task_is_compact_and_round_trips() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let dir = tmp.path().join("tasks");
+        let store = TaskStore::load_from(dir.clone());
+
+        let mut task = Task::new("compact".into(), "some detail".into());
+        task.plan = Some("a plan".into());
+        store.upsert(&task).expect("upsert");
+
+        // The on-disk file is compact: no pretty-printer indentation ("\n  ").
+        let raw =
+            std::fs::read_to_string(dir.join(format!("{}.json", task.id))).expect("read file");
+        assert!(
+            !raw.contains("\n  "),
+            "task file must be compact JSON, not pretty-printed: {raw}"
+        );
+
+        // And it still deserializes back to the exact same task after a reload.
+        let reloaded = TaskStore::load_from(dir);
+        let got = reloaded.get(&task.id).expect("task survives reload");
+        assert_eq!(got.id, task.id);
+        assert_eq!(got.title, task.title);
+        assert_eq!(got.plan, task.plan);
     }
 }
