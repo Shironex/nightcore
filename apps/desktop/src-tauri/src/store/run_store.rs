@@ -150,7 +150,11 @@ impl<R: PersistedRun> RunStore<R> {
     /// lock; this only touches the (separate) `dir` lock via `path_for`.
     fn persist(&self, run: &R) -> Result<(), String> {
         let path = self.path_for(run.id())?;
-        let json = serde_json::to_string_pretty(run).map_err(|e| e.to_string())?;
+        // Compact, not pretty: a scan run re-serializes its ENTIRE accumulating set of
+        // findings on every `*-category-completed` event, and the file is only read
+        // back by serde — the pretty-printer's indentation over a growing run is pure
+        // per-event overhead on the hot orchestration path.
+        let json = serde_json::to_string(run).map_err(|e| e.to_string())?;
         write_atomic(&path, json.as_bytes())
             .map_err(|e| format!("failed to persist {} {}: {e}", R::RUN_LABEL, run.id()))
     }
