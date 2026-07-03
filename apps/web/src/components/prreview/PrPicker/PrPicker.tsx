@@ -26,7 +26,7 @@ export function PrPicker({
   const showEmpty = !loading && rows.length === 0 && manualNumber === null;
 
   return (
-    <div className="flex h-full min-h-0 flex-col gap-2.5 p-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 p-3">
       <div className="flex items-center justify-between px-1">
         <span className="flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground">
