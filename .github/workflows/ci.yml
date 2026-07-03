@@ -44,7 +44,12 @@ jobs:
         run: bunx playwright install --with-deps chromium
         working-directory: apps/web
       # The JS/TS tiers (node + web + plugin). The Rust tier runs in rust-checks.
-      - run: bun run test
+      # The node tier runs under Bun coverage with a modest src-level floor
+      # (tools/coverage/check-node-coverage.ts) so a new module can't ship
+      # untested; web + plugin run on vitest.
+      - run: bun run test:node:coverage
+      - run: bun run test:web
+      - run: bun run test:plugin
 
   rust-checks:
     name: cargo test · clippy · fmt · ts-rs drift (Rust core)
