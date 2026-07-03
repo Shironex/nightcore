@@ -256,13 +256,14 @@ pub(crate) fn commit_task_blocking(app: &AppHandle, id: &str) -> Result<(), Stri
 
     // Secret gate (hardening #4c): scan the staged changes with gitleaks before
     // spending a message-generation pass and before any commit exists. On findings
-    // we abort and deliberately unstage NOTHING — the index stays exactly as the
-    // scan saw it so the user can inspect what was caught; the task stays
-    // uncommitted and the Err string surfaces in the UI toast like every other
-    // commit failure. Absent gitleaks ⇒ the gate is off (opt-in by install).
-    if let secret_scan::ScanOutcome::Findings { summary } = secret_scan::scan_staged(&dir) {
+    // — OR on a scanner that is installed but fails to run (fail-closed) — we abort
+    // and deliberately unstage NOTHING: the index stays exactly as the scan saw it
+    // so the user can inspect what was caught; the task stays uncommitted and the
+    // Err string surfaces in the UI toast like every other commit failure. Absent
+    // gitleaks ⇒ the gate is off (opt-in by install).
+    if let Err(msg) = secret_scan::enforce(secret_scan::scan_staged(&dir)) {
         tracing::warn!(target: "nightcore", task_id = %id, "secret scan blocked the commit");
-        return Err(secret_scan::blocked_message(&summary));
+        return Err(msg);
     }
 
     // Ask `claude -p` to write a conventional message from the staged diff; on any
