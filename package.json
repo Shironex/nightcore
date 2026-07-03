@@ -27,7 +27,7 @@
     "dogfood:ui": "node scripts/dogfood-ui.mjs",
     "dogfood:engine": "bun run scripts/headless-harness.ts",
     "test": "bun run test:node && bun run test:web && bun run test:plugin && echo '⚠️  Rust suite skipped — run: bun run test:all (includes test:rust) for the full gate'",
-    "test:node": "bun test apps/sidecar packages/config packages/contracts packages/engine packages/session-fold packages/shared packages/storage",
+    "test:node": "bun test apps/sidecar packages/config packages/contracts packages/engine packages/session-fold packages/shared packages/storage tools/codegen",
     "test:web": "bun run --filter @nightcore/web test",
     "test:plugin": "bun run --filter @nightcore/eslint-plugin test",
     "test:rust": "bun run --filter @nightcore/sidecar compile && bun run --filter @nightcore/desktop test",
