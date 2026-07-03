@@ -15,7 +15,7 @@ updates:
       js-dependencies:
         patterns: ["*"]
     ignore:
-      # The Claude Agent SDK is deliberately patch-pinned (~0.3.190) because its
+      # The Claude Agent SDK is deliberately exact-pinned (0.3.190) because its
       # pre-1.0 API drifts. Allow patch (security) bumps; never auto-minor/major.
       - dependency-name: "@anthropic-ai/claude-agent-sdk"
         update-types:
