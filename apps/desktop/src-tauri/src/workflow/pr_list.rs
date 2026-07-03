@@ -19,14 +19,28 @@ use super::merge::require_project;
 use super::pr::{run_gh_bounded, GH_BINARY};
 
 const GH_LIST_TIMEOUT: Duration = Duration::from_secs(60);
-/// The `--json` field set the picker renders. `author` is a nested object.
-const PR_LIST_FIELDS: &str = "number,title,headRefName,author,isDraft,updatedAt";
+/// The `--json` field set the master-detail picker renders. `author` and `labels`
+/// are nested; `body`/`url` feed the detail pane. All single-query fields (no N+1).
+const PR_LIST_FIELDS: &str =
+    "number,title,state,headRefName,author,isDraft,createdAt,updatedAt,url,labels,body";
 /// A generous ceiling; the picker also accepts a typed number for PRs beyond it.
 const PR_LIST_LIMIT: &str = "50";
 
+/// One label on a pull request (GitHub-assigned name + 6-hex color, no `#`). The
+/// web validates the color before use — never trust it as raw CSS.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+#[cfg_attr(test, derive(TS))]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "PrLabel.ts"))]
+pub struct PrLabel {
+    pub name: String,
+    /// 6-hex RGB with no leading `#` (gh vocabulary), or empty.
+    pub color: String,
+}
+
 /// One open pull request for the PR Review picker. All text fields are gh
-/// pass-through (any contributor's content) — inert display only, never a model
-/// input, never shell-interpolated.
+/// pass-through (any contributor's content) — inert display / sanitized-markdown
+/// only, never a model input, never shell-interpolated.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[cfg_attr(test, derive(TS))]
 #[serde(rename_all = "camelCase")]
@@ -34,13 +48,24 @@ const PR_LIST_LIMIT: &str = "50";
 pub struct PrSummary {
     pub number: u64,
     pub title: String,
+    /// PR lifecycle state (`OPEN`; the list is open-only). gh vocabulary.
+    pub state: String,
     /// The PR's head branch name.
     pub head_ref_name: String,
     /// The PR author's GitHub login, or `unknown` when gh omits it.
     pub author: String,
     pub is_draft: bool,
+    /// gh-reported ISO-8601 create timestamp; the web formats it locally.
+    pub created_at: String,
     /// gh-reported ISO-8601 update timestamp; the web formats it locally.
     pub updated_at: String,
+    /// The gh-reported PR page URL (https), for "open on GitHub". Never a raw git
+    /// remote URL (which can embed credentials).
+    pub url: String,
+    pub labels: Vec<PrLabel>,
+    /// The PR description (untrusted markdown) — the web renders it through the
+    /// SANITIZING `Markdown` primitive, never raw.
+    pub body: String,
 }
 
 /// The `gh pr list --json` row shape. Everything beyond `number` is optional with
@@ -52,13 +77,23 @@ struct GhPrListItem {
     #[serde(default)]
     title: Option<String>,
     #[serde(default)]
+    state: Option<String>,
+    #[serde(default)]
     head_ref_name: Option<String>,
     #[serde(default)]
     author: Option<GhAuthor>,
     #[serde(default)]
     is_draft: Option<bool>,
     #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
     updated_at: Option<String>,
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    labels: Vec<GhLabel>,
+    #[serde(default)]
+    body: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize)]
@@ -67,18 +102,38 @@ struct GhAuthor {
     login: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize)]
+struct GhLabel {
+    #[serde(default)]
+    name: Option<String>,
+    #[serde(default)]
+    color: Option<String>,
+}
+
 impl GhPrListItem {
     fn into_summary(self) -> PrSummary {
         PrSummary {
             number: self.number,
             title: self.title.unwrap_or_default(),
+            state: self.state.unwrap_or_else(|| "OPEN".to_string()),
             head_ref_name: self.head_ref_name.unwrap_or_default(),
             author: self
                 .author
                 .and_then(|a| a.login)
                 .unwrap_or_else(|| "unknown".to_string()),
             is_draft: self.is_draft.unwrap_or(false),
+            created_at: self.created_at.unwrap_or_default(),
             updated_at: self.updated_at.unwrap_or_default(),
+            url: self.url.unwrap_or_default(),
+            labels: self
+                .labels
+                .into_iter()
+                .map(|l| PrLabel {
+                    name: l.name.unwrap_or_default(),
+                    color: l.color.unwrap_or_default(),
+                })
+                .collect(),
+            body: self.body.unwrap_or_default(),
         }
     }
 }
@@ -156,10 +211,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parse_pr_list_flattens_author_and_defaults_missing_fields() {
+    fn parse_pr_list_flattens_author_labels_and_defaults_missing_fields() {
         let json = r#"[
-            {"number": 42, "title": "Fix the thing", "headRefName": "nc/fix",
-             "author": {"login": "alice"}, "isDraft": false, "updatedAt": "2026-07-02T10:00:00Z"},
+            {"number": 42, "title": "Fix the thing", "state": "OPEN", "headRefName": "nc/fix",
+             "author": {"login": "alice"}, "isDraft": false, "createdAt": "2026-07-01T09:00:00Z",
+             "updatedAt": "2026-07-02T10:00:00Z", "url": "https://github.com/o/r/pull/42",
+             "labels": [{"name": "bug", "color": "d73a4a"}, {"name": "p2", "color": "fbca04"}],
+             "body": "Repro steps here"},
             {"number": 41, "author": null}
         ]"#;
         let prs = parse_pr_list(json).expect("parses");
@@ -168,10 +226,17 @@ mod tests {
         assert_eq!(prs[0].author, "alice");
         assert_eq!(prs[0].head_ref_name, "nc/fix");
         assert!(!prs[0].is_draft);
+        assert_eq!(prs[0].url, "https://github.com/o/r/pull/42");
+        assert_eq!(prs[0].body, "Repro steps here");
+        assert_eq!(prs[0].labels.len(), 2);
+        assert_eq!(prs[0].labels[0].name, "bug");
+        assert_eq!(prs[0].labels[0].color, "d73a4a");
         // A row missing everything but `number` degrades gracefully, not drops.
         assert_eq!(prs[1].number, 41);
         assert_eq!(prs[1].author, "unknown");
         assert_eq!(prs[1].title, "");
+        assert_eq!(prs[1].state, "OPEN"); // defaulted
+        assert!(prs[1].labels.is_empty());
     }
 
     #[test]
@@ -207,7 +272,7 @@ mod tests {
         let script = fake_gh(
             tmp.path(),
             "printf '%s\\n' \"$@\" >> args.txt\n\
-             printf '[{\"number\":7,\"title\":\"t\",\"headRefName\":\"b\",\"author\":{\"login\":\"bob\"},\"isDraft\":true,\"updatedAt\":\"x\"}]'\n\
+             printf '[{\"number\":7,\"title\":\"t\",\"state\":\"OPEN\",\"headRefName\":\"b\",\"author\":{\"login\":\"bob\"},\"isDraft\":true,\"createdAt\":\"c\",\"updatedAt\":\"x\",\"url\":\"https://gh/7\",\"labels\":[],\"body\":\"desc\"}]'\n\
              exit 0",
         );
         let prs = list_open_prs_with(
@@ -221,10 +286,15 @@ mod tests {
             vec![PrSummary {
                 number: 7,
                 title: "t".into(),
+                state: "OPEN".into(),
                 head_ref_name: "b".into(),
                 author: "bob".into(),
                 is_draft: true,
+                created_at: "c".into(),
                 updated_at: "x".into(),
+                url: "https://gh/7".into(),
+                labels: vec![],
+                body: "desc".into(),
             }]
         );
         let args = std::fs::read_to_string(tmp.path().join("args.txt")).expect("args");

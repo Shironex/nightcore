@@ -150,7 +150,8 @@ export type { StoredReviewFinding } from './generated/ReviewFinding';
 // zod contract (the engine's wire shape); the generated `StoredReviewFinding` keeps
 // `lens`/`severity`/`status` as `string`, so the PR Review view casts to these unions.
 export type { ReviewFinding, ReviewLens, ReviewSeverity } from '@nightcore/contracts';
-// Open-PR summaries for the PR Review config picker (ts-rs from `workflow/pr_list.rs`).
+// Open-PR summaries + labels for the PR Review config picker (ts-rs from `workflow/pr_list.rs`).
+export type { PrLabel } from './generated/PrLabel';
 export type { PrSummary } from './generated/PrSummary';
 
 /** The kind preset a task runs under and the four UI permission modes are
