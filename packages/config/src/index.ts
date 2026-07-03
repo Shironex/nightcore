@@ -41,30 +41,23 @@ function readLayer(dir: string, logger?: Logger): ConfigFile {
 }
 
 /** Merge config layers, lowest precedence first. Later layers win, but only for
- *  keys they set explicitly — `ConfigFileSchema` carries no defaults, so an
- *  absent key inherits rather than clobbers. `permissions` is merged one level
- *  deep so a project can override `mode` without dropping the inherited
- *  allow/deny lists. */
-function mergeLayers(...layers: ConfigFile[]): ConfigFile {
-  const out: ConfigFile = {};
+ *  keys they set explicitly — `ConfigFileSchema` carries no defaults and zod
+ *  omits absent optional keys, so a layer only ever carries the keys its file set
+ *  and an absent key inherits rather than clobbers.
+ *
+ *  The copy is key-DRIVEN (a shallow spread), not a hand-enumeration of every
+ *  field: a new scalar added to `ConfigFileSchema` participates in layering for
+ *  free, with no edit here. `permissions` is the one special case — merged one
+ *  level deep so a project can override `mode` without dropping the inherited
+ *  allow/deny lists. Its inherited value is captured before the spread (which
+ *  would otherwise clobber it wholesale) and re-merged after. */
+export function mergeLayers(...layers: ConfigFile[]): ConfigFile {
+  let out: ConfigFile = {};
   for (const layer of layers) {
-    if (layer.model !== undefined) out.model = layer.model;
-    if (layer.effort !== undefined) out.effort = layer.effort;
-    if (layer.settingSources !== undefined)
-      out.settingSources = layer.settingSources;
-    if (layer.todoFeatureEnabled !== undefined)
-      out.todoFeatureEnabled = layer.todoFeatureEnabled;
-    if (layer.maxTurns !== undefined) out.maxTurns = layer.maxTurns;
-    if (layer.maxBudgetUsd !== undefined) out.maxBudgetUsd = layer.maxBudgetUsd;
-    if (layer.logLevel !== undefined) out.logLevel = layer.logLevel;
+    const inheritedPermissions = out.permissions;
+    out = { ...out, ...layer };
     if (layer.permissions !== undefined) {
-      const p = layer.permissions;
-      out.permissions = {
-        ...out.permissions,
-        ...(p.allow !== undefined ? { allow: p.allow } : {}),
-        ...(p.deny !== undefined ? { deny: p.deny } : {}),
-        ...(p.mode !== undefined ? { mode: p.mode } : {}),
-      };
+      out.permissions = { ...inheritedPermissions, ...layer.permissions };
     }
   }
   return out;
