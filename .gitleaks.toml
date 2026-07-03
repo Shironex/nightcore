@@ -4,9 +4,15 @@ title = "gitleaks"
 # Keep the maintained default ruleset; this file only ADDS allowlist entries.
 useDefault = true
 
-[allowlist]
-description = "Known-safe paths/patterns, human-reviewed"
-# Uncomment and narrow only for fixtures/patterns you have personally verified
-# are not real secrets:
+# No allowlist entries yet — the default ruleset runs as-is.
+#
+# To allowlist known-safe paths/patterns (human-reviewed only), add an
+# [[allowlists]] block with AT LEAST ONE check — gitleaks 8.19+ rejects an
+# allowlist that carries only a description, and a bare `[allowlist]` here would
+# fail-close the commit gate on *every* commit. Narrow to fixtures/patterns you
+# have personally verified are NOT real secrets, e.g.:
+#
+# [[allowlists]]
+# description = "Test fixtures"
 # paths = ['''(^|/)tests?/fixtures/''']
 # regexes = ['''EXAMPLE_[A-Z_]+''']
