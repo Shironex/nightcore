@@ -19,8 +19,8 @@ export function RunControls({ config, isStarting, onReview }: RunControlsProps) 
       : (openPrs.prs.find((pr) => pr.number === config.prNumberValue) ?? null);
 
   return (
-    <div className="grid h-full min-h-0 grid-cols-[380px_1fr] overflow-hidden">
-      <div className="flex min-h-0 flex-col overflow-hidden border-r border-border">
+    <div className="flex h-full min-h-0 overflow-hidden">
+      <div className="flex min-h-0 w-[380px] shrink-0 flex-col overflow-hidden border-r border-border">
         <PrPicker
           prs={openPrs.prs}
           loading={openPrs.loading}
@@ -31,7 +31,7 @@ export function RunControls({ config, isStarting, onReview }: RunControlsProps) 
           disabled={isStarting}
         />
       </div>
-      <div className="min-h-0 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto">
         <PrDetail
           pr={selectedPr}
           selectedNumber={config.prNumberValue}

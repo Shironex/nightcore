@@ -15,10 +15,10 @@ function ConfiguredRunControls({
   onReview: () => void;
 }) {
   const config = useRunConfig(false);
-  // Mirror the RunLifecycleShell's block `children` container (definite height,
-  // NOT flex) so the two-pane's `h-full` resolves as it does in the app.
+  // A flex-col with a definite height gives the two-pane's `flex-1` a real height
+  // to distribute (the RunLifecycleShell provides that anchor in the app).
   return (
-    <div style={{ height: 720 }}>
+    <div className="flex flex-col" style={{ height: 720 }}>
       <RunControls config={config} isStarting={isStarting} onReview={onReview} />
     </div>
   );

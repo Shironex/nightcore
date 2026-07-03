@@ -8,9 +8,10 @@ const { Idle } = composeStories(stories);
 
 // The stories render outside Tauri, so the open-PR list is empty — a PR is chosen
 // through the left pane's typed-number escape hatch ("Select PR #N"), the same
-// onChange path a click on a listed PR card takes. (The detail pane's own
+// onChange path a click on a listed PR card takes. (The detail pane's own click
 // interactions — lens toggles, the Review action — are covered by PrDetail.test,
-// which renders that pane in a content-height context.)
+// where the pane renders at content height; clicks inside the right pane's scroll
+// container are unreliable in the browser test harness.)
 
 test('no PR chosen shows the empty detail prompt', async () => {
   const screen = render(<Idle />);
