@@ -12,6 +12,7 @@ use super::gh::{map_gh_failure, run_gh_bounded, GH_BINARY};
 use super::parse::{parse_pr_url, parse_pr_view};
 use crate::gauntlet;
 use crate::gauntlet_project;
+use crate::store::types::StructureLockResult;
 use crate::store::TaskStore;
 use crate::task::{Task, TASK_EVENT};
 use crate::workflow::merge::{require_project, TaskLease};
@@ -118,22 +119,22 @@ fn create_pr_task_blocking(
             "no worktree for task {id} — run it before creating a PR"
         ));
     }
+    // A fresh worktree checks out NO `node_modules` (gitignored), and non-hoisted,
+    // package-local deps in the main checkout are invisible to it, so `tsc -b` fails
+    // with "Cannot find module …" (exit 2) until the worktree is installed from its
+    // committed lockfile. Provision deterministically BEFORE the gauntlet so the
+    // checks run against a real, resolvable environment (a no-op for non-JS projects).
+    worktree::provision_deps(&worktree_dir)?;
     // The same gates merge_task_blocking runs (M4 §D + feature #3): a PR must not
     // be a side door around the readiness or structure-lock gauntlets. Reject on
     // failure — never force. Absent harness manifest ⇒ no lock checks ⇒ pass.
     let result = gauntlet::run(&worktree_dir);
     if !result.passed {
-        let failed = result.failed_step.clone().unwrap_or_default();
-        return Err(format!(
-            "readiness gauntlet failed at `{failed}` — fix the checks before creating a PR"
-        ));
+        return Err(readiness_failure_message(&result));
     }
     let lock = gauntlet_project::run(&worktree_dir);
     if !lock.passed {
-        let failed = lock.failed_check.clone().unwrap_or_default();
-        return Err(format!(
-            "structure-lock gauntlet failed at `{failed}` — fix the harness checks before creating a PR"
-        ));
+        return Err(structure_lock_failure_message(&lock));
     }
 
     // The gauntlets run for SECONDS — wide enough for a parallel actor (a second
@@ -236,6 +237,55 @@ fn check_pr_preconditions(task: &Task) -> Result<(), String> {
         return Err("a PR already exists for this task".to_string());
     }
     Ok(())
+}
+
+/// Append the failing gauntlet step's exact command, exit code, and a tail of its
+/// output to a failure header, so the create-PR dialog explains *why* the gate
+/// failed — not just which step (feature #3). Empty when no detail is available
+/// (e.g. a step that never captured output). Pure + reused by both gauntlet gates.
+fn step_failure_detail(command: &str, exit_code: Option<i32>, output: Option<&str>) -> String {
+    let mut detail = format!("\n\n$ {command}");
+    if let Some(code) = exit_code {
+        detail.push_str(&format!("  (exit {code})"));
+    }
+    if let Some(out) = output {
+        let out = out.trim();
+        if !out.is_empty() {
+            detail.push('\n');
+            detail.push_str(out);
+        }
+    }
+    detail
+}
+
+/// The create-PR error for a failed READINESS gauntlet: name the failing step and
+/// fold in its command + exit code + output tail (feature #3). Pure so the payload
+/// shape is unit-testable without a real worktree.
+fn readiness_failure_message(result: &gauntlet::GauntletResult) -> String {
+    let failed = result.failed_step.as_deref().unwrap_or("unknown");
+    let detail = result
+        .steps
+        .iter()
+        .find(|s| s.name == failed)
+        .map(|s| step_failure_detail(&s.command, s.exit_code, s.output.as_deref()))
+        .unwrap_or_default();
+    format!("readiness gauntlet failed at `{failed}` — fix the checks before creating a PR{detail}")
+}
+
+/// The create-PR error for a failed STRUCTURE-LOCK gauntlet: the harness twin of
+/// [`readiness_failure_message`], folding in the failing check's command + exit
+/// code + output tail. Pure + unit-testable.
+fn structure_lock_failure_message(lock: &StructureLockResult) -> String {
+    let failed = lock.failed_check.as_deref().unwrap_or("unknown");
+    let detail = lock
+        .checks
+        .iter()
+        .find(|c| c.name == failed)
+        .map(|c| step_failure_detail(&c.command, c.exit_code, c.output.as_deref()))
+        .unwrap_or_default();
+    format!(
+        "structure-lock gauntlet failed at `{failed}` — fix the harness checks before creating a PR{detail}"
+    )
 }
 
 /// Resolve the branch/base pair for a PR, exactly like merge does (task branch →
@@ -400,6 +450,8 @@ fn view_pr_with(dir: &Path, binary: &str, branch: &str) -> Option<(String, u64)>
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::gauntlet::{GauntletResult, GauntletStep};
+    use crate::store::types::{StepStatus, StructureLockCheck};
     use crate::task::RunMode;
     use std::path::PathBuf;
 
@@ -455,6 +507,98 @@ mod tests {
         assert!(
             err.contains("already exists"),
             "explains the refusal: {err}"
+        );
+    }
+
+    #[test]
+    fn readiness_failure_message_carries_the_failing_step_command_and_output() {
+        // The empirical PR-blocker: a `typecheck` that exits 2. The dialog must
+        // show the command + exit code + output tail (feature #3), not just the name.
+        let result = GauntletResult {
+            passed: false,
+            failed_step: Some("typecheck".to_string()),
+            steps: vec![
+                GauntletStep {
+                    name: "typecheck".to_string(),
+                    command: "bun run typecheck".to_string(),
+                    status: StepStatus::Failed,
+                    exit_code: Some(2),
+                    output: Some(
+                        "src/x.ts(5,8): error TS2307: Cannot find module 'zod'".to_string(),
+                    ),
+                },
+                GauntletStep {
+                    name: "lint".to_string(),
+                    command: "bun run lint".to_string(),
+                    status: StepStatus::Skipped,
+                    exit_code: None,
+                    output: None,
+                },
+            ],
+        };
+        let msg = readiness_failure_message(&result);
+        assert!(
+            msg.contains("readiness gauntlet failed at `typecheck`"),
+            "names the step: {msg}"
+        );
+        assert!(
+            msg.contains("bun run typecheck"),
+            "carries the command: {msg}"
+        );
+        assert!(msg.contains("exit 2"), "carries the exit code: {msg}");
+        assert!(
+            msg.contains("Cannot find module 'zod'"),
+            "carries the output tail: {msg}"
+        );
+    }
+
+    #[test]
+    fn structure_lock_failure_message_carries_the_failing_check_command_and_output() {
+        let lock = StructureLockResult {
+            passed: false,
+            failed_check: Some("folder-per-component".to_string()),
+            checks: vec![StructureLockCheck {
+                name: "folder-per-component".to_string(),
+                kind: "lint-plugin".to_string(),
+                command: "bun run lint:harness".to_string(),
+                status: StepStatus::Failed,
+                exit_code: Some(1),
+                output: Some("Component must live in its own folder".to_string()),
+            }],
+        };
+        let msg = structure_lock_failure_message(&lock);
+        assert!(
+            msg.contains("structure-lock gauntlet failed at `folder-per-component`"),
+            "names the check: {msg}"
+        );
+        assert!(
+            msg.contains("bun run lint:harness"),
+            "carries the command: {msg}"
+        );
+        assert!(msg.contains("exit 1"), "carries the exit code: {msg}");
+        assert!(
+            msg.contains("must live in its own folder"),
+            "carries the output tail: {msg}"
+        );
+    }
+
+    #[test]
+    fn failure_message_falls_back_to_the_header_when_no_step_detail_is_present() {
+        // An empty steps list (or a `failed_step` absent from `steps`) still yields
+        // the human header — never a panic or an empty string.
+        let result = GauntletResult {
+            passed: false,
+            steps: Vec::new(),
+            failed_step: None,
+        };
+        let msg = readiness_failure_message(&result);
+        assert!(
+            msg.contains("readiness gauntlet failed at `unknown`"),
+            "graceful header: {msg}"
+        );
+        assert!(
+            !msg.contains("$ "),
+            "no command block when there is no detail: {msg}"
         );
     }
 

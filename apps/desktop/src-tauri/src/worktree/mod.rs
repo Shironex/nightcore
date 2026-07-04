@@ -22,6 +22,7 @@
 //! separately-auditable submodules:
 //! - [`path`] — pure path/branch naming + the `is_under` escape guard (no I/O).
 //! - [`lifecycle`] — allocate / remove / reconcile (the security-sensitive dir ops).
+//! - [`provision`] — install a worktree's deps from its lockfile so the gauntlet resolves them.
 //! - [`commit`] — staging + commit inside a worktree (or the project root).
 //! - [`merge`] — merge integration + read-only preview + conflict detection.
 //! - [`status`] — the main-tree clean check + per-worktree status monitoring.
@@ -39,6 +40,7 @@ mod diff;
 mod lifecycle;
 mod merge;
 mod path;
+mod provision;
 mod status;
 
 #[cfg(test)]
@@ -56,6 +58,7 @@ pub use diff::{base_diff, worktree_diff, WorktreeDiff};
 pub use lifecycle::{allocate, allocate_branch, reconcile, remove};
 pub use merge::{merge_branch, merge_preview, MergeOutcome, MergePreview};
 pub use path::{branch_name, validate_ref, worktree_path};
+pub use provision::provision_deps;
 pub use status::{is_worktree_clean, list_worktree_statuses, WorktreeStatus};
 
 // Facade names below are consumed only by cfg(test) code today (the module tests

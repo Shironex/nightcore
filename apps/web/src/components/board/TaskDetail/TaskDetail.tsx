@@ -28,6 +28,7 @@ import { TaskStatusDot } from '../TaskStatusDot';
 import {
   canCreatePr,
   canMerge,
+  createPrBlockedReason,
   deriveTaskDetailView,
   prChipLabel,
   TaskStreamContext,
@@ -168,6 +169,12 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
     actions.onRenameSession !== undefined &&
     actions.onTagSession !== undefined;
   const mainMode = task.runMode === 'main';
+  // Create PR eligibility, surfaced explicitly (never a silent hide): an eligible
+  // task gets the enabled button; a worktree task that is not YET eligible gets a
+  // DISABLED button whose tooltip names the unmet condition; a task where a PR does
+  // not apply (main-mode / merged / already published) gets neither.
+  const prCreatable = canCreatePr(task, prSupport);
+  const prBlockedReason = createPrBlockedReason(task, prSupport);
   // Provenance chip: where a converted task came from (scan finding/reading/proposal).
   const provenance = sourceRefLabel(task.sourceRef);
   // True while the named action is mid-flight for this task — disables the button
@@ -464,7 +471,10 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
             {/* The PR terminal action beside Merge: a `PR #<n>` chip linking out
                 once one exists, else Create PR when the full eligibility contract
                 holds (done + verified + committed + worktree + !merged + a green
-                `pr_support` probe). Hidden while the probe is unknown or red. */}
+                `pr_support` probe). When a worktree task isn't yet eligible the
+                button stays visible but DISABLED, its tooltip naming the unmet
+                condition — so the user can always see why a PR can't be opened
+                rather than the button silently vanishing. */}
             {task.prUrl !== undefined ? (
               <Button
                 variant="secondary"
@@ -474,12 +484,13 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
                 <GithubIcon size={13} />
                 {prChipLabel(task)} ↗
               </Button>
-            ) : canCreatePr(task, prSupport) && actions.onCreatePr !== undefined ? (
+            ) : actions.onCreatePr !== undefined && (prCreatable || prBlockedReason !== null) ? (
               <Button
                 variant="secondary"
                 onClick={() => actions.onCreatePr!(task.id)}
-                disabled={pending('createPr')}
+                disabled={!prCreatable || pending('createPr')}
                 aria-busy={pending('createPr')}
+                title={prCreatable ? undefined : (prBlockedReason ?? undefined)}
               >
                 {pending('createPr') ? <Spinner /> : <GithubIcon size={13} />}
                 Create PR

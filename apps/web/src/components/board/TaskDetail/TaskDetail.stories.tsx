@@ -323,8 +323,9 @@ export const ReadyForPr: Story = {
   },
 };
 
-/** The same eligible task with a RED probe (no `gh` / no remote) — the Create
- *  PR button hides; the capability gate is honest instead of failing on click. */
+/** The same eligible task with a RED probe (no `gh` / no remote) — the Create PR
+ *  button stays visible but DISABLED, its tooltip naming the missing capability,
+ *  so the gate is self-explanatory instead of the button silently vanishing. */
 export const PrSupportRed: Story = {
   args: {
     ...ReadyForPr.args,
