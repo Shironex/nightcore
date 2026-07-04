@@ -8,14 +8,19 @@ import {
   BookIcon,
   BranchIcon,
   BrandMark,
+  FieldValue,
   FolderIcon,
   GearIcon,
-  GithubIcon,
   IconTile,
   LayersIcon,
   LockIcon,
+  NumberField,
+  Pill,
+  RepoLink,
+  Segmented,
   SlidersIcon,
   SparkIcon,
+  Toggle,
 } from '@/components/ui';
 import { DEFAULT_REPO_URL } from '@/lib/bridge';
 import {
@@ -24,7 +29,6 @@ import {
   MODEL_OPTIONS,
   modelOptionFor,
 } from '@/lib/models';
-import { parseNumericCommit } from '@/lib/numeric-field';
 
 import { ConstitutionCard } from '../ConstitutionCard';
 import { McpServersCard } from '../McpServersCard';
@@ -87,155 +91,6 @@ const RUN_MODES: [value: string, label: string][] = [
  *  raw value when unrecognized. */
 function resolveModelValue(model: string): string {
   return modelOptionFor(model)?.id ?? model;
-}
-
-/** A segmented selector. `disabled` renders it visible-but-inert (e.g. for a
- *  not-yet-built control). */
-function Segmented({
-  options,
-  value,
-  onChange,
-  disabled,
-}: {
-  options: [value: string, label: string][];
-  value: string;
-  onChange: (value: string) => void;
-  disabled?: boolean;
-}): ReactNode {
-  return (
-    <div
-      className={`inline-flex rounded-lg border border-border bg-black/20 p-0.5 ${disabled ? 'opacity-40' : ''}`}
-    >
-      {options.map(([v, label]) => (
-        <button
-          key={v}
-          type="button"
-          disabled={disabled}
-          onClick={() => onChange(v)}
-          className={`rounded-md px-2.5 py-1 text-[12px] font-medium transition-colors disabled:cursor-not-allowed ${
-            v === value
-              ? 'bg-primary/[0.18] text-primary'
-              : 'text-muted-foreground enabled:hover:text-foreground'
-          }`}
-        >
-          {label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** An editable switch toggle bound to a persisted boolean setting. */
-function Toggle({
-  on,
-  onChange,
-  label,
-}: {
-  on: boolean;
-  onChange: (next: boolean) => void;
-  label: string;
-}): ReactNode {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      onClick={() => onChange(!on)}
-      className={`inline-flex h-[18px] w-[32px] items-center rounded-full px-0.5 transition-colors ${on ? 'bg-primary' : 'bg-white/[0.12]'}`}
-    >
-      <span
-        className={`h-3.5 w-3.5 rounded-full bg-white transition-transform ${on ? 'translate-x-3.5' : ''}`}
-      />
-    </button>
-  );
-}
-
-/** A numeric input bound to an optional ceiling setting (SDK guardrails). Empty
- *  ⇒ the field inherits (the placeholder shows the inherited/default value). A
- *  committed value is sent via `onCommit`; an empty/blank or unchanged value is a
- *  no-op (the Rust side cannot clear an `Option` ceiling back to inherit, so the
- *  control only ever SETS a value — matching the model/effort override contract). */
-function NumberField({
-  value,
-  placeholder,
-  onCommit,
-  step,
-  min,
-  ariaLabel,
-  prefix,
-}: {
-  value: number | null;
-  placeholder: string;
-  onCommit: (next: number) => void;
-  step?: string;
-  min?: number;
-  ariaLabel: string;
-  prefix?: string;
-}): ReactNode {
-  const commit = (raw: string) => {
-    const parsed = parseNumericCommit(raw, value, min ?? 0);
-    if (parsed !== null) onCommit(parsed);
-  };
-  return (
-    <div className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-black/20 px-2.5 py-1.5 focus-within:border-primary">
-      {prefix !== undefined && (
-        <span className="font-mono text-[12px] text-muted-foreground">{prefix}</span>
-      )}
-      <input
-        type="number"
-        inputMode="numeric"
-        step={step}
-        min={min}
-        aria-label={ariaLabel}
-        defaultValue={value ?? ''}
-        key={value ?? 'empty'}
-        placeholder={placeholder}
-        onBlur={(e) => commit(e.target.value)}
-        onKeyDown={(e) => {
-          if (e.key === 'Enter') {
-            e.preventDefault();
-            commit((e.target as HTMLInputElement).value);
-            (e.target as HTMLInputElement).blur();
-          }
-        }}
-        className="w-[88px] bg-transparent text-right font-mono text-[12.5px] text-foreground outline-none placeholder:text-muted-foreground/60 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
-      />
-    </div>
-  );
-}
-
-/** A read-only mono value pill (paths, versions, fixed values). */
-function Pill({ children }: { children: ReactNode }): ReactNode {
-  return (
-    <span className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 font-mono text-xs text-muted-foreground">
-      {children}
-    </span>
-  );
-}
-
-/** A read-only mono field — a presentational stand-in for text inputs. */
-function FieldValue({ children }: { children: ReactNode }): ReactNode {
-  return (
-    <span className="block w-full rounded-lg border border-border bg-black/20 px-3 py-2.5 font-mono text-[12.5px] text-foreground">
-      {children}
-    </span>
-  );
-}
-
-/** A link that opens the project's repository in a new tab. */
-function RepoLink({ href }: { href: string }): ReactNode {
-  return (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="flex items-center gap-1.5 text-[12.5px] font-semibold text-primary"
-    >
-      <GithubIcon size={15} />
-      Open repo
-    </a>
-  );
 }
 
 /** The scope toggle tabs as `[value, label]` pairs. */
