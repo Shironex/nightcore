@@ -6,6 +6,17 @@ version: 2
 updates:
   # JS / TS workspace (Bun). Dependabot reads the root + workspace manifests and
   # bun.lock and updates every package it resolves.
+  #
+  # KNOWN LIMITATION — bun.lock drift: both CI jobs run
+  # `bun install --frozen-lockfile`, which fails on ANY drift between a manifest
+  # and bun.lock. Dependabot's npm updater support for writing the text `bun.lock`
+  # (Bun 1.2+) is recent and not guaranteed to update the lockfile alongside the
+  # manifest. If a Dependabot PR bumps package.json but leaves bun.lock stale, its
+  # `bun install --frozen-lockfile` step (ci.yml + audit.yml) reds and the PR
+  # cannot merge. MITIGATION when that happens: check out the PR branch and run
+  # `bun install` (regenerates bun.lock), then push the refreshed lockfile to the
+  # PR branch — the frozen-lockfile check then passes. Group is kept to one PR per
+  # week (below) so this manual refresh is at most a weekly, single-PR chore.
   - package-ecosystem: "npm"
     directory: "/"
     schedule:
@@ -16,9 +27,14 @@ updates:
         patterns: ["*"]
     ignore:
       # The Claude Agent SDK is deliberately exact-pinned (0.3.190) because its
-      # pre-1.0 API drifts. Allow patch (security) bumps; never auto-minor/major.
+      # pre-1.0 API drifts. Below 1.0 semver gives NO stability guarantee for
+      # patch releases either — a 0.3.x → 0.3.y bump of this fast-moving agent
+      # SDK can carry breaking changes, and the engine is the load-bearing
+      # consumer. So ignore ALL auto-bumps and move this pin deliberately
+      # (matching the exact-pin), rather than treating patch as inherently safe.
       - dependency-name: "@anthropic-ai/claude-agent-sdk"
         update-types:
+          - "version-update:semver-patch"
           - "version-update:semver-minor"
           - "version-update:semver-major"
 
