@@ -86,9 +86,8 @@ struct FileFacts {
 /// capped at [`MAX_PARSED_FILES`]. `None` when `root` is not a git repo (or git
 /// itself fails) — the caller omits the section.
 fn tracked_source_files(root: &Path) -> Option<Vec<String>> {
-    let output = crate::platform::std_command("git")
+    let output = crate::platform::git_command(root)
         .args(["ls-files", "-z"])
-        .current_dir(root)
         .output()
         .ok()?;
     if !output.status.success() {

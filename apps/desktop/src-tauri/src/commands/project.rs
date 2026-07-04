@@ -30,9 +30,8 @@ fn path_is_git_repo(path: &str) -> bool {
 
 /// Best-effort current branch via `git rev-parse --abbrev-ref HEAD`.
 fn current_branch(path: &str) -> Option<String> {
-    let out = crate::platform::std_command("git")
+    let out = crate::platform::git_command(Path::new(path))
         .args(["rev-parse", "--abbrev-ref", "HEAD"])
-        .current_dir(path)
         .output()
         .ok()?;
     if !out.status.success() {
@@ -207,9 +206,8 @@ pub fn is_git_repo(path: String) -> Result<bool, String> {
 /// Initialize a git repository at `path` (`git init`).
 #[tauri::command]
 pub fn git_init(path: String) -> Result<(), String> {
-    let out = crate::platform::std_command("git")
+    let out = crate::platform::git_command(Path::new(&path))
         .arg("init")
-        .current_dir(&path)
         .output()
         .map_err(|e| format!("failed to run git init (is `git` on PATH?): {e}"))?;
     if out.status.success() {
