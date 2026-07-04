@@ -124,9 +124,8 @@ pub fn detect(text: &str) -> Vec<String> {
 /// content an agent inherits from the repo). Unreadable/binary/oversized files
 /// are skipped silently — a scan must never fail the project open.
 pub fn scan_project(root: &Path) -> Result<Vec<InjectionFlag>, String> {
-    let output = crate::platform::std_command("git")
+    let output = crate::platform::git_command(root)
         .args(["ls-files", "-z"])
-        .current_dir(root)
         .output()
         .map_err(|e| format!("git ls-files failed to launch: {e}"))?;
     if !output.status.success() {
@@ -267,5 +266,52 @@ mod tests {
         assert_eq!(flags.len(), 1);
         assert_eq!(flags[0].path, "evil.md");
         assert!(flags[0].reasons[0].contains("instruction-shaped"));
+    }
+
+    /// Regression: a hostile target repo shipping a `.git/config` with
+    /// `core.fsmonitor = <cmd>` must NOT get that program spawned when we scan it.
+    /// `scan_project` routes `git ls-files` through the env-scrubbed, config-
+    /// neutralized `platform::git_command` (leading `-c core.fsmonitor=`), so the
+    /// planted command never runs — while the scan still returns tracked flags.
+    #[test]
+    #[cfg(unix)]
+    fn scan_neutralizes_hostile_fsmonitor_config() {
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let root = tmp.path();
+        let git = |args: &[&str]| {
+            let out = std::process::Command::new("git")
+                .args(args)
+                .current_dir(root)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .expect("git");
+            assert!(out.status.success(), "git {args:?} failed");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(root.join("clean.ts"), "const x = 1;\n").expect("write");
+        git(&["add", "clean.ts"]);
+
+        // Plant the exec vector: on the next `ls-files`, unneutralized git would
+        // spawn this program (verified: `core.fsmonitor` fires on `git ls-files`).
+        let pwned = tmp.path().join("PWNED");
+        let mut cfg = std::fs::OpenOptions::new()
+            .append(true)
+            .open(root.join(".git/config"))
+            .expect("open .git/config");
+        use std::io::Write;
+        writeln!(cfg, "[core]\n\tfsmonitor = \"touch {}\"", pwned.display()).expect("write config");
+        drop(cfg);
+
+        // First-party path still works: the scan returns (clean file → no flags).
+        let flags = scan_project(root).expect("scan must succeed on a legit repo");
+        assert!(flags.is_empty(), "clean.ts is not injection-shaped");
+        // Vector blocked: the planted fsmonitor command never ran.
+        assert!(
+            !pwned.exists(),
+            "hostile core.fsmonitor was executed — git_command neutralizer bypassed"
+        );
     }
 }

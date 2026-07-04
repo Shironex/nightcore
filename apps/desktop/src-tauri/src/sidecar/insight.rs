@@ -46,9 +46,8 @@ scan_lifecycle_commands! {
 fn changed_files(project_path: &str) -> Vec<String> {
     let mut files: Vec<String> = Vec::new();
     let collect = |args: &[&str], out: &mut Vec<String>| {
-        if let Ok(o) = crate::platform::std_command("git")
+        if let Ok(o) = crate::platform::git_command(std::path::Path::new(project_path))
             .args(args)
-            .current_dir(project_path)
             .output()
         {
             if o.status.success() {
