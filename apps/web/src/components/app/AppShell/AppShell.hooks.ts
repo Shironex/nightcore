@@ -62,6 +62,115 @@ import { useSplash } from './hooks/useSplash.hooks';
 import { useStableLogCounts } from './hooks/useStableLogCounts.hooks';
 import { useWorktrees } from './hooks/useWorktrees.hooks';
 
+/** The board controller: the `useBoard` result augmented with the cross-hook
+ *  action handlers and derived board state. Named as its own slice so a new board
+ *  handler extends this type, not the wider AppShellState composition surface. */
+export type BoardController = ReturnType<typeof useBoard> & {
+  anyRunning: boolean;
+  /** The count of concurrently running tasks (`in_progress` + `verifying`) —
+   *  drives the sidebar footer's "N running" indicator. */
+  runningCount: number;
+  selected: Task | null;
+  logCounts: Record<string, number>;
+  blockedIds: Set<string>;
+  /** Parked permission prompts keyed by task id (`nc:permission`). */
+  prompts: Record<string, PermissionPrompt[]>;
+  /** Parked AskUserQuestion prompts keyed by task id (`nc:question`). */
+  questions: Record<string, QuestionPrompt[]>;
+  /** Task ids with at least one parked prompt OR question — drives the card's
+   *  pulse and the "needs input" affordance. */
+  promptIds: Set<string>;
+  /** Per-task readiness-gauntlet results, keyed by task id. */
+  gauntletResults: Record<string, GauntletResult>;
+  /** Task ids with a gauntlet run in flight. */
+  gauntletRunning: Set<string>;
+  /** The active project's live worktrees for the switcher. */
+  worktrees: WorktreeInfo[];
+  /** The selected worktree tab (`null` = Main); filters the board. */
+  activeWorktree: ActiveWorktree;
+  /** Select a worktree tab (sets the active worktree + filters the board). */
+  setActiveWorktree: (active: ActiveWorktree) => void;
+  handleCreate: (
+    title: string,
+    description: string,
+    kind: TaskKind,
+    runMode: RunMode,
+    options?: CreateTaskOptions,
+  ) => Promise<void>;
+  handleRun: (id: string) => void;
+  handleCancel: (id: string) => void;
+  /** Resume a chosen historical session (relaunches the task at the UUID). */
+  handleResumeSession: (taskId: string, sdkSessionId: string) => void;
+  /** Rename a past session's title. */
+  handleRenameSession: (sdkSessionId: string, title: string) => void;
+  /** Tag a past session, or clear its tag with `null`. */
+  handleTagSession: (sdkSessionId: string, tag: string | null) => void;
+  handleDelete: (id: string) => void;
+  handleClearColumn: (statuses: TaskStatus[]) => void;
+  handleMoveTask: (id: string, status: TaskStatus) => void;
+  handleRespondPermission: (
+    taskId: string,
+    requestId: string,
+    decision: 'allow' | 'deny',
+  ) => void;
+  /** Answer a parked AskUserQuestion prompt (submit choices or skip). */
+  handleAnswerQuestion: (
+    taskId: string,
+    requestId: string,
+    answer: QuestionAnswer,
+  ) => void;
+  handleApprove: (id: string) => void;
+  handleReject: (id: string) => void;
+  handleRefine: (id: string) => void;
+  handleCommit: (id: string) => void;
+  handleMerge: (id: string) => void;
+  /** The task id the Create PR dialog is open for (`null` = closed). */
+  prDialogTaskId: string | null;
+  /** Close the Create PR dialog. */
+  closePrDialog: () => void;
+  /** The guarded push + `gh pr create` mutation the dialog confirms. Rejects
+   *  on failure (the dialog shows the error inline and stays open). */
+  handleCreatePr: (id: string, opts: CreatePrOptions) => Promise<void>;
+  /** Edit a not-yet-run task's kind. */
+  handleChangeKind: (id: string, kind: TaskKind) => void;
+  /** Edit a not-yet-run task's run mode. */
+  handleChangeRunMode: (id: string, runMode: RunMode) => void;
+  /** Edit a not-yet-run task's permission-mode override. */
+  handleChangePermissionMode: (id: string, permissionMode: PermissionMode | null) => void;
+  /** Edit a not-yet-run task's model override. */
+  handleChangeModel: (id: string, model: string | null) => void;
+  /** Edit a not-yet-run task's reasoning-effort override. */
+  handleChangeEffort: (id: string, effort: string | null) => void;
+  /** Edit a not-yet-run task's max-turns ceiling (SDK guardrail). */
+  handleChangeMaxTurns: (id: string, maxTurns: number | null) => void;
+  /** Edit a not-yet-run task's max-budget-USD ceiling (SDK guardrail). */
+  handleChangeMaxBudget: (id: string, maxBudgetUsd: number | null) => void;
+  /** Verification-approval actions for a review-parked task. */
+  handleAcceptReview: (id: string) => void;
+  handleRejectReview: (id: string) => void;
+  handleRerunVerification: (id: string) => void;
+  /** Run the pre-merge readiness gauntlet for a verified task. */
+  handleRunGauntlet: (id: string) => void;
+  /** Convert one proposed sub-task into a board task. */
+  handleConvertSubtask: (parentId: string, subtaskId: string) => void;
+  /** Convert every still-open proposed sub-task into board tasks. */
+  handleConvertAllSubtasks: (parentId: string) => void;
+  /** True while a guarded task action (`run`/`approve`/`commit`/…) is in flight,
+   *  so the matching button can disable itself and not double-fire. */
+  isActionPending: (action: string, id: string) => boolean;
+  /** The open drawer's ~25 action callbacks pre-assembled into one referentially
+   *  stable object, so the memoized `TaskDetailChrome` bails on a stream flush
+   *  instead of re-rendering because a fresh `actions` literal arrived each frame. */
+  detailActions: TaskDetailActions;
+  /** Stable "close the detail drawer" handler (clears the selection). */
+  closeDetail: () => void;
+  /** Open the destructive-delete confirmation for a card's trash button (the
+   *  board wires this as the card `onDelete` so a delete is never immediate). */
+  requestDelete: (id: string) => void;
+  /** Open the destructive bulk-clear confirmation for a column's Clear button. */
+  requestClear: (statuses: TaskStatus[]) => void;
+};
+
 /** Everything the shell renders from: the per-domain hook results (routing,
  *  registry, settings, auto-loop, New Project flow) plus the board controller
  *  augmented with the cross-hook action handlers and derived board state. */
@@ -71,111 +180,7 @@ export interface AppShellState {
   settings: ReturnType<typeof useSettingsData>;
   autoLoop: ReturnType<typeof useAutoLoop>;
   newProject: ReturnType<typeof useNewProjectFlow>;
-  board: ReturnType<typeof useBoard> & {
-    anyRunning: boolean;
-    /** The count of concurrently running tasks (`in_progress` + `verifying`) —
-     *  drives the sidebar footer's "N running" indicator. */
-    runningCount: number;
-    selected: Task | null;
-    logCounts: Record<string, number>;
-    blockedIds: Set<string>;
-    /** Parked permission prompts keyed by task id (`nc:permission`). */
-    prompts: Record<string, PermissionPrompt[]>;
-    /** Parked AskUserQuestion prompts keyed by task id (`nc:question`). */
-    questions: Record<string, QuestionPrompt[]>;
-    /** Task ids with at least one parked prompt OR question — drives the card's
-     *  pulse and the "needs input" affordance. */
-    promptIds: Set<string>;
-    /** Per-task readiness-gauntlet results, keyed by task id. */
-    gauntletResults: Record<string, GauntletResult>;
-    /** Task ids with a gauntlet run in flight. */
-    gauntletRunning: Set<string>;
-    /** The active project's live worktrees for the switcher. */
-    worktrees: WorktreeInfo[];
-    /** The selected worktree tab (`null` = Main); filters the board. */
-    activeWorktree: ActiveWorktree;
-    /** Select a worktree tab (sets the active worktree + filters the board). */
-    setActiveWorktree: (active: ActiveWorktree) => void;
-    handleCreate: (
-      title: string,
-      description: string,
-      kind: TaskKind,
-      runMode: RunMode,
-      options?: CreateTaskOptions,
-    ) => Promise<void>;
-    handleRun: (id: string) => void;
-    handleCancel: (id: string) => void;
-    /** Resume a chosen historical session (relaunches the task at the UUID). */
-    handleResumeSession: (taskId: string, sdkSessionId: string) => void;
-    /** Rename a past session's title. */
-    handleRenameSession: (sdkSessionId: string, title: string) => void;
-    /** Tag a past session, or clear its tag with `null`. */
-    handleTagSession: (sdkSessionId: string, tag: string | null) => void;
-    handleDelete: (id: string) => void;
-    handleClearColumn: (statuses: TaskStatus[]) => void;
-    handleMoveTask: (id: string, status: TaskStatus) => void;
-    handleRespondPermission: (
-      taskId: string,
-      requestId: string,
-      decision: 'allow' | 'deny',
-    ) => void;
-    /** Answer a parked AskUserQuestion prompt (submit choices or skip). */
-    handleAnswerQuestion: (
-      taskId: string,
-      requestId: string,
-      answer: QuestionAnswer,
-    ) => void;
-    handleApprove: (id: string) => void;
-    handleReject: (id: string) => void;
-    handleRefine: (id: string) => void;
-    handleCommit: (id: string) => void;
-    handleMerge: (id: string) => void;
-    /** The task id the Create PR dialog is open for (`null` = closed). */
-    prDialogTaskId: string | null;
-    /** Close the Create PR dialog. */
-    closePrDialog: () => void;
-    /** The guarded push + `gh pr create` mutation the dialog confirms. Rejects
-     *  on failure (the dialog shows the error inline and stays open). */
-    handleCreatePr: (id: string, opts: CreatePrOptions) => Promise<void>;
-    /** Edit a not-yet-run task's kind. */
-    handleChangeKind: (id: string, kind: TaskKind) => void;
-    /** Edit a not-yet-run task's run mode. */
-    handleChangeRunMode: (id: string, runMode: RunMode) => void;
-    /** Edit a not-yet-run task's permission-mode override. */
-    handleChangePermissionMode: (id: string, permissionMode: PermissionMode | null) => void;
-    /** Edit a not-yet-run task's model override. */
-    handleChangeModel: (id: string, model: string | null) => void;
-    /** Edit a not-yet-run task's reasoning-effort override. */
-    handleChangeEffort: (id: string, effort: string | null) => void;
-    /** Edit a not-yet-run task's max-turns ceiling (SDK guardrail). */
-    handleChangeMaxTurns: (id: string, maxTurns: number | null) => void;
-    /** Edit a not-yet-run task's max-budget-USD ceiling (SDK guardrail). */
-    handleChangeMaxBudget: (id: string, maxBudgetUsd: number | null) => void;
-    /** Verification-approval actions for a review-parked task. */
-    handleAcceptReview: (id: string) => void;
-    handleRejectReview: (id: string) => void;
-    handleRerunVerification: (id: string) => void;
-    /** Run the pre-merge readiness gauntlet for a verified task. */
-    handleRunGauntlet: (id: string) => void;
-    /** Convert one proposed sub-task into a board task. */
-    handleConvertSubtask: (parentId: string, subtaskId: string) => void;
-    /** Convert every still-open proposed sub-task into board tasks. */
-    handleConvertAllSubtasks: (parentId: string) => void;
-    /** True while a guarded task action (`run`/`approve`/`commit`/…) is in flight,
-     *  so the matching button can disable itself and not double-fire. */
-    isActionPending: (action: string, id: string) => boolean;
-    /** The open drawer's ~25 action callbacks pre-assembled into one referentially
-     *  stable object, so the memoized `TaskDetailChrome` bails on a stream flush
-     *  instead of re-rendering because a fresh `actions` literal arrived each frame. */
-    detailActions: TaskDetailActions;
-    /** Stable "close the detail drawer" handler (clears the selection). */
-    closeDetail: () => void;
-    /** Open the destructive-delete confirmation for a card's trash button (the
-     *  board wires this as the card `onDelete` so a delete is never immediate). */
-    requestDelete: (id: string) => void;
-    /** Open the destructive bulk-clear confirmation for a column's Clear button. */
-    requestClear: (statuses: TaskStatus[]) => void;
-  };
+  board: BoardController;
   /** The shared destructive-delete confirmation (card trash + column Clear),
    *  rendered by AppShell as a single `ConfirmDialog`. */
   confirm: ReturnType<typeof useDestructiveConfirm>;
