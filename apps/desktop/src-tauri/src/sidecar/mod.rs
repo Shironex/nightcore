@@ -519,7 +519,15 @@ pub(crate) fn finish_run(
                 tracing::warn!(target: "nightcore", task_id, fatal, threshold = engine.breaker_threshold(app), "circuit breaker tripped; pausing auto-loop");
                 engine.emit_state(app, "paused", Some(cause));
                 let app = app.clone();
-                tokio::spawn(async move {
+                // `tauri::async_runtime::spawn` (not bare `tokio::spawn`) — the latter
+                // panics when no Tokio runtime is entered on the calling thread and
+                // aborted the release app via SIGABRT across the WKWebView extern-"C"
+                // boundary. `finish_run` is a `pub(crate)` terminal-transition helper;
+                // a refactor reaching this breaker branch from a sync Tauri
+                // command/callback thread would otherwise reintroduce the abort. Mirrors
+                // the guarded sibling sites (fail_run in submit.rs, auto_loop start/stop)
+                // and is guarded by the source-grep regression test below.
+                tauri::async_runtime::spawn(async move {
                     app.state::<Arc<dyn EngineApi>>().interrupt_all(&app).await;
                 });
             }
@@ -649,5 +657,36 @@ mod tests {
             read_capped_line(&mut reader, 1024).await,
             WireLine::Line(ref s) if s == "{\"a\":1}"
         ));
+    }
+
+    #[test]
+    fn finish_run_breaker_trip_uses_the_guarded_spawn() {
+        // Regression guard for the SIGABRT pattern (nightcore-2026-06-27-161645.ips):
+        // the breaker-trip branch of `finish_run` must launch `interrupt_all` via
+        // `tauri::async_runtime::spawn`, never bare `tokio::spawn` (which panics when no
+        // Tokio runtime is entered on the calling thread and aborted the release app
+        // across the WKWebView extern-"C" boundary). The spawn site needs a full
+        // `AppHandle`, so this is a source-level guard rather than a behavioral one.
+        // Unlike submit.rs, this file has legitimate on-runtime bare `tokio::spawn`s
+        // (the sidecar stdout/stderr readers), so the guard is scoped to the window of
+        // source immediately preceding the `interrupt_all` spawn body rather than a
+        // blanket file-wide grep. Mirrors submit.rs's
+        // `fail_run_breaker_trip_uses_the_guarded_spawn`.
+        let src = include_str!("mod.rs");
+        let needle = ".interrupt_all(&app).await;";
+        let at = src
+            .find(needle)
+            .expect("finish_run's interrupt_all spawn body must exist");
+        // The `spawn(...)` opener sits on the line just above the interrupt_all call.
+        let window = &src[at.saturating_sub(160)..at];
+        let bare_spawn = concat!("tokio", "::spawn(async move {");
+        assert!(
+            !window.contains(bare_spawn),
+            "finish_run must NOT use bare tokio::spawn — it aborts off-runtime (SIGABRT)"
+        );
+        assert!(
+            window.contains("tauri::async_runtime::spawn(async move {"),
+            "finish_run must launch interrupt_all via the guarded tauri::async_runtime::spawn"
+        );
     }
 }
