@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import type {
   MenuItem,
@@ -19,6 +19,8 @@ import {
   startScorecard,
   type Task,
 } from '@/lib/bridge';
+import { seedStepState } from '@/lib/scan-run';
+import { useScanRun } from '@/lib/useScanRun';
 
 import type { DimensionRow } from '../DimensionGrid';
 import { useRunConfig } from '../RunControls/RunControls.hooks';
@@ -26,7 +28,6 @@ import type { ScorecardRunConfig } from '../RunControls/RunControls.types';
 import { DIMENSION_META, gradeRankValue } from '../scorecard.constants';
 import type { ScorecardReadingView } from '../scorecard.types';
 import {
-  type DimensionProgress,
   EMPTY_SCORECARD_STREAM,
   foldScorecard,
   type ScorecardStream,
@@ -53,85 +54,39 @@ interface UseScorecardResult {
  *  authoritative reconciliation against the persisted run on completion, and the
  *  harden action. The Profile twin of `useInsight`, minus dismiss/restore. */
 function useScorecard(hasProject: boolean): UseScorecardResult {
-  const [stream, setStream] = useState<ScorecardStream>(EMPTY_SCORECARD_STREAM);
-  const [runs, setRuns] = useState<ScorecardRun[]>([]);
-  const [isStarting, setIsStarting] = useState(false);
-  const [startError, setStartError] = useState<string | null>(null);
-
-  const activeRunId = useRef<string | null>(null);
-  // Synchronous re-entrancy guard for `start`: blocks a second dispatch in the
-  // render-timing gap before the disabled Grade button / optimistic running state
-  // lands, so two fast clicks can't mint two uuids and launch two paid runs.
-  const gradeInFlight = useRef(false);
-
-  const refreshRuns = useCallback(async () => {
-    const next = await listScorecardRuns();
-    setRuns(next);
-    return next;
-  }, []);
-
-  const reconcile = useCallback(
-    async (runId: string) => {
-      const run = await getScorecardRun(runId);
-      if (run !== null) setStream(streamFromRun(run));
-      await refreshRuns();
+  const scan = useScanRun<ScorecardEvent, ScorecardRun, ScorecardStream>({
+    emptyStream: EMPTY_SCORECARD_STREAM,
+    listRuns: listScorecardRuns,
+    getRun: getScorecardRun,
+    streamFromRun,
+    cancelRun: cancelScorecard,
+    subscribe: onScorecardEvent,
+    onEvent: (event, { activeRunId, setStream, refreshRuns, reconcile }) => {
+      if (event.type === 'reading-converted') {
+        setStream((prev) =>
+          prev.runId === event.runId
+            ? {
+                ...prev,
+                readings: prev.readings.map((r) =>
+                  r.id === event.readingId
+                    ? { ...r, status: 'converted', linkedTaskId: event.taskId }
+                    : r,
+                ),
+              }
+            : prev,
+        );
+        void refreshRuns();
+        return;
+      }
+      // scorecard-* events only apply to the run currently displayed/driven.
+      if (event.runId !== activeRunId.current) return;
+      setStream((prev) => foldScorecard(prev, event));
+      if (event.type === 'scorecard-completed' || event.type === 'scorecard-failed') {
+        void reconcile(event.runId);
+      }
     },
-    [refreshRuns],
-  );
-
-  // Initial load: list runs and display the newest (already sorted newest-first).
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const next = await refreshRuns();
-      if (cancelled || next.length === 0) return;
-      const newest = next[0];
-      if (newest === undefined) return;
-      activeRunId.current = newest.id;
-      setStream(streamFromRun(newest));
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [refreshRuns]);
-
-  // Subscribe to the live scorecard stream once.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void (async () => {
-      const fn = await onScorecardEvent((event: ScorecardEvent) => {
-        if (event.type === 'reading-converted') {
-          setStream((prev) =>
-            prev.runId === event.runId
-              ? {
-                  ...prev,
-                  readings: prev.readings.map((r) =>
-                    r.id === event.readingId
-                      ? { ...r, status: 'converted', linkedTaskId: event.taskId }
-                      : r,
-                  ),
-                }
-              : prev,
-          );
-          void refreshRuns();
-          return;
-        }
-        // scorecard-* events only apply to the run currently displayed/driven.
-        if (event.runId !== activeRunId.current) return;
-        setStream((prev) => foldScorecard(prev, event));
-        if (event.type === 'scorecard-completed' || event.type === 'scorecard-failed') {
-          void reconcile(event.runId);
-        }
-      });
-      if (disposed) fn();
-      else unlisten = fn;
-    })();
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [reconcile, refreshRuns]);
+  });
+  const { stream, setStream, runStart, refreshRuns } = scan;
 
   const start = useCallback(
     async (
@@ -139,49 +94,26 @@ function useScorecard(hasProject: boolean): UseScorecardResult {
       model: string | null,
       effort: string | null,
     ) => {
-      if (!hasProject || dimensions.length === 0) return;
-      if (gradeInFlight.current) return;
-      gradeInFlight.current = true;
-      setIsStarting(true);
-      setStartError(null);
-      try {
+      await runStart(hasProject && dimensions.length > 0, async () => {
         const runId = await startScorecard(dimensions, {
           model,
           effort: effort as EffortLevel | null,
         });
-        activeRunId.current = runId;
-        setStream({
-          ...EMPTY_SCORECARD_STREAM,
+        return {
           runId,
-          status: 'running',
-          model,
-          requestedDimensions: dimensions,
-          dimensionState: Object.fromEntries(
-            dimensions.map((d) => [d, 'pending' as DimensionProgress]),
-          ),
-        });
-        await refreshRuns();
-      } catch (err) {
-        setStartError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setIsStarting(false);
-        gradeInFlight.current = false;
-      }
+          optimistic: {
+            ...EMPTY_SCORECARD_STREAM,
+            runId,
+            status: 'running',
+            model,
+            requestedDimensions: dimensions,
+            dimensionState: seedStepState(dimensions),
+          },
+        };
+      });
     },
-    [hasProject, refreshRuns],
+    [hasProject, runStart],
   );
-
-  const cancel = useCallback(async () => {
-    if (stream.runId === null) return;
-    await cancelScorecard(stream.runId);
-  }, [stream.runId]);
-
-  const selectRun = useCallback(async (runId: string) => {
-    const run = await getScorecardRun(runId);
-    if (run === null) return;
-    activeRunId.current = runId;
-    setStream(streamFromRun(run));
-  }, []);
 
   const harden = useCallback(
     async (readingId: string): Promise<Task | null> => {
@@ -198,10 +130,19 @@ function useScorecard(hasProject: boolean): UseScorecardResult {
       await refreshRuns();
       return task;
     },
-    [stream.runId, refreshRuns],
+    [stream.runId, setStream, refreshRuns],
   );
 
-  return { stream, runs, isStarting, startError, start, cancel, selectRun, harden };
+  return {
+    stream,
+    runs: scan.runs,
+    isStarting: scan.isStarting,
+    startError: scan.startError,
+    start,
+    cancel: scan.cancel,
+    selectRun: scan.selectRun,
+    harden,
+  };
 }
 
 /** Order rows for the results grid: graded rows worst-grade first, then ungraded
