@@ -83,8 +83,16 @@ export function ActivityLog({ sessions, isRunning }: ActivityLogProps) {
 }
 
 /** One collapsible session block within the activity log: a header summarizing
- *  the session (phase, model, tool count, cost) over the session's timeline. */
-function SessionLog({
+ *  the session (phase, model, tool count, cost) over the session's timeline.
+ *
+ *  `memo`ized so a live delta to the newest session doesn't re-run every prior
+ *  sealed block. `foldTranscript` replaces only the live session's object on each
+ *  delta, so a sealed session's `session` prop keeps a stable identity, and its
+ *  `defaultOpen`/`isRunning` are constant `false` — memo skips them, keeping the
+ *  per-token cost O(1) in the session count instead of O(sessions). A newly
+ *  appended session legitimately flips the formerly-live block's props, so memo
+ *  still re-renders it exactly when it should. */
+const SessionLog = memo(function SessionLog({
   session,
   defaultOpen,
   isRunning,
@@ -137,7 +145,7 @@ function SessionLog({
       </div>
     </section>
   );
-}
+});
 
 /** The header-less activity list for a single session: assistant text turns
  *  interleaved with boxed tool-call / subagent lines, in arrival order. The live
