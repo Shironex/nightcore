@@ -7,7 +7,8 @@ import { afterEach, describe, expect, test } from 'bun:test';
 
 import {
   buildSeatbeltProfile,
-  claudeStatePrefixes,
+  claudeConfigPoisonPaths,
+  claudeConfigPoisonPrefixes,
   deriveWritableRoots,
   gitCommonWriteRoots,
   prepareWriteSandbox,
@@ -62,6 +63,25 @@ describe('buildSeatbeltProfile', () => {
     // Deny must come before any allow-write rule.
     expect(profile.indexOf('(deny file-write*)')).toBeLessThan(
       profile.indexOf('(allow file-write* (subpath "/w"))'),
+    );
+  });
+
+  test('emits deny rules AFTER the allow rules so they win (last-match-wins)', () => {
+    const profile = buildSeatbeltProfile({
+      writableRoots: ['/Users/x/.claude'],
+      denyWritePaths: ['/Users/x/.claude/settings.json'],
+      denyWritePrefixes: ['/Users/x/.claude.json'],
+    });
+    expect(profile).toContain(
+      '(deny file-write* (literal "/Users/x/.claude/settings.json"))',
+    );
+    expect(profile).toContain(
+      '(deny file-write* (prefix "/Users/x/.claude.json"))',
+    );
+    // The carve-out DENY of settings.json must come AFTER the ALLOW of the
+    // ~/.claude root, or Seatbelt (last-match-wins) would leave it writable.
+    expect(profile.indexOf('(allow file-write* (subpath "/Users/x/.claude"))')).toBeLessThan(
+      profile.indexOf('(deny file-write* (literal "/Users/x/.claude/settings.json"))'),
     );
   });
 
@@ -209,11 +229,50 @@ describe('deriveWritableRoots', () => {
   });
 });
 
-describe('claudeStatePrefixes', () => {
-  test('covers the ~/.claude.json family as a prefix', () => {
-    expect(claudeStatePrefixes()).toEqual([
-      path.join(os.homedir(), '.claude.json'),
+describe('config-poisoning denials', () => {
+  const home = os.homedir();
+
+  test('deny the global settings files (hook-injection RCE vector) as literals', () => {
+    expect(claudeConfigPoisonPaths()).toEqual([
+      path.join(home, '.claude', 'settings.json'),
+      path.join(home, '.claude', 'settings.local.json'),
     ]);
+  });
+
+  test('deny the ~/.claude.json family as a prefix', () => {
+    expect(claudeConfigPoisonPrefixes()).toEqual([
+      path.join(home, '.claude.json'),
+    ]);
+  });
+
+  test('~/.claude stays a writable root (session state) but is NOT a poison path', () => {
+    // The state dir must remain writable so a wrapped session can persist shell
+    // snapshots/todos — only the config files inside it are carved back out.
+    const roots = deriveWritableRoots({ cwd: makeTempDir('nc-sandbox-test-') });
+    const claudeDir = path.join(home, '.claude');
+    expect(
+      roots.some((r) => r === claudeDir || r.endsWith('/.claude')),
+    ).toBe(true);
+    // ~/.claude.json is a SIBLING file, never a writable root.
+    expect(roots).not.toContain(path.join(home, '.claude.json'));
+  });
+
+  test('the assembled profile denies settings.json while keeping ~/.claude writable', () => {
+    // End-to-end shape: a profile built the way prepareWriteSandbox builds it
+    // must allow ~/.claude yet deny the config-poisoning files after it.
+    const profile = buildSeatbeltProfile({
+      writableRoots: [path.join(home, '.claude')],
+      denyWritePaths: claudeConfigPoisonPaths(),
+      denyWritePrefixes: claudeConfigPoisonPrefixes(),
+    });
+    const allowIdx = profile.indexOf(
+      `(allow file-write* (subpath "${path.join(home, '.claude')}"))`,
+    );
+    const denyIdx = profile.indexOf(
+      `(deny file-write* (literal "${path.join(home, '.claude', 'settings.json')}"))`,
+    );
+    expect(allowIdx).toBeGreaterThanOrEqual(0);
+    expect(denyIdx).toBeGreaterThan(allowIdx);
   });
 });
 
@@ -261,6 +320,41 @@ describe('Seatbelt containment (integration, real sandbox-exec)', () => {
       const denied = runSandboxed(profilePath, `echo x > "${outside}/no.txt"`);
       expect(denied.status).not.toBe(0);
       expect(fs.existsSync(path.join(outside, 'no.txt'))).toBe(false);
+    },
+  );
+
+  test.skipIf(!canSandbox)(
+    'a deny carve-out beats an allowed root: state dir writable, settings.json denied',
+    () => {
+      // Model the ~/.claude posture: the dir is a writable root, but a deny
+      // literal for settings.json inside it must still block that write while a
+      // sibling state file writes fine. Proves the last-match-wins carve-out.
+      const claudeDir = fs.realpathSync(makeTempDir('nc-sandbox-claude-'));
+      const scratchDir = makeTempDir('nc-sandbox-scratch-');
+      const profilePath = path.join(scratchDir, 'test.sb');
+      fs.writeFileSync(
+        profilePath,
+        buildSeatbeltProfile({
+          writableRoots: [claudeDir],
+          denyWritePaths: [path.join(claudeDir, 'settings.json')],
+        }),
+      );
+
+      // Session state inside the allowed root still writes.
+      const state = runSandboxed(
+        profilePath,
+        `echo x > "${claudeDir}/todos.json"`,
+      );
+      expect(state.status).toBe(0);
+      expect(fs.existsSync(path.join(claudeDir, 'todos.json'))).toBe(true);
+
+      // The config-poisoning file is carved back out → the write is denied.
+      const poison = runSandboxed(
+        profilePath,
+        `echo '{"hooks":{}}' > "${claudeDir}/settings.json"`,
+      );
+      expect(poison.status).not.toBe(0);
+      expect(fs.existsSync(path.join(claudeDir, 'settings.json'))).toBe(false);
     },
   );
 
