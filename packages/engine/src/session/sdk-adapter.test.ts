@@ -4,6 +4,8 @@ import { describe, expect, test } from 'bun:test';
 import type { NightcoreEvent } from '@nightcore/contracts';
 
 import {
+  categoryForReason,
+  detailForReason,
   mapAssistantError,
   type SDKMessage,
   translateMessage,
@@ -448,7 +450,17 @@ describe('translateMessage — result (terminal)', () => {
       sdk({ type: 'result', subtype: 'error_max_turns', errors: ['hit the cap'] }),
     );
     expect(result.events).toEqual([
-      { type: 'session-failed', sessionId: SID, reason: 'max-turns', message: 'hit the cap' },
+      {
+        type: 'session-failed',
+        sessionId: SID,
+        reason: 'max-turns',
+        message: 'hit the cap',
+        detail: {
+          category: 'resource-exhausted',
+          message: 'hit the cap',
+          retriable: false,
+        },
+      },
     ]);
     expect(result.terminal).toEqual({
       kind: 'failed',
@@ -472,6 +484,11 @@ describe('translateMessage — result (terminal)', () => {
         sessionId: SID,
         reason: 'max-budget',
         message: 'budget exceeded',
+        detail: {
+          category: 'resource-exhausted',
+          message: 'budget exceeded',
+          retriable: false,
+        },
       },
     ]);
     expect(result.terminal).toEqual({
@@ -560,5 +577,38 @@ describe('mapAssistantError', () => {
   ];
   test.each(cases)('maps %p to %p', (input, expected) => {
     expect(mapAssistantError(input)).toBe(expected);
+  });
+});
+
+describe('categoryForReason — structured error taxonomy', () => {
+  const cases: ReadonlyArray<
+    readonly [Parameters<typeof categoryForReason>[0], string, string]
+  > = [
+    ['authentication', 'no', 'auth'],
+    ['rate-limit', 'slow down', 'rate-limit'],
+    ['aborted', 'cancelled', 'aborted'],
+    ['max-turns', 'cap', 'resource-exhausted'],
+    ['max-budget', 'cap', 'resource-exhausted'],
+    ['runner-crash', 'boom', 'runner-crash'],
+    ['unknown', 'huh', 'unknown'],
+    // A generic crash/unknown is promoted to disk-full when the OS said ENOSPC.
+    ['runner-crash', 'write failed: ENOSPC', 'disk-full'],
+    ['unknown', 'no space left on device', 'disk-full'],
+  ];
+  test.each(cases)('%p (%p) → %p', (reason, message, expected) => {
+    expect(categoryForReason(reason, message)).toBe(expected);
+  });
+});
+
+describe('detailForReason — retriability', () => {
+  test('marks rate-limit and runner-crash retriable', () => {
+    expect(detailForReason('rate-limit', 'x').retriable).toBe(true);
+    expect(detailForReason('runner-crash', 'boom').retriable).toBe(true);
+  });
+  test('marks auth, resource ceilings, and disk-full non-retriable', () => {
+    expect(detailForReason('authentication', 'x').retriable).toBe(false);
+    expect(detailForReason('max-turns', 'x').retriable).toBe(false);
+    expect(detailForReason('runner-crash', 'ENOSPC').category).toBe('disk-full');
+    expect(detailForReason('runner-crash', 'ENOSPC').retriable).toBe(false);
   });
 });

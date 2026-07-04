@@ -21,6 +21,7 @@ import { resolveClaudeBinary } from './resolve-claude-binary.js';
 import { prepareWriteSandbox } from './sandbox.js';
 import {
   type AgentInfo,
+  detailForReason,
   type McpServerStatus,
   type ModelInfo,
   type Query,
@@ -350,12 +351,16 @@ export class SessionRunner {
       sessionId: this.cfg.sessionId,
       idleTimeoutMs: this.idleTimeoutMs,
     });
-    this.emit({
-      type: 'session-failed',
-      sessionId: this.cfg.sessionId,
-      reason: 'runner-crash',
-      message: `stream stalled: no SDK activity for ${this.idleTimeoutMs}ms`,
-    });
+    {
+      const message = `stream stalled: no SDK activity for ${this.idleTimeoutMs}ms`;
+      this.emit({
+        type: 'session-failed',
+        sessionId: this.cfg.sessionId,
+        reason: 'runner-crash',
+        message,
+        detail: detailForReason('runner-crash', message),
+      });
+    }
     this.closeInput();
     this.abort.abort();
     void this.query?.interrupt().catch((error: unknown) => {
@@ -611,6 +616,7 @@ export class SessionRunner {
       sessionId: this.cfg.sessionId,
       reason: 'runner-crash',
       message: CLAUDE_CLI_MISSING_MESSAGE,
+      detail: detailForReason('runner-crash', CLAUDE_CLI_MISSING_MESSAGE),
     });
     this.closeInput();
   }
@@ -619,11 +625,13 @@ export class SessionRunner {
     const aborted = this.abort.signal.aborted;
     const message = error instanceof Error ? error.message : String(error);
     this.logger?.warn('session runner crashed', error);
+    const reason = aborted ? 'aborted' : 'runner-crash';
     this.emit({
       type: 'session-failed',
       sessionId: this.cfg.sessionId,
-      reason: aborted ? 'aborted' : 'runner-crash',
+      reason,
       message,
+      detail: detailForReason(reason, message),
     });
     this.closeInput();
   }
