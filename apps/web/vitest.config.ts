@@ -40,6 +40,31 @@ const chromium = () => ({
  */
 export default defineConfig({
   test: {
+    // Coverage is OFF by default (bare `vitest run` / the per-project
+    // `test:unit` / `test:stories` scripts stay fast and don't trip thresholds
+    // on a partial run). It activates only under `--coverage` (the `test:coverage`
+    // script CI runs via `test:web:coverage`), which runs BOTH projects so the
+    // aggregate reflects the whole suite — the web-tier analogue of the node
+    // tier's tools/coverage/check-node-coverage.ts floor. The floors start a
+    // comfortable margin below today's actual (~69% line / ~61% fn) as a ratchet
+    // against a new component/route shipping untested; tighten over time.
+    coverage: {
+      provider: 'istanbul',
+      include: ['src/**'],
+      exclude: [
+        'src/lib/generated/**',
+        '**/*.stories.tsx',
+        '**/*.test.tsx',
+        '**/*.test.ts',
+      ],
+      reporter: ['text-summary'],
+      thresholds: {
+        statements: 55,
+        branches: 55,
+        functions: 50,
+        lines: 60,
+      },
+    },
     projects: [
       {
         plugins: [

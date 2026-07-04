@@ -30,6 +30,7 @@
     "test:node": "bun test apps/sidecar packages/config packages/contracts packages/engine packages/session-fold packages/shared packages/storage tools/codegen",
     "test:node:coverage": "bun run tools/coverage/check-node-coverage.ts",
     "test:web": "bun run --filter @nightcore/web test",
+    "test:web:coverage": "bun run --filter @nightcore/web test:coverage",
     "test:plugin": "bun run --filter @nightcore/eslint-plugin test",
     "test:rust": "bun run --filter @nightcore/sidecar compile && bun run --filter @nightcore/desktop test",
     "test:all": "bun run test:node && bun run test:web && bun run test:plugin && bun run test:rust",
