@@ -30,12 +30,21 @@
  *  - the darwin temp trees: `realpath($TMPDIR)`, `/private/tmp`,
  *    `/private/var/folders`;
  *  - `~/.claude` (the CLI's state tree: shell snapshots, projects, todos,
- *    session state — observed on disk);
- *  - `~/.claude.json` as a PREFIX (the CLI writes `~/.claude.json`,
- *    `~/.claude.json.backup`, and timestamped `~/.claude.json.backup.<ts>`
- *    siblings — observed on disk, so a prefix rule, not a literal);
+ *    session state — observed on disk) EXCEPT the config-poisoning files carved
+ *    back out below;
  *  - `~/Library/Caches/claude-cli-nodejs` (the CLI's cache/log dir — observed
  *    on disk).
+ *
+ * CONFIG-POISONING CARVE-OUT (denied even inside the writable `~/.claude` root):
+ * an autonomous agent never needs to author the CLI's GLOBAL settings, and such
+ * a write is a hook-injection RCE — a planted `hooks` entry in
+ * `~/.claude/settings.json` (or `mcpServers` in the `~/.claude.json` family)
+ * runs arbitrary shell on the NEXT session. So containment additionally DENIES
+ * `~/.claude/settings.json`, `~/.claude/settings.local.json`, and the whole
+ * `~/.claude.json*` family. The CLI's ephemeral session-state writes under
+ * `~/.claude` (shell snapshots / todos / projects) stay allowed, so a wrapped
+ * session still runs; only the two config surfaces an agent must never rewrite
+ * are blocked.
  *
  * KNOWN CONSEQUENCE (accepted, feature is default-off + experimental): user
  * hooks configured in `~/.claude/settings.json` that write OUTSIDE these roots
@@ -80,9 +89,13 @@ function shellSingleQuote(p: string): string {
  * Build a deny-write-except Seatbelt profile: everything allowed EXCEPT
  * `file-write*`, which is re-allowed only under the given roots (`subpath`
  * filters — the root and everything beneath it) and prefixes (`prefix`
- * filters — any path whose string starts with the value; used for the
- * `~/.claude.json` + `~/.claude.json.backup*` sibling family). Pure: no I/O,
- * so profile generation is unit-testable without a darwin host.
+ * filters — any path whose string starts with the value). Optional
+ * `denyWritePaths`/`denyWritePrefixes` are emitted AFTER the allow rules and,
+ * because Seatbelt evaluates rules LAST-MATCH-WINS, they carve specific paths
+ * back OUT of an allowed root — used to keep the CLI's `~/.claude` state tree
+ * writable while still denying the config-poisoning files inside it
+ * (`settings.json` hook-injection, the `~/.claude.json` mcp/hooks family). Pure:
+ * no I/O, so profile generation is unit-testable without a darwin host.
  *
  * Callers must pass CANONICALIZED roots (see `deriveWritableRoots`): Seatbelt
  * evaluates the kernel-resolved (symlink-free) path, so `/tmp/x` is checked as
@@ -91,6 +104,8 @@ function shellSingleQuote(p: string): string {
 export function buildSeatbeltProfile(opts: {
   writableRoots: string[];
   writablePrefixes?: string[];
+  denyWritePaths?: string[];
+  denyWritePrefixes?: string[];
 }): string {
   const lines = ['(version 1)', '(allow default)', '(deny file-write*)'];
   for (const root of opts.writableRoots) {
@@ -98,6 +113,15 @@ export function buildSeatbeltProfile(opts: {
   }
   for (const prefix of opts.writablePrefixes ?? []) {
     lines.push(`(allow file-write* (prefix ${seatbeltString(prefix)}))`);
+  }
+  // Deny rules come LAST so they override the allows above for these exact
+  // paths (last-match-wins). This is what re-protects the config-poisoning
+  // files that sit inside an otherwise-writable state dir.
+  for (const p of opts.denyWritePaths ?? []) {
+    lines.push(`(deny file-write* (literal ${seatbeltString(p)}))`);
+  }
+  for (const prefix of opts.denyWritePrefixes ?? []) {
+    lines.push(`(deny file-write* (prefix ${seatbeltString(prefix)}))`);
   }
   return lines.join('\n') + '\n';
 }
@@ -256,9 +280,25 @@ export function deriveWritableRoots(opts: {
   return roots;
 }
 
-/** The `~/.claude.json` family: the CLI writes the file plus `.backup` /
- *  `.backup.<ts>` siblings, so this is a PREFIX rule (see the module doc). */
-export function claudeStatePrefixes(): string[] {
+/** The config-poisoning files DENIED even inside the writable `~/.claude` root
+ *  (see the module doc): the global settings files whose `hooks` run arbitrary
+ *  shell on the next session, as exact literals. */
+export function claudeConfigPoisonPaths(): string[] {
+  const claudeDir = path.join(os.homedir(), '.claude');
+  return [
+    path.join(claudeDir, 'settings.json'),
+    path.join(claudeDir, 'settings.local.json'),
+  ];
+}
+
+/** The config-poisoning PREFIX denials: the `~/.claude.json` family (the CLI
+ *  writes `~/.claude.json`, `~/.claude.json.backup`, and timestamped
+ *  `~/.claude.json.backup.<ts>` siblings), which can carry `mcpServers`/`hooks`
+ *  that execute on the next session. A prefix rule covers the whole family.
+ *  This is NO LONGER in the writable set — writing the CLI's global config is
+ *  never a legitimate agent action, and permitting it undermines the very
+ *  hook-injection defense the sandbox exists to provide. */
+export function claudeConfigPoisonPrefixes(): string[] {
   return [path.join(os.homedir(), '.claude.json')];
 }
 
@@ -304,7 +344,12 @@ export function prepareWriteSandbox(opts: {
     });
     const profile = buildSeatbeltProfile({
       writableRoots,
-      writablePrefixes: claudeStatePrefixes(),
+      // Carve the config-poisoning surfaces back OUT of the writable `~/.claude`
+      // root (and deny the `~/.claude.json` family entirely) — these are the
+      // hook-injection RCE vectors an agent must never write, even with the
+      // sandbox on. Session state under `~/.claude` stays writable.
+      denyWritePaths: claudeConfigPoisonPaths(),
+      denyWritePrefixes: claudeConfigPoisonPrefixes(),
     });
     const scratchDir = fs.mkdtempSync(
       path.join(os.tmpdir(), 'nightcore-sandbox-'),
