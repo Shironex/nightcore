@@ -21,6 +21,7 @@ export { DetailCard, DetailCardGrid } from './DetailCardGrid';
 export type { DetailPanelShellProps } from './DetailPanelShell';
 export { DetailLocation, DetailPanelShell, DetailSection } from './DetailPanelShell';
 export { EmptyState } from './EmptyState';
+export { FieldValue } from './FieldValue';
 export { IconButton } from './IconButton';
 export * from './icons';
 export { IconTile } from './IconTile';
@@ -35,6 +36,10 @@ export type { ModalProps } from './Modal';
 export { Modal, useModal } from './Modal';
 export { ModelEffortPicker } from './ModelEffortPicker';
 export type { ModelEffortPickerProps } from './ModelEffortPicker/ModelEffortPicker.types';
+export type { NumberFieldProps } from './NumberField';
+export { NumberField } from './NumberField';
+export { Pill } from './Pill';
+export { RepoLink } from './RepoLink';
 export type { RunLifecycleShellProps, RunPhase } from './RunLifecycleShell';
 export { RunLifecycleShell } from './RunLifecycleShell';
 export type {
@@ -45,8 +50,12 @@ export type {
   RunProgressUsage,
 } from './RunProgress';
 export { RunProgress } from './RunProgress';
+export type { SegmentedProps } from './Segmented';
+export { Segmented } from './Segmented';
 export { Skeleton } from './Skeleton';
 export { Spinner } from './Spinner';
 export { StatusDot } from './StatusDot';
 export type { Toast, ToastApi, ToastTone } from './Toast';
 export { ToastProvider, useToast } from './Toast';
+export type { ToggleProps } from './Toggle';
+export { Toggle } from './Toggle';
