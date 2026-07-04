@@ -135,6 +135,35 @@ export function canCreatePr(task: Task, support: PrSupport | null | undefined): 
   return support.ghInstalled && support.hasRemote;
 }
 
+/** When a Done-column worktree task can't yet open a PR, the human reason why —
+ *  surfaced as the disabled Create PR button's tooltip so eligibility is
+ *  self-explanatory instead of the button silently vanishing. Returns `null` when
+ *  Create PR does not apply at all (a `main`-mode edit has no branch, a merged task
+ *  is finished, or a PR already exists — each shown by a sibling control) OR when
+ *  the task IS eligible (the enabled button renders, no hint needed). Reasons are
+ *  checked in the order the backend enforces them (`check_pr_preconditions`) so the
+ *  tooltip names the first blocker the user has to clear. */
+export function createPrBlockedReason(
+  task: Task,
+  support: PrSupport | null | undefined,
+): string | null {
+  // A PR publishes a worktree branch: main-mode (no branch), an already-merged
+  // task, and an already-published task are represented by other controls, so
+  // there is no disabled Create PR button for them.
+  if (task.runMode !== 'worktree' || task.merged || task.prUrl !== undefined) return null;
+  // Eligible ⇒ the enabled button renders; there is no blocking reason to show.
+  if (canCreatePr(task, support)) return null;
+  if (!task.committed) return 'Commit the task before opening a PR.';
+  if (!task.verified) {
+    return 'Task is not verified yet — a reviewer must pass it before you can open a PR.';
+  }
+  if (support === null || support === undefined) return 'Checking whether GitHub is available…';
+  if (!support.ghInstalled) return 'GitHub CLI (gh) is not installed — install it to open PRs.';
+  if (!support.hasRemote) return 'No git remote (origin) is configured — add one to open PRs.';
+  // Defensive: every ineligibility above is covered, but never claim readiness.
+  return 'Create PR is not available for this task yet.';
+}
+
 /** The PR chip's label once `prUrl` is set — `PR #123`, or a plain `PR` when the
  *  number is (unexpectedly) absent. */
 export function prChipLabel(task: Task): string {

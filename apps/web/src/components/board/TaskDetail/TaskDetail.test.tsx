@@ -9,7 +9,13 @@ import {
   SAMPLE_REVIEW_CHANGES,
 } from '../_fixtures';
 import { EMPTY_STREAM } from '../session-stream';
-import { canCreatePr, canMerge, deriveTaskDetailView, prChipLabel } from './TaskDetail.hooks';
+import {
+  canCreatePr,
+  canMerge,
+  createPrBlockedReason,
+  deriveTaskDetailView,
+  prChipLabel,
+} from './TaskDetail.hooks';
 import * as stories from './TaskDetail.stories';
 
 const {
@@ -235,16 +241,54 @@ test('shows Create PR beside Merge for an eligible task with a green probe', asy
   expect(onCreatePr).toHaveBeenCalledWith('t-done');
 });
 
-test('hides Create PR when the capability probe is red', async () => {
+test('shows a disabled Create PR with a gh-missing hint when the probe is red', async () => {
+  // An eligible task with a RED probe no longer hides the button: it stays visible
+  // but disabled, its tooltip naming the unmet capability (feature: eligibility is
+  // self-explanatory instead of a silent vanish).
   const screen = render(<PrSupportRed />);
-  await expect.element(screen.getByRole('button', { name: /^merge$/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /create pr/i }).query()).toBeNull();
+  const create = screen.getByRole('button', { name: /create pr/i });
+  await expect.element(create).toBeDisabled();
+  await expect
+    .element(create)
+    .toHaveAttribute('title', 'GitHub CLI (gh) is not installed — install it to open PRs.');
 });
 
-test('hides Create PR while the probe is unknown (Done keeps only Merge)', async () => {
-  const screen = render(<Done />);
-  await expect.element(screen.getByRole('button', { name: /^merge$/i })).toBeInTheDocument();
-  expect(screen.getByRole('button', { name: /create pr/i }).query()).toBeNull();
+test('shows a disabled Create PR while the capability probe is loading', async () => {
+  // A null (still-probing) capability shows the button disabled with a "checking"
+  // hint rather than hiding it.
+  const screen = render(<ReadyForPr prSupport={null} />);
+  const create = screen.getByRole('button', { name: /create pr/i });
+  await expect.element(create).toBeDisabled();
+  await expect
+    .element(create)
+    .toHaveAttribute('title', 'Checking whether GitHub is available…');
+});
+
+test('shows a disabled Create PR with a verify hint for a committed-but-unverified task', async () => {
+  // The dogfood blocker: a Done-column worktree task that is committed but stuck
+  // un-verified used to show NO Create PR button at all. Now it shows the button
+  // disabled, explaining that verification is the missing step.
+  const screen = render(
+    <ReadyForPr
+      task={makeTask({
+        id: 't-done',
+        status: 'done',
+        runMode: 'worktree',
+        branch: 'nc/x',
+        committed: true,
+        verified: false,
+      })}
+      prSupport={{ ghInstalled: true, hasRemote: true }}
+    />,
+  );
+  const create = screen.getByRole('button', { name: /create pr/i });
+  await expect.element(create).toBeDisabled();
+  await expect
+    .element(create)
+    .toHaveAttribute(
+      'title',
+      'Task is not verified yet — a reviewer must pass it before you can open a PR.',
+    );
 });
 
 test('swaps the button for a PR #<n> chip once prUrl is set, linking out', async () => {
@@ -278,6 +322,39 @@ test('canCreatePr enforces the full eligibility contract', () => {
   expect(canCreatePr(eligible, undefined)).toBe(false);
   expect(canCreatePr(eligible, { ghInstalled: false, hasRemote: true })).toBe(false);
   expect(canCreatePr(eligible, { ghInstalled: true, hasRemote: false })).toBe(false);
+});
+
+test('createPrBlockedReason names the first unmet condition, or null when N/A / eligible', () => {
+  const green = { ghInstalled: true, hasRemote: true };
+  const eligible = makeTask({
+    status: 'done',
+    verified: true,
+    committed: true,
+    runMode: 'worktree',
+    branch: 'nc/x',
+  });
+  // Eligible ⇒ no blocking reason (the enabled button renders).
+  expect(createPrBlockedReason(eligible, green)).toBeNull();
+  // Not-applicable states ⇒ null (sibling controls own them), never a disabled PR button.
+  expect(createPrBlockedReason(makeTask({ ...eligible, runMode: 'main', branch: null }), green)).toBeNull();
+  expect(createPrBlockedReason(makeTask({ ...eligible, merged: true }), green)).toBeNull();
+  expect(
+    createPrBlockedReason(makeTask({ ...eligible, prUrl: 'https://x/pr/1' }), green),
+  ).toBeNull();
+  // Unmet conditions ⇒ the reason, in backend precondition order.
+  expect(createPrBlockedReason(makeTask({ ...eligible, committed: false }), green)).toMatch(
+    /Commit the task/,
+  );
+  expect(createPrBlockedReason(makeTask({ ...eligible, verified: false }), green)).toMatch(
+    /not verified/,
+  );
+  expect(createPrBlockedReason(eligible, null)).toMatch(/Checking whether GitHub/);
+  expect(
+    createPrBlockedReason(eligible, { ghInstalled: false, hasRemote: true }),
+  ).toMatch(/gh\) is not installed/);
+  expect(
+    createPrBlockedReason(eligible, { ghInstalled: true, hasRemote: false }),
+  ).toMatch(/No git remote/);
 });
 
 test('prChipLabel folds in the PR number when present', () => {
