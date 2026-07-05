@@ -40,7 +40,8 @@ pub fn append_anti_gaming_check(
         return;
     };
     let range = format!("{merge_base}..HEAD");
-    let Some(diff) = crate::git::run::git_stdout(review_dir, &["diff", "--no-color", &range]) else {
+    let Some(diff) = crate::git::run::git_stdout(review_dir, &["diff", "--no-color", &range])
+    else {
         tracing::warn!(target: "nightcore::anti_gaming", range = %range, dir = %review_dir.display(), "git diff failed; skipping anti-gaming sweep");
         return;
     };
