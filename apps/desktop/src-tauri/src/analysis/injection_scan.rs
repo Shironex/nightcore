@@ -224,18 +224,7 @@ mod tests {
     fn scan_walks_tracked_files_and_skips_binary() {
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let root = tmp.path();
-        let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .expect("git");
-            assert!(out.status.success(), "git {args:?} failed");
-        };
+        let git = |args: &[&str]| crate::git::testutil::git_expect(root, args);
         git(&["init", "-q"]);
         std::fs::write(root.join("clean.ts"), "const x = 1;\n").expect("write");
         std::fs::write(
@@ -264,18 +253,7 @@ mod tests {
     fn scan_neutralizes_hostile_fsmonitor_config() {
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let root = tmp.path();
-        let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .expect("git");
-            assert!(out.status.success(), "git {args:?} failed");
-        };
+        let git = |args: &[&str]| crate::git::testutil::git_expect(root, args);
         git(&["init", "-q"]);
         std::fs::write(root.join("clean.ts"), "const x = 1;\n").expect("write");
         git(&["add", "clean.ts"]);

@@ -4,8 +4,9 @@
 //! logic stops being scattered across `worktree/`, `workflow/`, `analysis/`,
 //! `sidecar/`, and `commands/`. The security-critical git-env isolation
 //! chokepoint stays where it is (`infra/platform.rs::git_command`); the helpers
-//! here BUILD ON it — none spawns a raw `Command::new("git")` (a guard test in
-//! this module enforces that).
+//! here BUILD ON it — none spawns a raw `git` process via `std::process::Command`
+//! (a guard test in [`testutil`] enforces that, allowing only the shared test
+//! fixture runner).
 //!
 //! Submodules:
 //! - [`parse`] — pure porcelain parsers (`--numstat`, `rev-list --left-right`,
@@ -18,3 +19,5 @@ pub(crate) mod gh;
 pub(crate) mod parse;
 pub(crate) mod query;
 pub(crate) mod run;
+#[cfg(test)]
+pub(crate) mod testutil;

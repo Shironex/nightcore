@@ -274,18 +274,10 @@ mod tests {
     /// Skips when `git` is unavailable (worktree/tests.rs posture).
     #[test]
     fn evaluate_measures_a_real_worktree_diff() {
-        use std::process::Command;
         let Some((_tmp, repo)) = temp_repo() else {
             return;
         };
-        let run = |dir: &Path, args: &[&str]| {
-            Command::new("git")
-                .args(args)
-                .current_dir(dir)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        };
+        let run = |dir: &Path, args: &[&str]| crate::git::testutil::git_ok(dir, args);
         assert!(run(&repo, &["worktree", "add", "wt", "-b", "feature"]));
         let wt = repo.join("wt");
         std::fs::write(wt.join("big.ts"), "line\n".repeat(10)).expect("write");
@@ -313,17 +305,9 @@ mod tests {
 
     /// Real git repo with one commit, or `None` when git is unavailable.
     fn temp_repo() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
-        use std::process::Command;
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let path = tmp.path().to_path_buf();
-        let run = |args: &[&str]| {
-            Command::new("git")
-                .args(args)
-                .current_dir(&path)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        };
+        let run = |args: &[&str]| crate::git::testutil::git_ok(&path, args);
         if !run(&["init", "-q"]) {
             return None;
         }

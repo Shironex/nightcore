@@ -353,18 +353,10 @@ mod tests {
     /// never count. Skips when `git` is unavailable.
     #[test]
     fn snapshot_then_ratchet_holds_and_regresses() {
-        use std::process::Command;
         let Some((_tmp, repo)) = temp_repo() else {
             return;
         };
-        let run = |args: &[&str]| {
-            Command::new("git")
-                .args(args)
-                .current_dir(&repo)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        };
+        let run = |args: &[&str]| crate::git::testutil::git_ok(&repo, args);
         std::fs::write(repo.join("a.ts"), "const a: any = 1;\n// @ts-ignore\n").expect("write");
         std::fs::write(repo.join("b.md"), ": any as any <any>").expect("write"); // not a TS file
         assert!(run(&["add", "."]) && run(&["commit", "-q", "-m", "ts files"]));
@@ -420,17 +412,9 @@ mod tests {
 
     /// Real git repo, or `None` when git is unavailable.
     fn temp_repo() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
-        use std::process::Command;
         let tmp = tempfile::TempDir::new().expect("temp dir");
         let path = tmp.path().to_path_buf();
-        let run = |args: &[&str]| {
-            Command::new("git")
-                .args(args)
-                .current_dir(&path)
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-        };
+        let run = |args: &[&str]| crate::git::testutil::git_ok(&path, args);
         if !run(&["init", "-q"]) {
             return None;
         }

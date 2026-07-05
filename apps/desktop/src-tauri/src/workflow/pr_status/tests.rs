@@ -3,8 +3,9 @@
 //! `fake_gh` / `temp_repo` / `seed_pr_task` fixtures.
 
 use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::time::Duration;
+
+use crate::git::testutil::git_ok;
 
 use serde_json::json;
 
@@ -386,24 +387,14 @@ fn temp_repo() -> Option<(tempfile::TempDir, PathBuf)> {
 
 /// Run a git command in `dir` for tests, returning success.
 fn run_in(dir: &Path, args: &[&str]) -> bool {
-    Command::new("git")
-        .args(args)
-        .current_dir(dir)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
+    git_ok(dir, args)
 }
 
 /// A bare repo standing in for `origin`, wired into `repo` — so pushes and
 /// fetches need no network.
 fn add_bare_origin(repo: &Path) -> Option<tempfile::TempDir> {
     let bare = tempfile::TempDir::new().ok()?;
-    let ok = Command::new("git")
-        .args(["init", "-q", "--bare"])
-        .current_dir(bare.path())
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false);
+    let ok = git_ok(bare.path(), &["init", "-q", "--bare"]);
     if !ok || !run_in(repo, &["remote", "add", "origin", bare.path().to_str()?]) {
         return None;
     }
