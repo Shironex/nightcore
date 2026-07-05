@@ -20,7 +20,7 @@
  * The session is read-only (Read/Glob/Grep/LS only — no Bash, no network, no MCP) and
  * NEVER shells out: all GitHub data (issue title/body/comments, linked-PR titles and
  * capped diffs) is pre-fetched by the Rust tier and injected inline on the command,
- * each attacker-controlled field wrapped in the delimiter-safe {@link untrustedBlock}.
+ * each attacker-controlled field wrapped in the shared {@link untrustedBlock}.
  * `model` + `effort` thread through the shared `runOneSession` path (they fall back to
  * the resolved config). Degrade-not-throw throughout (inherited): any crash surfaces as
  * `issue-validation-failed`, never a rejected promise.
@@ -247,11 +247,11 @@ export class IssueTriageScanManager extends ScanManager<
 
 /**
  * The per-run user prompt for the validation pass: the deterministic repo map, then
- * every GitHub-sourced field wrapped in a delimiter-safe UNTRUSTED block (issue,
- * comments, linked-PR diffs), then the standing instruction to treat those blocks as
- * data and the strict single-object output contract. The session has no execution
- * surface; framing the GitHub text as DATA — never instructions — is the
- * prompt-injection posture (mirrors PR review).
+ * every GitHub-sourced field wrapped in a shared UNTRUSTED block (issue, comments,
+ * linked-PR diffs), then the standing instruction to treat those blocks as data and the
+ * strict single-object output contract. The session's read-only toolset (no execution
+ * surface) is the primary injection control; framing the GitHub text as DATA — never
+ * instructions — is defense-in-depth on top of it.
  */
 function buildValidationPrompt(
   command: StartIssueValidation,
