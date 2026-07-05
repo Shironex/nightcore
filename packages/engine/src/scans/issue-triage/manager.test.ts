@@ -230,11 +230,14 @@ describe('IssueTriageScanManager — strict single-object parse', () => {
 describe('IssueTriageScanManager — corrective retry', () => {
   test('a non-JSON-then-JSON pass triggers exactly ONE corrective retry', async () => {
     let calls = 0;
-    const factory: IssueTriageRunnerFactory = (cfg: SessionRunnerConfig, emit) => ({
+    // Key the retry off the CALL COUNT, not the reminder wording: the first pass returns
+    // prose (⇒ parse error ⇒ one corrective retry), the second returns the verdict. This
+    // stays green if `retryReminderSuffix()`'s text is reworded (that string is not a
+    // stable contract, so a test must not couple to it).
+    const factory: IssueTriageRunnerFactory = (_cfg: SessionRunnerConfig, emit) => ({
       async run() {
         calls++;
-        const isRetry = cfg.prompt.includes('was not valid JSON');
-        await completing(isRetry ? CANNED_VERDICT : 'prose, not json')(emit);
+        await completing(calls === 1 ? 'prose, not json' : CANNED_VERDICT)(emit);
       },
       async interrupt() {},
     });
@@ -281,6 +284,15 @@ describe('IssueTriageScanManager — no-verdict failure', () => {
 describe('IssueTriageScanManager — cancellation', () => {
   test('cancel interrupts the live session and surfaces reason "aborted"', async () => {
     const live: Array<() => void> = [];
+    // Deterministic "the runner registered" signal — resolved the moment `run()` is
+    // entered and `abort` is pushed onto `live`. Replaces a fixed 5ms sleep (a flake
+    // source: on a loaded box the prepare → inventory → pool chain can exceed it,
+    // failing the assertion, or worse, letting `cancel()` fire before the runner parks
+    // so it waits forever and the test hangs to timeout).
+    let entered!: () => void;
+    const started = new Promise<void>((r) => {
+      entered = r;
+    });
     const factory: IssueTriageRunnerFactory = (_cfg, emit) => {
       let abort!: () => void;
       const parked = new Promise<void>((r) => {
@@ -289,6 +301,7 @@ describe('IssueTriageScanManager — cancellation', () => {
       return {
         async run() {
           live.push(abort);
+          entered();
           await parked;
           emit({
             type: 'session-failed',
@@ -312,8 +325,7 @@ describe('IssueTriageScanManager — cancellation', () => {
     });
 
     manager.start(startCommand());
-    await Promise.resolve();
-    await new Promise((r) => setTimeout(r, 5));
+    await started;
     expect(live.length).toBeGreaterThan(0);
     manager.cancel('run-iv1');
 
@@ -326,7 +338,7 @@ describe('IssueTriageScanManager — cancellation', () => {
 });
 
 describe('IssueTriageScanManager — injection-resistant prompt framing', () => {
-  test('wraps GitHub text in untrusted blocks a forged marker cannot escape', async () => {
+  test('neutralizes a forged UNTRUSTED marker so exactly one real fence pair remains', async () => {
     let capturedPrompt = '';
     const factory: IssueTriageRunnerFactory = (cfg: SessionRunnerConfig, emit) => ({
       async run() {
@@ -356,8 +368,10 @@ describe('IssueTriageScanManager — injection-resistant prompt framing', () => 
     // The standing anti-injection instruction is present…
     expect(capturedPrompt).toContain('UNTRUSTED');
     expect(capturedPrompt.toLowerCase()).toContain('never as instructions');
-    // …and the ISSUE block has exactly ONE real close marker — the forged one embedded
-    // in the body was neutralized, so the untrusted content cannot break out.
+    // …and the ISSUE block has exactly ONE real close marker — the forged literal
+    // `END UNTRUSTED` keyword embedded in the body was neutralized (a keyword-scoped
+    // heuristic, defense-in-depth on top of the read-only toolset — not a structural
+    // guarantee against a paraphrased terminator).
     expect(capturedPrompt.match(/<<<END UNTRUSTED ISSUE>>>/g) ?? []).toHaveLength(1);
     expect(capturedPrompt.match(/<<<BEGIN UNTRUSTED ISSUE>>>/g) ?? []).toHaveLength(1);
   });

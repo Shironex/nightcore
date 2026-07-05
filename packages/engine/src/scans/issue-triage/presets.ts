@@ -10,10 +10,11 @@
  *
  * The validation session is strictly READ-ONLY: no Write/Edit/Bash/Web, no MCP. Every
  * GitHub-sourced field (issue title/body, comment bodies, linked-PR titles/diffs) is
- * ATTACKER-CONTROLLED — the orchestrator wraps each in {@link untrustedBlock} and the
- * persona is told to treat it as DATA to analyze, NEVER as instructions. A read-only
- * session has no execution surface, so no foreign code is ever run or written to disk;
- * the untrusted framing is the prompt-injection posture (mirrors PR review).
+ * ATTACKER-CONTROLLED — the orchestrator wraps each in the shared {@link untrustedBlock}
+ * and the persona is told to treat it as DATA to analyze, NEVER as instructions. A
+ * read-only session has no execution surface (the PRIMARY injection control), so no
+ * foreign code is ever run or written to disk; the untrusted framing is defense-in-depth
+ * on top of that — the same read-only, treat-as-data discipline the other scans use.
  */
 
 /** Read-only toolset the validation pass is allowed, reused VERBATIM from the shared
@@ -23,6 +24,12 @@ export {
   ANALYSIS_ALLOWED_TOOLS as ISSUE_TRIAGE_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS as ISSUE_TRIAGE_DISALLOWED_TOOLS,
 } from '../shared/presets.js';
+
+/** The delimiter-safe untrusted-text wrapper — a general anti-injection primitive that
+ *  lives in `shared/` (one source of truth every untrusted-input scan can adopt), re-
+ *  exported here so this feature's call sites import it from one obvious place alongside
+ *  the persona + output contract. */
+export { untrustedBlock } from '../shared/untrusted.js';
 
 /** Resolved preset for the single validation pass — only `label` is read generically
  *  by the base {@link ScanManager}. There is one pass per run, so this is a constant. */
@@ -34,38 +41,6 @@ export interface IssueTriagePreset {
 export const ISSUE_TRIAGE_PRESET: IssueTriagePreset = {
   label: 'Issue validation',
 };
-
-/**
- * Wrap ATTACKER-CONTROLLED GitHub text in a labelled, DELIMITER-SAFE untrusted fence.
- * The model is instructed (via the persona) to treat everything between the markers as
- * DATA to analyze, never as instructions.
- *
- * DELIMITER-SAFE (the property the contract asserts the engine slice must own): before
- * fencing, any marker-like token the attacker embedded in `content` is neutralized, so
- * untrusted content can NEVER forge this wrapper's own close marker and break out of the
- * block (a classic wrapper-escape). After wrapping, the produced string contains exactly
- * ONE `BEGIN UNTRUSTED` and ONE `END UNTRUSTED` — the real fence — regardless of what the
- * attacker put inside.
- */
-export function untrustedBlock(label: string, content: string): string {
-  const tag = label.toUpperCase().trim();
-  return [
-    `<<<BEGIN UNTRUSTED ${tag}>>>`,
-    neutralizeFences(content),
-    `<<<END UNTRUSTED ${tag}>>>`,
-  ].join('\n');
-}
-
-/** Any embedded `BEGIN|END UNTRUSTED` marker (with or without the surrounding angle
- *  brackets / a trailing tag) is a break-out attempt — replace the whole token so the
- *  attacker's text can never reproduce this wrapper's open/close delimiter. Matching on
- *  the keyword pair (not just the brackets) means a diff's git-conflict markers
- *  (`<<<<<<<` / `>>>>>>>`) — which carry no `UNTRUSTED` keyword — survive intact. */
-const FENCE_MARKER_RE = /<*\s*\b(?:BEGIN|END)\s+UNTRUSTED\b[^\n>]*>*/gi;
-
-function neutralizeFences(content: string): string {
-  return content.replace(FENCE_MARKER_RE, '(untrusted-marker removed)');
-}
 
 /**
  * The analyzer persona — the read-only, grounded, JSON-only discipline + the
