@@ -39,6 +39,8 @@ function summary(over: Partial<PrSummary> & Pick<PrSummary, 'number'>): PrSummar
     url: `https://github.com/o/r/pull/${over.number}`,
     labels: [],
     body: '',
+    additions: 0,
+    deletions: 0,
     ...over,
   };
 }
@@ -54,6 +56,7 @@ function storedFinding(over: Partial<StoredReviewFinding> = {}): StoredReviewFin
     body: 'b',
     suggestedFix: null,
     fingerprint: 'fp-sf1',
+    corroboratedBy: null,
     status: 'open',
     linkedTaskId: null,
     ...over,
@@ -75,6 +78,11 @@ function persistedRun(over: Partial<PrReviewRun> = {}): PrReviewRun {
     usage: { inputTokens: 0, outputTokens: 0 },
     findings: [],
     error: null,
+    verdict: null,
+    verdictReasoning: null,
+    headSha: null,
+    postedVerdict: null,
+    postedAt: null,
     ...over,
   };
 }
@@ -90,6 +98,7 @@ function makeStatus(over: Partial<PrStatus> = {}): PrStatus {
     checksFailed: 0,
     checksPending: 0,
     baseRefName: 'main',
+    headRefOid: 'sha-head',
     url: 'https://github.com/o/r/pull/42',
     number: 42,
     unpushedCommits: 0,
@@ -231,8 +240,9 @@ describe('own-PR verdict guard', () => {
     const screen = renderView();
     await screen.getByRole('option', { name: /#42/ }).click();
 
-    // Select the finding so the toolbar would otherwise be actionable.
-    await screen.getByText('Include in review').first().click();
+    // The single open finding auto-selects on completion, so the toolbar would
+    // otherwise be actionable — the own-PR guard is what makes the two verdicts
+    // inert (comment, below, stays enabled, proving the selection is non-empty).
 
     // aria-disabled (focusable, reason via aria-describedby) — not native
     // disabled, which hides the explanation from keyboard/SR users.
@@ -262,7 +272,8 @@ describe('own-PR verdict guard', () => {
     armCompletedRun(null);
     const screen = renderView();
     await screen.getByRole('option', { name: /#42/ }).click();
-    await screen.getByText('Include in review').first().click();
+    // The finding auto-selects on completion — with the guard failing open, all
+    // three verdicts are actionable.
 
     await expect
       .element(screen.getByRole('button', { name: /^approve$/i }))
@@ -281,9 +292,13 @@ test('posting still gates through the ConfirmDialog and fires only on confirm', 
   });
   const screen = renderView();
   await screen.getByRole('option', { name: /#42/ }).click();
-  await screen.getByText('Include in review').first().click();
 
-  await screen.getByRole('button', { name: /^comment$/i }).click();
+  // The single open finding auto-selects on completion → the verdict toolbar is
+  // actionable without a manual pick. Wait for that before firing the gate
+  // (verdict buttons are aria-disabled, which Playwright's click won't await).
+  const comment = screen.getByRole('button', { name: /^comment$/i });
+  await expect.element(comment).toHaveAttribute('aria-disabled', 'false');
+  await comment.click();
   // The human gate: nothing posted yet, the dialog names the PR + selection.
   expect(invoke.mock.calls.filter((c) => c[0] === 'post_review_to_github')).toHaveLength(0);
   await expect
@@ -307,9 +322,16 @@ test('addressing gates through the ConfirmDialog and fires only on confirm', asy
   });
   const screen = renderView();
   await screen.getByRole('option', { name: /#42/ }).click();
-  await screen.getByText('Include in review').first().click();
 
-  await screen.getByRole('button', { name: /address findings \(1\)/i }).click();
+  // The single open finding auto-selects on completion → Address findings (1)
+  // becomes actionable without a manual pick (the button label carries the K).
+  // Dispatch a native click on the element: in the headless test viewport the
+  // toolbar can sit outside the scroll fold, where Playwright's coordinate-based
+  // click misfires — the button itself is a normal enabled control (asserted
+  // above via aria-disabled), so the native click exercises its real onClick.
+  const address = screen.getByRole('button', { name: /address findings \(1\)/i });
+  await expect.element(address).toHaveAttribute('aria-disabled', 'false');
+  (address.element() as HTMLElement).click();
   // The human gate: nothing started yet, the dialog names PR + K + semantics.
   expect(
     invoke.mock.calls.filter((c) => c[0] === 'address_review_findings'),

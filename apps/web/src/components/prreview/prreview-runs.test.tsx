@@ -75,6 +75,11 @@ function persistedRun(over: Partial<PrReviewRun> = {}): PrReviewRun {
     usage: { inputTokens: 10, outputTokens: 5 },
     findings: [],
     error: null,
+    verdict: null,
+    verdictReasoning: null,
+    headSha: null,
+    postedVerdict: null,
+    postedAt: null,
     ...over,
   };
 }
@@ -170,6 +175,7 @@ describe('reconcileRegistryRun', () => {
           body: 'b',
           suggestedFix: null,
           fingerprint: 'fp-s1',
+          corroboratedBy: null,
           status: 'open',
           linkedTaskId: null,
         },
@@ -266,6 +272,7 @@ describe('selectors', () => {
       body: 'b',
       suggestedFix: null,
       fingerprint: id,
+      corroboratedBy: [],
       status,
       linkedTaskId: null,
     });

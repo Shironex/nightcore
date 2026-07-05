@@ -8,6 +8,7 @@ import { useRunConfig } from '@/lib/useRunConfig';
 import type { FixRunCardProps } from '../FixRunCard';
 import { ALL_LENSES, LENS_META } from '../prreview.constants';
 import type { ReviewFindingView } from '../prreview.types';
+import type { TimelineStep } from '../prreview-lifecycle';
 import { EMPTY_REVIEW_STREAM, type ReviewStream } from '../prreview-stream';
 import { ReviewSection } from './ReviewSection';
 import type {
@@ -29,6 +30,7 @@ function finding(over: Partial<ReviewFindingView> = {}): ReviewFindingView {
     body: 'The session token is written to the debug log.',
     suggestedFix: null,
     fingerprint: 'fp-1',
+    corroboratedBy: [],
     status: 'open',
     linkedTaskId: null,
     ...over,
@@ -70,12 +72,18 @@ const TOOLBAR: ReviewSectionToolbarSlice = {
   canPost: true,
   requestPost: fn(),
   ownPr: false,
+  postedFeedback: null,
   addressCount: 1,
   canAddress: true,
   fixRunning: false,
   requestAddress: fn(),
   addressError: null,
 };
+
+const TIMELINE: TimelineStep[] = [
+  { id: 'review', label: 'Reviewed', state: 'done', at: 1_700_000_000_000 },
+  { id: 'posted', label: 'Posted to GitHub', state: 'done', at: 1_700_000_600_000 },
+];
 
 function fixState(over: Partial<PrFixState> = {}): PrFixState {
   return {
@@ -123,6 +131,8 @@ function ConfiguredSection({
   startError = null,
   ownPr = false,
   fix = null,
+  timeline = [],
+  emptyVariant = 'clean',
 }: {
   mode: ReviewSectionMode;
   stream: ReviewStream | null;
@@ -131,6 +141,8 @@ function ConfiguredSection({
   startError?: string | null;
   ownPr?: boolean;
   fix?: FixRunCardProps | null;
+  timeline?: TimelineStep[];
+  emptyVariant?: 'clean' | 'neutral';
 }) {
   const config = useRunConfig<ReviewLens>(ALL_LENSES, false);
   return (
@@ -157,12 +169,15 @@ function ConfiguredSection({
       results={{
         gridFindings: stream?.findings ?? [],
         emptyMessage: 'No findings — the diff looks clean across the selected lenses.',
+        emptyVariant,
         selection: new Set(['f1']),
         onToggleSelect: fn(),
+        onSelectionChange: fn(),
         onOpenFinding: fn(),
         onNewReview: fn(),
         toolbar: { ...toolbar, ownPr },
         fix,
+        timeline,
       }}
       history={history}
     />
@@ -247,5 +262,28 @@ export const CompletedFixAwaitingPush: Story = {
       status: 'awaiting_push',
       summary: 'Redacted the session token from the debug log.',
     }),
+  },
+};
+
+/** The review-arc timeline renders atop the grid (reviewed → posted). */
+export const CompletedWithTimeline: Story = {
+  args: { mode: 'results', stream: completedStream(), timeline: TIMELINE },
+};
+
+/** Just after a successful post: the auto-clearing "Posted N findings" chip. */
+export const CompletedJustPosted: Story = {
+  args: {
+    mode: 'results',
+    stream: completedStream(),
+    toolbar: { ...TOOLBAR, selectedCount: 0, canPost: false, postedFeedback: 2 },
+  },
+};
+
+/** A completed run that surfaced nothing gets the celebratory clean empty state. */
+export const CompletedClean: Story = {
+  args: {
+    mode: 'results',
+    stream: { ...completedStream(), findings: [] },
+    toolbar: { ...TOOLBAR, openCount: 0, selectedCount: 0, canPost: false, addressCount: 0, canAddress: false },
   },
 };

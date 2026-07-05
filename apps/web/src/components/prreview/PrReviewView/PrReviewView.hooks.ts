@@ -35,66 +35,126 @@ import {
 } from '../prreview.constants';
 import type { ReviewFindingView, ReviewVerdict } from '../prreview.types';
 import { usePrFixes } from '../prreview-fixes.hooks';
-import { findingCountForPr, runningPrNumbers } from '../prreview-runs';
+import {
+  compareRuns,
+  deriveReviewLifecycle,
+  deriveReviewTimeline,
+  reconcilePostedVerdict,
+  type ReviewLifecycle,
+} from '../prreview-lifecycle';
+import {
+  findingCountForPr,
+  historyForPr,
+  latestRunForPr,
+  runningPrNumbers,
+} from '../prreview-runs';
 import { usePrReviewRuns } from '../prreview-runs.hooks';
 import { EMPTY_REVIEW_STREAM, type ReviewStream } from '../prreview-stream';
+import {
+  type PrNumberStatusView,
+  usePrStatusByNumber,
+} from '../PrStatusBlock/PrStatusBlock.hooks';
 import type {
   ReviewSectionMode,
   ReviewSectionProps,
 } from '../ReviewSection';
 import type { PrReviewViewProps } from './PrReviewView.types';
 
+/** The initial fetch cap and the hard ceiling (mirrors the Rust
+ *  `PR_LIST_DEFAULT_LIMIT` / `PR_LIST_MAX_LIMIT`). "Load more" doubles the cap and
+ *  refetches — the command returns the newest `limit` PRs with no cursor, so a
+ *  doubled-cap refetch is the simple correct shape (appending would risk dupes /
+ *  reordering against a moving list). */
+const INITIAL_PR_LIMIT = 50;
+const MAX_PR_LIMIT = 200;
+
 /** The open-PR list state for the left rail. */
 export interface OpenPrs {
   /** The active project's open pull requests, newest first. */
   prs: PrSummary[];
-  /** True while the list is being (re)fetched. */
+  /** True while the list is being (re)fetched from scratch (initial / refresh). */
   loading: boolean;
+  /** True while a "load more" doubled-cap refetch is in flight (rows stay up). */
+  loadingMore: boolean;
   /** A fetch failure (gh missing / no remote / auth), or null. */
   error: string | null;
-  /** Re-fetch the list. */
+  /** Whether more PRs may exist beyond the current cap (the fetch filled it and
+   *  the cap is below the ceiling). */
+  hasMore: boolean;
+  /** Re-fetch the list at the current cap. */
   refresh: () => void;
+  /** Grow the cap (×2, clamped to the ceiling) and refetch. No-op at the ceiling. */
+  loadMore: () => void;
 }
 
 /**
  * Fetch the active project's open pull requests for the persistent left rail.
- * Fetches on mount / project arrival and on `refresh()` — the view is now a
- * permanent workspace, so freshness comes from the explicit Refresh-PRs action
- * rather than a per-screen remount. A gh failure becomes `error` (the picker
- * surfaces it inline) — the typed-number escape hatch still works, so a listing
- * failure never blocks starting a review.
+ * Fetches on mount / project arrival, on `refresh()`, and on `loadMore()` (which
+ * doubles the cap) — the view is a permanent workspace, so freshness comes from
+ * the explicit actions rather than a per-screen remount. A gh failure becomes
+ * `error` (the picker surfaces it inline) — the typed-number escape hatch still
+ * works, so a listing failure never blocks starting a review.
  */
 export function useOpenPrs(enabled: boolean): OpenPrs {
   const [prs, setPrs] = useState<PrSummary[]>([]);
   const [loading, setLoading] = useState(enabled);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hasMore, setHasMore] = useState(false);
+  const [limit, setLimit] = useState(INITIAL_PR_LIMIT);
   const [reloadKey, setReloadKey] = useState(0);
+  // A cap-growth fetch shows the footer spinner (loadingMore); an initial/refresh
+  // fetch shows the top-level loader. The ref lets the shared effect tell which
+  // triggered it without adding a state read to its deps.
+  const loadMoreRef = useRef(false);
 
   useEffect(() => {
     if (!enabled) return;
     let cancelled = false;
-    setLoading(true);
+    const isMore = loadMoreRef.current;
+    loadMoreRef.current = false;
+    if (isMore) setLoadingMore(true);
+    else setLoading(true);
     setError(null);
     void (async () => {
       try {
-        const list = await listOpenPrs();
-        if (!cancelled) setPrs(list);
+        const list = await listOpenPrs(limit);
+        if (!cancelled) {
+          setPrs(list);
+          // The fetch filled the cap and the cap is below the ceiling ⇒ more may exist.
+          setHasMore(list.length >= limit && limit < MAX_PR_LIMIT);
+        }
       } catch (err) {
         if (!cancelled) {
           setError(err instanceof Error ? err.message : String(err));
-          setPrs([]);
+          // A load-more failure keeps the already-loaded rows up (the
+          // `loadingMore` "rows stay put" contract) — only a from-scratch
+          // (initial / refresh) fetch clears the list. Either way stop offering
+          // more so the footer settles out of the spinner.
+          if (!isMore) setPrs([]);
+          setHasMore(false);
         }
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setLoadingMore(false);
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [enabled, reloadKey]);
+  }, [enabled, reloadKey, limit]);
 
   const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
-  return { prs, loading, error, refresh };
+  const loadMore = useCallback(() => {
+    setLimit((n) => {
+      const next = Math.min(n * 2, MAX_PR_LIMIT);
+      if (next !== n) loadMoreRef.current = true;
+      return next;
+    });
+  }, []);
+  return { prs, loading, loadingMore, error, hasMore, refresh, loadMore };
 }
 
 /** Order findings for display: open before resolved, then severity (high→low). */
@@ -157,20 +217,35 @@ export interface PrReviewViewModel {
   // --- Left rail (persistent PR list) ---
   prs: PrSummary[];
   prsLoading: boolean;
+  /** True while a "load more" doubled-cap refetch is in flight (rows stay up). */
+  prsLoadingMore: boolean;
+  /** Whether more PRs may exist beyond the current fetch cap. */
+  prsHasMore: boolean;
   prsError: string | null;
   /** Re-fetch the open-PR list (the header Refresh-PRs action). */
   refreshPrs: () => void;
+  /** Grow the PR-list cap and refetch (the picker's "Load more" footer). */
+  loadMorePrs: () => void;
   /** The selected PR number, or null (empty right panel). */
   selectedPr: number | null;
   /** Select a PR. NEVER cancels anything — runs keep streaming in the registry. */
   selectPr: (prNumber: number | null) => void;
-  /** PR numbers with a review currently in flight (list badges). */
+  /** Distinct PR numbers with a run in flight across the WHOLE registry (a
+   *  concurrent-run signal — includes runs whose PR isn't in the open list). */
   runningPrs: readonly number[];
+  /** Per-PR review lifecycle for the listed PRs (list-row status dot + label). */
+  prRowStatuses: Readonly<Record<number, ReviewLifecycle>>;
   /** Open-finding count of each listed PR's latest completed run. */
   prFindingCounts: Readonly<Record<number, number>>;
   // --- Right panel (the selected PR's workspace) ---
   /** The selected PR's open-list summary, or null for a typed number. */
   selectedSummary: PrSummary | null;
+  /** The selected PR's derived review lifecycle (workspace status line), or null
+   *  when nothing is selected. */
+  lifecycle: ReviewLifecycle | null;
+  /** The lifted live-status view for the selected PR (passed to the workspace so
+   *  the status block doesn't self-fetch). */
+  statusView: PrNumberStatusView;
   /** Open a PR page in the system browser (backend-validated https-only). */
   onOpenExternal: (url: string) => void;
   /** The fully-assembled review-section props, or null when nothing is selected. */
@@ -238,7 +313,16 @@ export function usePrReviewView({
   const hasProject = projectPath !== null;
   const toast = useToast();
   const runs = usePrReviewRuns(hasProject);
-  const { registry, startErrors, start, cancel, selectRun, byPr, refreshRuns } = runs;
+  const {
+    registry,
+    runs: allRuns,
+    startErrors,
+    start,
+    cancel,
+    selectRun,
+    byPr,
+    refreshRuns,
+  } = runs;
   const fixes = usePrFixes(hasProject);
   const openPrs = useOpenPrs(hasProject);
   // The lens/model/effort form state — lives above the section so it survives
@@ -267,6 +351,9 @@ export function usePrReviewView({
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const postInFlight = useRef(false);
+  // Post-success micro-feedback: the count of findings the last successful post
+  // carried, shown as an auto-clearing inline confirmation near the toolbar.
+  const [postedFeedback, setPostedFeedback] = useState<number | null>(null);
   // Address-findings human gate: the dialog flag, the in-flight flag (blocks
   // double-fire + cancel), and its ref twin (synchronous re-entrancy check).
   const [addressArmed, setAddressArmed] = useState(false);
@@ -291,6 +378,7 @@ export function usePrReviewView({
     setSelection(new Set());
     setPostVerdict(null);
     setPostError(null);
+    setPostedFeedback(null);
     setAddressArmed(false);
     setPushFixId(null);
     setPushError(null);
@@ -311,15 +399,34 @@ export function usePrReviewView({
     };
   }, []);
 
+  // Auto-clear the post-success confirmation after a short beat (the reference's
+  // transient toast-adjacent chip). prefers-reduced-motion is honored by the
+  // global CSS rule; this timer just governs how long it lingers.
+  useEffect(() => {
+    if (postedFeedback === null) return;
+    const t = window.setTimeout(() => setPostedFeedback(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [postedFeedback]);
+
   // --- Registry projections for the selected PR --------------------------
   const prView = selectedPr !== null ? byPr(selectedPr) : null;
+  // Lift the live GitHub status ONCE for the selected PR (0 → disabled, no
+  // fetch when nothing is selected): the workspace status line, the
+  // reconciliation banner, and the staleness signal all read this one fetch,
+  // and it feeds the status block via the workspace's `statusView` prop.
+  const statusView = usePrStatusByNumber(selectedPr ?? 0, undefined, selectedPr !== null);
   const latestStream = prView?.stream ?? null;
+  // The PR's newest PERSISTED run (source of postedVerdict / verdict / headSha).
+  const latestRun = prView?.history[0] ?? null;
   const viewedStream =
     viewingRunId !== null ? (registry.get(viewingRunId)?.stream ?? null) : null;
   /** The stream the right panel displays: a history selection wins, else the
    *  PR's latest (running-first) stream. */
   const displayStream = viewedStream ?? latestStream;
   const displayRunId = displayStream?.runId ?? null;
+  // The persisted run behind the DISPLAYED stream (source of its merge verdict).
+  const displayRun =
+    displayRunId !== null ? (allRuns.find((r) => r.id === displayRunId) ?? null) : null;
   const viewingPastRun =
     viewingRunId !== null &&
     displayStream !== null &&
@@ -357,6 +464,22 @@ export function usePrReviewView({
 
   const runningPrs = useMemo(() => runningPrNumbers(registry), [registry]);
 
+  // Per-PR lifecycle for the list rows (status dot + short label). No live
+  // GitHub status per row — only the selected PR is fetched — so staleness never
+  // fires here; the registry + persisted runs + fix map are enough.
+  const prRowStatuses = useMemo(() => {
+    const out: Record<number, ReviewLifecycle> = {};
+    for (const pr of openPrs.prs) {
+      out[pr.number] = deriveReviewLifecycle({
+        stream: latestRunForPr(registry, pr.number),
+        latestRun: historyForPr(allRuns, pr.number)[0] ?? null,
+        fix: fixes.fixForPr(pr.number),
+        prStatus: null,
+      });
+    }
+    return out;
+  }, [openPrs.prs, registry, allRuns, fixes.fixForPr]);
+
   const prFindingCounts = useMemo(() => {
     const counts: Record<number, number> = {};
     for (const pr of openPrs.prs) {
@@ -384,6 +507,26 @@ export function usePrReviewView({
     () => displayStream?.findings.find((f) => f.id === selectedId) ?? null,
     [displayStream?.findings, selectedId],
   );
+
+  // Auto-select on completion: when the DISPLAYED run first reaches `completed`
+  // carrying open findings, seed the post selection with ALL of them (every
+  // finding — even low — is worth surfacing to the contributor, mirroring the
+  // reference). Guarded per run id + never stomps an existing selection, so a
+  // user's None (or a narrowed pick) survives a later re-fold: each run seeds at
+  // most once, and only into an empty selection. The completed edge can arrive
+  // before the persisted reconcile brings the findings, hence the deferral until
+  // there is something open to seed (a genuinely clean run seeds nothing).
+  const autoSelectedRunRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (displayStream?.status !== 'completed' || displayRunId === null) return;
+    if (autoSelectedRunRef.current === displayRunId) return;
+    const openIds = displayStream.findings
+      .filter((f) => f.status === 'open')
+      .map((f) => f.id);
+    if (openIds.length === 0) return;
+    autoSelectedRunRef.current = displayRunId;
+    setSelection((prev) => (prev.size === 0 ? new Set(openIds) : prev));
+  }, [displayRunId, displayStream?.status, displayStream?.findings]);
 
   const progressCategories: RunProgressCategory[] = useMemo(
     () =>
@@ -494,6 +637,12 @@ export function usePrReviewView({
     });
   }, []);
 
+  // Bulk replace: the ReviewFindings quick-select presets and per-group tri-state
+  // toggles compose the next selection (over OPEN findings) and hand it up here.
+  const onSelectionChange = useCallback((next: ReadonlySet<string>) => {
+    setSelection(new Set(next));
+  }, []);
+
   // Dismiss also deselects — a dismissed finding must not be posted. The
   // deselect is optimistic: a FAILED dismiss restores the selection (the
   // finding is still open and postable, so silently dropping it would shrink
@@ -564,15 +713,37 @@ export function usePrReviewView({
     if (postPrNumber === null || selectedFindings.length === 0) return;
     const verdict = postVerdict;
     const prNumber = postPrNumber;
+    const count = selectedFindings.length;
     const body = composeReviewBody(verdict, selectedFindings);
     const comments = composeReviewComments(selectedFindings);
+    // Stamp the DISPLAYED run so a successful post records `postedVerdict` /
+    // `postedAt` on the right run (Rust accepts an optional run id).
+    const runId = displayRunId;
     postInFlight.current = true;
     setPosting(true);
     setPostError(null);
+    // Clear any prior confirmation so an identical-count re-post still re-fires
+    // the chip (the value passes through null, re-triggering the auto-clear).
+    setPostedFeedback(null);
     void (async () => {
       try {
-        await postReviewToGithub(prNumber, verdict, body, comments);
+        await postReviewToGithub(prNumber, verdict, body, comments, runId);
+        // `post_review_to_github` stamps postedVerdict / postedAt server-side but
+        // emits no pr-review event, so reload the run into the registry (like
+        // convert/dismiss/restore) — otherwise the Posted lifecycle state, the
+        // "Posted to GitHub" timeline node, and the reconcile banner keep reading
+        // the stale null until an unrelated interaction refreshes the runs. A
+        // reload failure must NOT turn a SUCCESSFUL post into an error — swallow
+        // it (the registry self-heals on the next interaction).
+        if (runId !== null) {
+          await selectRun(runId).catch((e: unknown) =>
+            console.error('selectRun after post failed (non-fatal)', e),
+          );
+          void refreshRuns();
+        }
         toast.push({ tone: 'success', title: `Review posted to PR #${prNumber}` });
+        // The auto-clearing "Posted N findings" inline confirmation.
+        setPostedFeedback(count);
         setPostVerdict(null);
         setSelection(new Set());
       } catch (err) {
@@ -586,11 +757,60 @@ export function usePrReviewView({
         postInFlight.current = false;
       }
     })();
-  }, [postVerdict, postPrNumber, selectedFindings, toast]);
+  }, [
+    postVerdict,
+    postPrNumber,
+    selectedFindings,
+    displayRunId,
+    selectRun,
+    refreshRuns,
+    toast,
+  ]);
 
   // --- Address-findings gate + fix lifecycle (per-PR fix registry) ---------
   /** The selected PR's displayed fix (latest by `updatedAt`), or null. */
   const prFix = selectedPr !== null ? fixes.fixForPr(selectedPr) : null;
+
+  // --- Review-position layer (lifecycle + banners) -----------------------
+  // The selected PR's lifecycle for the workspace status line: reviewing wins,
+  // then a fix in flight, then (for a completed review) stale > posted > pending.
+  const lifecycle: ReviewLifecycle | null =
+    selectedPr === null
+      ? null
+      : deriveReviewLifecycle({
+          stream: latestStream,
+          latestRun,
+          fix: prFix,
+          prStatus: statusView.status,
+          isStarting,
+        });
+  // The live-status banners (reconciliation + staleness) speak to the CURRENT
+  // head, so they only apply when the displayed run is the PR's latest — a
+  // history selection suppresses them.
+  const showLivePosition = !viewingPastRun;
+  const reconciliation = showLivePosition
+    ? reconcilePostedVerdict(latestRun, statusView.status)
+    : [];
+  const stale = showLivePosition ? (lifecycle?.stale ?? false) : false;
+  // The PR's review-arc timeline — a PR-level projection of the latest run + fix
+  // (stable across history navigation), unifying History + FixRunCard.
+  const timeline = useMemo(
+    () => deriveReviewTimeline(latestRun, prFix, stale),
+    [latestRun, prFix, stale],
+  );
+  // Follow-up comparison: the displayed run vs the one immediately before it in
+  // this PR's history (latest-vs-previous in the common case), by fingerprint.
+  const historyList = prView?.history ?? [];
+  const displayHistoryIdx =
+    displayRun !== null ? historyList.findIndex((r) => r.id === displayRun.id) : -1;
+  const previousRun =
+    displayHistoryIdx >= 0 && displayHistoryIdx + 1 < historyList.length
+      ? (historyList[displayHistoryIdx + 1] ?? null)
+      : null;
+  const followup =
+    displayRun !== null && displayRun.status === 'completed' && previousRun !== null
+      ? compareRuns(displayRun.findings, previousRun.findings)
+      : null;
   const fixRunning = prFix !== null && prFix.status === 'running';
   /** Only OPEN selected findings feed the fix prompt (converted stay postable
    *  but are already tracked as tasks; dismissed never make the selection). */
@@ -690,6 +910,7 @@ export function usePrReviewView({
       // verdict would target the NEW PR's displayed run.
       setPostVerdict(null);
       setPostError(null);
+      setPostedFeedback(null);
       setAddressArmed(false);
       setPushFixId(null);
       setPushError(null);
@@ -839,8 +1060,12 @@ export function usePrReviewView({
           results: {
             gridFindings,
             emptyMessage,
+            // A completed run with nothing to show earns the celebratory clean
+            // state; idle / failed / cancelled keep the neutral message.
+            emptyVariant: displayStream?.status === 'completed' ? 'clean' : 'neutral',
             selection,
             onToggleSelect,
+            onSelectionChange,
             onOpenFinding: (finding) => setSelectedId(finding.id),
             onNewReview: startNewReview,
             toolbar: {
@@ -859,6 +1084,7 @@ export function usePrReviewView({
               canPost,
               requestPost,
               ownPr,
+              postedFeedback,
               addressCount,
               canAddress,
               fixRunning,
@@ -889,6 +1115,18 @@ export function usePrReviewView({
                     onReReview: onReview,
                     onDismiss: () => fixes.dismiss(prFix.id),
                   },
+            timeline,
+            // The review-position layer for the displayed run (ReviewPosition
+            // self-hides when empty — a running/failed run carries no verdict,
+            // no reconciliation, no follow-up).
+            position: {
+              verdict: displayRun?.verdict ?? null,
+              verdictReasoning: displayRun?.verdictReasoning ?? null,
+              reconciliation,
+              stale,
+              followup,
+              onReReview: onReview,
+            },
           },
           history: {
             items: historyItems,
@@ -902,13 +1140,19 @@ export function usePrReviewView({
     projectName,
     prs: openPrs.prs,
     prsLoading: openPrs.loading,
+    prsLoadingMore: openPrs.loadingMore,
+    prsHasMore: openPrs.hasMore,
     prsError: openPrs.error,
     refreshPrs: openPrs.refresh,
+    loadMorePrs: openPrs.loadMore,
     selectedPr,
     selectPr,
     runningPrs,
+    prRowStatuses,
     prFindingCounts,
     selectedSummary,
+    lifecycle,
+    statusView,
     onOpenExternal: (url: string) =>
       void openExternal(url).catch((err: unknown) => {
         console.error('open_external failed', err);

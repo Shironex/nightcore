@@ -62,6 +62,7 @@ function storedFinding(over: Partial<StoredReviewFinding> = {}): StoredReviewFin
     body: 'b',
     suggestedFix: null,
     fingerprint: 'fp-sf1',
+    corroboratedBy: null,
     status: 'open',
     linkedTaskId: null,
     ...over,
@@ -83,6 +84,11 @@ function persistedRun(over: Partial<PrReviewRun> = {}): PrReviewRun {
     usage: { inputTokens: 0, outputTokens: 0 },
     findings: [],
     error: null,
+    verdict: null,
+    verdictReasoning: null,
+    headSha: null,
+    postedVerdict: null,
+    postedAt: null,
     ...over,
   };
 }

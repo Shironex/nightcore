@@ -24,6 +24,7 @@ function makeStatus(over: Partial<PrStatus> = {}): PrStatus {
     checksFailed: 1,
     checksPending: 2,
     baseRefName: 'main',
+    headRefOid: 'a1b2c3d4',
     url: 'https://github.com/o/r/pull/128',
     number: 128,
     unpushedCommits: 0,

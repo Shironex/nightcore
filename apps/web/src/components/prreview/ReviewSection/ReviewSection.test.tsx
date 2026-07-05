@@ -21,6 +21,7 @@ function toolbarSlice(
     canPost: true,
     requestPost: vi.fn(),
     ownPr: false,
+    postedFeedback: null,
     addressCount: 1,
     canAddress: true,
     fixRunning: false,
@@ -40,6 +41,9 @@ const {
   CompletedNothingSelected,
   CompletedFixRunning,
   CompletedFixAwaitingPush,
+  CompletedWithTimeline,
+  CompletedJustPosted,
+  CompletedClean,
 } = composeStories(stories);
 
 test('config mode renders the lens chips and the Review action', async () => {
@@ -197,4 +201,24 @@ test('an awaiting-push fix renders its summary and the push affordance in result
   await expect
     .element(screen.getByRole('button', { name: /address findings \(1\)/i }))
     .toBeEnabled();
+});
+
+test('the review-arc timeline renders atop the completed results', async () => {
+  const screen = render(<CompletedWithTimeline />);
+  await expect.element(screen.getByText('Review timeline')).toBeInTheDocument();
+  await expect.element(screen.getByText('Posted to GitHub')).toBeInTheDocument();
+});
+
+test('a successful post shows the auto-clearing "Posted N findings" confirmation', async () => {
+  const screen = render(<CompletedJustPosted />);
+  await expect
+    .element(screen.getByText(/posted 2 findings/i))
+    .toBeInTheDocument();
+});
+
+test('a completed clean run shows the celebratory positive empty state', async () => {
+  const screen = render(<CompletedClean />);
+  await expect
+    .element(screen.getByText('No findings', { exact: true }))
+    .toBeInTheDocument();
 });

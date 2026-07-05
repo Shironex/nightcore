@@ -40,6 +40,8 @@ import type {
   MergePreview,
   NcEvent,
   PermissionMode,
+  PrChangedFile,
+  PrCommentTriage,
   PrDraft,
   PrFixState,
   Project,
@@ -439,6 +441,15 @@ export async function addressPrComments(id: string): Promise<void> {
   await invoke('address_pr_comments', { id });
 }
 
+/** RE-FETCH the PR review threads server-side and AI-triage each into
+ *  actionable / false_positive / already_addressed / question (aligned to the
+ *  thread order by `index`). Read-only + fail-open: the backend classifies a
+ *  failed pass as all-actionable, and this resolves an empty array outside Tauri
+ *  (browser preview) so the chips simply stay hidden. */
+export async function triagePrComments(id: string): Promise<PrCommentTriage[]> {
+  return tauriInvoke<PrCommentTriage[]>('triage_pr_comments', { id }, []);
+}
+
 // --- Verification gate ----------------------------------------------------
 
 /** Accept a parked verification (CHANGES_REQUESTED budget-exhausted / FAIL /
@@ -801,11 +812,23 @@ export async function cancelPrReview(runId: string): Promise<void> {
 }
 
 /** The active project's OPEN pull requests (newest first, capped), for the PR
- *  Review config picker. `[]` outside Tauri. Rejects (throws) on a gh failure so
- *  the picker can surface "not a repo / gh not installed / auth" inline. */
-export async function listOpenPrs(): Promise<PrSummary[]> {
+ *  Review config picker. `limit` is OPTIONAL — omitted lets the backend apply its
+ *  default (50) and clamps to `1..=200`, so "load more" refetches at a doubled cap
+ *  without an unbounded fetch. `[]` outside Tauri. Rejects (throws) on a gh failure
+ *  so the picker can surface "not a repo / gh not installed / auth" inline. */
+export async function listOpenPrs(limit?: number): Promise<PrSummary[]> {
   if (!isTauri()) return [];
-  return invoke<PrSummary[]>('list_open_prs');
+  return invoke<PrSummary[]>('list_open_prs', { limit: limit ?? null });
+}
+
+/** A pull request's changed files (path + per-file line deltas) for the PR Review
+ *  workspace's changed-file expander. Read-only `gh pr view --json files`, bounded
+ *  + capped Rust-side; on-demand only (fetched when the expander first opens; NO
+ *  polling). Every `path` is gh pass-through (untrusted contributor content) the
+ *  web renders as inert text. Resolves `[]` outside Tauri (browser preview) so the
+ *  expander shows its empty note instead of a fabricated list. */
+export async function prChangedFiles(number: number): Promise<PrChangedFile[]> {
+  return tauriInvoke<PrChangedFile[]>('pr_changed_files', { number }, []);
 }
 
 /** All PR Review runs for the active project, newest first. `[]` outside Tauri. */
@@ -859,7 +882,9 @@ export async function deletePrReviewRun(runId: string): Promise<void> {
 /** Post a review to GitHub — the terminal, human-gated action. The Rust core
  *  composes ONE `gh api POST …/reviews` carrying `{event, body, comments[]}`.
  *  `verdict` is the web kebab form; `body` + `comments` are Nightcore-composed from
- *  the SELECTED findings (our own trusted text — never raw foreign diff). Uses raw
+ *  the SELECTED findings (our own trusted text — never raw foreign diff). The
+ *  optional `runId` stamps the originating run's `postedVerdict` / `postedAt` on
+ *  a successful post (the Rust command takes an optional run id). Uses raw
  *  `invoke` (like {@link applyHarnessArtifact}) so a gh failure surfaces to the
  *  caller. Rejects outside Tauri (no active project). */
 export async function postReviewToGithub(
@@ -867,8 +892,15 @@ export async function postReviewToGithub(
   verdict: ReviewVerdict,
   body: string,
   comments: ReviewInlineComment[],
+  runId?: string | null,
 ): Promise<void> {
-  await invoke<void>('post_review_to_github', { prNumber, verdict, body, comments });
+  await invoke<void>('post_review_to_github', {
+    prNumber,
+    verdict,
+    body,
+    comments,
+    runId: runId ?? null,
+  });
 }
 
 // --- PR fix (address review findings) --------------------------------------
