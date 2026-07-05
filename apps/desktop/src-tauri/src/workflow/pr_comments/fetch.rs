@@ -241,7 +241,8 @@ pub(super) fn fetch_review_comments_with(
         subcmd: "api graphql",
         stdin: None,
         deadline,
-        timeout_msg: "timed out reading review comments from GitHub — check your network and try again",
+        timeout_msg:
+            "timed out reading review comments from GitHub — check your network and try again",
     })?;
     parse_review_comments(&stdout)
 }

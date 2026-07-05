@@ -606,7 +606,10 @@ fn push_branch_pushes_to_origin_idempotently_and_rejects_dash_refs() {
     commit(&repo, "task-1", "work").expect("commit");
 
     push_branch(&dir, &branch_name("task-1")).expect("push");
-    let ls = git_stdout(&dir, &["ls-remote", "--heads", "origin", &branch_name("task-1")]);
+    let ls = git_stdout(
+        &dir,
+        &["ls-remote", "--heads", "origin", &branch_name("task-1")],
+    );
     assert!(
         ls.contains("refs/heads/nc/task-1"),
         "the branch landed on the remote"

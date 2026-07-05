@@ -48,7 +48,11 @@ pub(crate) fn git_ok(dir: &Path, args: &[&str]) -> bool {
 /// [`git_ok`] that asserts success — for fixture setup where a failed git command
 /// means the test's premise (a real repo) never got built.
 pub(crate) fn git_expect(dir: &Path, args: &[&str]) {
-    assert!(git_ok(dir, args), "git {args:?} failed in {}", dir.display());
+    assert!(
+        git_ok(dir, args),
+        "git {args:?} failed in {}",
+        dir.display()
+    );
 }
 
 /// Run `git <args>` in `dir` and return its trimmed stdout — for fixtures that

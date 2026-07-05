@@ -12,8 +12,8 @@ use serde::Serialize;
 #[cfg(test)]
 use ts_rs::TS;
 
-use crate::task::Task;
 use crate::git::gh::{run_gh_json, GhCall, PR_VIEW_FIELDS};
+use crate::task::Task;
 
 /// Wall-clock bound on the read-only `gh pr view` spawns (status + the finalize
 /// re-verification). Tighter than the create/push bound — a view moves no data,

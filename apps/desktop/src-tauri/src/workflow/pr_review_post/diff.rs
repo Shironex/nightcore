@@ -61,7 +61,8 @@ pub(super) fn fetch_pr_diff_with(
         subcmd: "pr diff",
         stdin: None,
         deadline,
-        timeout_msg: "timed out fetching the PR diff from GitHub — check your network and try again",
+        timeout_msg:
+            "timed out fetching the PR diff from GitHub — check your network and try again",
     })?;
     let diff = cap_diff(diff_stdout, PR_DIFF_CAP);
 
