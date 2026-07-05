@@ -9,6 +9,7 @@ import { useId } from 'react';
 
 import {
   Button,
+  CheckIcon,
   GithubIcon,
   HistoryIcon,
   Menu,
@@ -25,6 +26,8 @@ import { FixRunCard } from '../FixRunCard';
 import { ALL_LENSES, LENS_META, VERDICT_META } from '../prreview.constants';
 import type { ReviewVerdict } from '../prreview.types';
 import { ReviewFindings } from '../ReviewFindings';
+import { ReviewPosition } from '../ReviewPosition';
+import { ReviewTimeline } from '../ReviewTimeline';
 import {
   chipClass,
   FIX_RUNNING_TITLE,
@@ -227,6 +230,14 @@ export function ReviewSection({
               </div>
             ))}
 
+          {/* The review-position layer: reconciliation banner, staleness chip,
+              merge verdict, and follow-up summary (self-hides when empty). */}
+          {results.position !== undefined && <ReviewPosition {...results.position} />}
+
+          {/* The review-arc timeline — a vertical stepper unifying what History +
+              FixRunCard show separately (self-hides when there's no arc). */}
+          <ReviewTimeline steps={results.timeline} />
+
           {stream.status === 'completed' && (
             <div className="flex flex-wrap items-center gap-3 border-b border-border pb-3">
               <Button
@@ -293,6 +304,21 @@ export function ReviewSection({
                   guard inert on the viewer's OWN PR (GitHub rejects them) but
                   stay focusable so the aria-describedby reason is reachable. */}
               <div className="ml-auto flex items-center gap-2">
+                {/* Post-success micro-feedback: an auto-clearing confirmation the
+                    view model shows for a few seconds after a verdict posts.
+                    role=status announces it; the rise animation is neutralized
+                    under prefers-reduced-motion by the global CSS rule. */}
+                {toolbar.postedFeedback !== null && (
+                  <span
+                    role="status"
+                    className="inline-flex items-center gap-1.5 rounded-full border border-success/40 bg-success/[0.1] px-2.5 py-1 text-[11.5px] font-medium text-success"
+                    style={{ animation: 'nc-rise .18s cubic-bezier(.22,1,.36,1)' }}
+                  >
+                    <CheckIcon size={13} />
+                    Posted {toolbar.postedFeedback}{' '}
+                    {toolbar.postedFeedback === 1 ? 'finding' : 'findings'}
+                  </span>
+                )}
                 <span className="font-mono text-[11px] text-muted-foreground">
                   {toolbar.selectedCount} selected
                 </span>
@@ -333,9 +359,12 @@ export function ReviewSection({
           <ReviewFindings
             findings={results.gridFindings}
             emptyMessage={results.emptyMessage}
+            emptyVariant={results.emptyVariant}
             selection={results.selection}
             onToggleSelect={results.onToggleSelect}
+            onSelectionChange={results.onSelectionChange}
             onOpen={results.onOpenFinding}
+            recurringFingerprints={results.position?.followup?.recurringFingerprints}
           />
         </div>
       )}

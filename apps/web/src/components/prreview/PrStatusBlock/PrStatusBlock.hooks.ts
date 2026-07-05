@@ -33,15 +33,19 @@ function errorText(err: unknown): string {
 /**
  * Fetch the live status of PR `prNumber` on selection change and on demand.
  * `override` is the story/test seam — when provided (including `null`) no
- * fetch ever fires. Switching PRs resets the snapshot synchronously BEFORE
- * paint (the render-adjust pattern the board card uses) so PR A's status can
- * never render one stale frame against PR B.
+ * fetch ever fires. `enabled=false` renders the inert empty view and fetches
+ * nothing — the OWNER lifts this hook into the PrReviewView model (so the
+ * workspace status line + review-position banners share the fetched state), and
+ * a null selection must not fetch. Switching PRs resets the snapshot
+ * synchronously BEFORE paint (the render-adjust pattern the board card uses) so
+ * PR A's status can never render one stale frame against PR B.
  */
 export function usePrStatusByNumber(
   prNumber: number,
   override?: PrStatus | null,
+  enabled: boolean = true,
 ): PrNumberStatusView {
-  const skip = override !== undefined;
+  const skip = override !== undefined || !enabled;
   // A fetch is about to start whenever a real PR is selected — seeding
   // `fetching` from that (instead of `false` + the effect's later set) removes
   // the one-frame "not loaded yet" flash before the fetch effect runs.
@@ -107,8 +111,18 @@ export function usePrStatusByNumber(
         refresh,
       };
     }
+    if (!enabled) {
+      return {
+        status: null,
+        fetching: false,
+        error: null,
+        unavailable: false,
+        refreshedAt: null,
+        refresh,
+      };
+    }
     return { status, fetching, error, unavailable, refreshedAt, refresh };
-  }, [override, status, fetching, error, unavailable, refreshedAt, refresh]);
+  }, [override, enabled, status, fetching, error, unavailable, refreshedAt, refresh]);
 }
 
 /** Format the web-side receive timestamp for the "Refreshed …" footer line. */

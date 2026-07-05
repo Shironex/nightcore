@@ -8,7 +8,9 @@ import type { RunConfig } from '@/lib/useRunConfig';
 
 import type { FixRunCardProps } from '../FixRunCard';
 import type { ReviewFindingView, ReviewVerdict } from '../prreview.types';
+import type { TimelineStep } from '../prreview-lifecycle';
 import type { ReviewStream } from '../prreview-stream';
+import type { ReviewPositionData } from '../ReviewPosition';
 
 /** Which of the three per-PR run states the section renders. */
 export type ReviewSectionMode = 'config' | 'running' | 'results';
@@ -56,6 +58,9 @@ export interface ReviewSectionToolbarSlice {
    *  PR, so those two verdicts disable (comment stays enabled). Fail-open —
    *  false when the viewer login is unknown. */
   ownPr: boolean;
+  /** The count of findings the last successful post carried — the auto-clearing
+   *  "Posted N findings" inline confirmation. `null` when there's none to show. */
+  postedFeedback: number | null;
   /** Selected OPEN findings count — the K in "Address findings (K)". */
   addressCount: number;
   /** Whether Address-findings is actionable (K > 0 and no fix running for this
@@ -75,8 +80,15 @@ export interface ReviewSectionToolbarSlice {
 export interface ReviewSectionResultsSlice {
   gridFindings: ReviewFindingView[];
   emptyMessage: string;
+  /** How to render the no-findings state: `clean` (completed run, nothing found)
+   *  gets the celebratory positive empty state; `neutral` (idle / failed /
+   *  cancelled) the plain message. */
+  emptyVariant: 'clean' | 'neutral';
   selection: ReadonlySet<string>;
   onToggleSelect: (findingId: string) => void;
+  /** Replace the whole selection (the quick-select presets + per-group tri-state
+   *  toggles compose it over OPEN findings; the view model stores the set). */
+  onSelectionChange: (next: ReadonlySet<string>) => void;
   onOpenFinding: (finding: ReviewFindingView) => void;
   /** "New review": back to config, prefilled from the displayed run. */
   onNewReview: () => void;
@@ -84,6 +96,14 @@ export interface ReviewSectionResultsSlice {
   /** The PR's fix status strip (running → awaiting_push → pushed / failed), or
    *  `null` when no fix is known for this PR (or its latest was dismissed). */
   fix: FixRunCardProps | null;
+  /** The PR's review-arc timeline (reviewed → posted → fix → pushed →
+   *  re-review). The {@link ReviewTimeline} self-hides when there's no arc. */
+  timeline: TimelineStep[];
+  /** The review-position layer (merge verdict, reconciliation banner, staleness
+   *  chip, follow-up summary) for the displayed COMPLETED run. Absent for a
+   *  running/failed run; the {@link ReviewPosition} self-hides when it has
+   *  nothing to show. */
+  position?: ReviewPositionData;
 }
 
 /** The per-PR run-history affordance. */

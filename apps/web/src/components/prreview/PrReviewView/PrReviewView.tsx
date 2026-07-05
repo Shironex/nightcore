@@ -17,12 +17,15 @@ import {
 import { FindingDetailPanel } from '../FindingDetailPanel';
 import { PrPicker } from '../PrPicker';
 import { VERDICT_META } from '../prreview.constants';
+import { useResizablePanelWidth } from '../prreview-resize.hooks';
 import { PrWorkspace } from '../PrWorkspace';
 import { usePrReviewView } from './PrReviewView.hooks';
 import type { PrReviewViewProps } from './PrReviewView.types';
 
 export function PrReviewView(props: PrReviewViewProps) {
   const view = usePrReviewView(props);
+  // The persisted, keyboard-accessible split between the list rail and the panel.
+  const panel = useResizablePanelWidth();
 
   if (!view.hasProject) {
     return (
@@ -61,9 +64,18 @@ export function PrReviewView(props: PrReviewViewProps) {
           </Button>
         </header>
 
-        {/* The permanent two-panel body. */}
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          <aside className="flex min-h-0 w-[380px] shrink-0 flex-col overflow-hidden border-r border-border">
+        {/* The permanent two-panel body, split by a draggable persisted divider.
+            While dragging, the shell shows the resize cursor + suppresses text
+            selection so the drag reads clean. */}
+        <div
+          className={`flex min-h-0 flex-1 overflow-hidden ${
+            panel.dragging ? 'cursor-col-resize select-none' : ''
+          }`}
+        >
+          <aside
+            style={{ width: panel.width }}
+            className="flex min-h-0 shrink-0 flex-col overflow-hidden"
+          >
             <PrPicker
               prs={view.prs}
               loading={view.prsLoading}
@@ -71,10 +83,20 @@ export function PrReviewView(props: PrReviewViewProps) {
               value={view.selectedPr}
               onChange={view.selectPr}
               onRefresh={view.refreshPrs}
-              runningPrs={view.runningPrs}
+              statuses={view.prRowStatuses}
               findingCounts={view.prFindingCounts}
+              hasMore={view.prsHasMore}
+              onLoadMore={view.loadMorePrs}
+              loadingMore={view.prsLoadingMore}
             />
           </aside>
+          {/* Draggable / keyboard-accessible divider (double-click resets). */}
+          <div
+            {...panel.separatorProps}
+            className={`shrink-0 cursor-col-resize self-stretch transition-colors focus:outline-none focus-visible:bg-primary/60 ${
+              panel.dragging ? 'w-1 bg-primary/50' : 'w-px bg-border hover:w-1 hover:bg-primary/40'
+            }`}
+          />
           <main className="min-h-0 flex-1 overflow-y-auto">
             {view.selectedPr === null || view.review === null ? (
               <div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
@@ -89,6 +111,8 @@ export function PrReviewView(props: PrReviewViewProps) {
                 pr={view.selectedSummary}
                 onOpenExternal={view.onOpenExternal}
                 review={view.review}
+                lifecycle={view.lifecycle}
+                statusView={view.statusView}
               />
             )}
           </main>

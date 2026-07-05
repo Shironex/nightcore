@@ -72,6 +72,7 @@ function storedFinding(over: Partial<StoredReviewFinding> = {}): StoredReviewFin
     body: 'b',
     suggestedFix: null,
     fingerprint: 'fp-sf1',
+    corroboratedBy: null,
     status: 'open',
     linkedTaskId: null,
     ...over,
@@ -93,6 +94,11 @@ function persistedRun(over: Partial<PrReviewRun> = {}): PrReviewRun {
     usage: { inputTokens: 0, outputTokens: 0 },
     findings: [],
     error: null,
+    verdict: null,
+    verdictReasoning: null,
+    headSha: null,
+    postedVerdict: null,
+    postedAt: null,
     ...over,
   };
 }
@@ -109,6 +115,8 @@ function summary(over: Partial<PrSummary> & Pick<PrSummary, 'number'>): PrSummar
     url: `https://github.com/o/r/pull/${over.number}`,
     labels: [],
     body: '',
+    additions: 0,
+    deletions: 0,
     ...over,
   };
 }
@@ -173,6 +181,77 @@ test('review section transitions config → running → results as the run strea
   });
   await vi.waitFor(() => expect(model().review?.mode).toBe('results'));
   expect(model().review?.results.gridFindings.map((f) => f.id)).toEqual(['sf1']);
+});
+
+test('completing a run auto-selects ALL open findings; a user None survives a re-fold', async () => {
+  let stored: PrReviewRun[] = [];
+  mockCommands({
+    start_pr_review: () => 'run-1',
+    list_pr_review_runs: () => stored,
+    get_pr_review_run: () => stored[0] ?? null,
+  });
+  const model = await mountView();
+
+  model().selectPr(42);
+  await vi.waitFor(() => expect(model().review?.mode).toBe('config'));
+  model().review!.configure.onReview();
+  await vi.waitFor(() => expect(model().review?.mode).toBe('running'));
+
+  // Terminal event reconciles against a run carrying two open findings.
+  stored = [
+    persistedRun({
+      id: 'run-1',
+      findings: [
+        storedFinding({ id: 'a', severity: 'high' }),
+        storedFinding({ id: 'b', severity: 'low' }),
+      ],
+    }),
+  ];
+  emit({
+    type: 'pr-review-completed',
+    runId: 'run-1',
+    findings: [],
+    lensesRun: 1,
+    costUsd: 0,
+    durationMs: 5,
+  });
+
+  // On the transition to completed the whole OPEN set seeds the selection —
+  // even the low finding reaches the contributor.
+  await vi.waitFor(() =>
+    expect([...model().review!.results.selection].sort()).toEqual(['a', 'b']),
+  );
+
+  // The user clears the selection (quick-select None).
+  model().review!.results.onSelectionChange(new Set());
+  await vi.waitFor(() => expect(model().review!.results.selection.size).toBe(0));
+
+  // A re-fold of the SAME run (reconcile now brings a third finding) must NOT
+  // re-stomp: auto-select fires at most once per run, so None stands.
+  stored = [
+    persistedRun({
+      id: 'run-1',
+      findings: [
+        storedFinding({ id: 'a', severity: 'high' }),
+        storedFinding({ id: 'b', severity: 'low' }),
+        storedFinding({ id: 'c', severity: 'medium' }),
+      ],
+    }),
+  ];
+  emit({
+    type: 'pr-review-completed',
+    runId: 'run-1',
+    findings: [],
+    lensesRun: 1,
+    costUsd: 0,
+    durationMs: 5,
+  });
+  // The reconcile lands (grid grows to 3), proving the effect re-ran…
+  await vi.waitFor(() =>
+    expect(model().review!.results.gridFindings.length).toBe(3),
+  );
+  // …yet the selection is still empty — the user's None was not overwritten.
+  expect(model().review!.results.selection.size).toBe(0);
 });
 
 test('a rejected re-run over completed results stays in CONFIG so the error is seen', async () => {
@@ -387,7 +466,7 @@ test('a failed dismiss restores the finding into the post selection', async () =
   model().selectPr(42);
   await vi.waitFor(() => expect(model().review?.mode).toBe('results'));
 
-  model().review!.results.onToggleSelect('sf1');
+  // The run completed with one open finding → auto-selected into the post set.
   await vi.waitFor(() =>
     expect(model().review?.results.selection.has('sf1')).toBe(true),
   );
@@ -428,7 +507,7 @@ test('a rejected address toasts the failure besides the inline error, keeping th
   });
   model!.selectPr(42);
   await vi.waitFor(() => expect(model!.review?.mode).toBe('results'));
-  model!.review!.results.onToggleSelect('sf1');
+  // The single open finding auto-selects on completion → addressCount 1.
   await vi.waitFor(() => expect(model!.addressCount).toBe(1));
 
   model!.review!.results.toolbar.requestAddress();
@@ -456,4 +535,66 @@ test('own-PR guard fails open when the viewer login is unknown', async () => {
   model().selectPr(42);
   await vi.waitFor(() => expect(model().review?.mode).toBe('results'));
   expect(model().review?.results.toolbar.ownPr).toBe(false);
+});
+
+test('a failed "Load more" keeps the already-loaded rows instead of wiping the list', async () => {
+  let call = 0;
+  const firstPage = Array.from({ length: 50 }, (_, i) => summary({ number: i + 1 }));
+  mockCommands({
+    list_open_prs: () => {
+      call += 1;
+      if (call === 1) return firstPage;
+      // The doubled-cap refetch hits a transient gh failure.
+      throw new Error('gh: could not fetch more');
+    },
+  });
+  const model = await mountView();
+
+  // The initial fetch fills the cap, so the picker offers "Load more".
+  await vi.waitFor(() => expect(model().prs.length).toBe(50));
+  expect(model().prsHasMore).toBe(true);
+
+  // A load-more failure must NOT drop the rows already on screen — the loading-
+  // more contract is "rows stay put". The error surfaces beside the kept list.
+  model().loadMorePrs();
+  await vi.waitFor(() => expect(model().prsError).toBe('gh: could not fetch more'));
+  expect(model().prs.length).toBe(50);
+  // …but the footer stops offering more (the doubled cap didn't land).
+  expect(model().prsHasMore).toBe(false);
+});
+
+test('a successful post reloads the run so the Posted lifecycle surfaces at once', async () => {
+  // `post_review_to_github` stamps postedVerdict server-side but emits no event,
+  // so the client must reload the run — otherwise the workspace keeps reading
+  // "Reviewed / pending post" until an unrelated interaction refreshes the runs.
+  let posted = false;
+  const stamp = (r: PrReviewRun): PrReviewRun =>
+    posted ? { ...r, postedVerdict: 'approve', postedAt: 3000 } : r;
+  const base = persistedRun({ id: 'run-10', findings: [storedFinding()] });
+  mockCommands({
+    list_pr_review_runs: () => [stamp(base)],
+    get_pr_review_run: () => stamp(base),
+    post_review_to_github: () => {
+      posted = true;
+      return null;
+    },
+  });
+  const model = await mountView();
+  model().selectPr(42);
+  await vi.waitFor(() => expect(model().review?.mode).toBe('results'));
+  // The single open finding auto-selects on completion → the post gate can arm.
+  await vi.waitFor(() =>
+    expect(model().review?.results.selection.has('sf1')).toBe(true),
+  );
+
+  model().review!.results.toolbar.requestPost('approve');
+  await vi.waitFor(() => expect(model().postVerdict).toBe('approve'));
+  model().confirmPost();
+
+  // The reload surfaces the server stamp with no further interaction: the status
+  // line reads Posted and the timeline gains its "Posted to GitHub" node.
+  await vi.waitFor(() => expect(model().lifecycle?.state).toBe('posted'));
+  expect(
+    model().review!.results.timeline.some((s) => s.label === 'Posted to GitHub'),
+  ).toBe(true);
 });

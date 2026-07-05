@@ -1,6 +1,8 @@
 /** Types for the PR Review pull-request picker. */
 import type { PrSummary } from '@/lib/bridge';
 
+import type { ReviewLifecycle } from '../prreview-lifecycle';
+
 /** Props for the presentational {@link PrPicker}. The parent (PrReviewView) owns
  *  the open-PR fetch (via `useOpenPrs`), the chosen value, and the per-PR run
  *  registry projections, so the picker itself is a controlled, list-in /
@@ -20,12 +22,20 @@ export interface PrPickerProps {
   onRefresh: () => void;
   /** Disable all interaction (e.g. while a run is starting). */
   disabled?: boolean;
-  /** PR numbers with a review currently streaming (`runningPrNumbers`) — each
-   *  listed row shows a live "reviewing" spinner badge. */
-  runningPrs?: readonly number[];
+  /** Per-PR review lifecycle (`deriveReviewLifecycle`) — each listed row shows a
+   *  status dot + short label. A missing entry renders a bare row (no dot). Also
+   *  the source of the lifecycle-status filter. */
+  statuses?: Readonly<Record<number, ReviewLifecycle>>;
   /** Open-finding count of each PR's latest COMPLETED run (`findingCountForPr`).
-   *  Missing/zero entries render no badge. */
+   *  Missing/zero entries render no count badge. */
   findingCounts?: Readonly<Record<number, number>>;
+  /** Whether more PRs may exist beyond the current fetch cap (drives the footer's
+   *  "Load more" vs. "All loaded"). Absent ⇒ no load-more footer. */
+  hasMore?: boolean;
+  /** Fetch the next page (refetch at a doubled cap). Absent ⇒ no load-more. */
+  onLoadMore?: () => void;
+  /** True while the doubled-cap refetch is in flight (the existing rows stay). */
+  loadingMore?: boolean;
 }
 
 /** One rendered PR row (a summary plus whether it is the chosen one). */

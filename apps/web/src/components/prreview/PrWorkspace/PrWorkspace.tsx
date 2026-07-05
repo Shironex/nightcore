@@ -7,14 +7,20 @@ import {
   ChevronDownIcon,
   ChevronRightIcon,
   ExternalLinkIcon,
+  LayersIcon,
   Markdown,
+  RetryIcon,
+  Spinner,
+  StatusDot,
 } from '@/components/ui';
 
+import { lifecycleToneClasses } from '../prreview-lifecycle';
 import { PrStatusBlock } from '../PrStatusBlock';
 import { ReviewSection } from '../ReviewSection';
 import {
   formatPrDate,
   labelChipStyle,
+  useChangedFiles,
   useDescriptionCollapse,
 } from './PrWorkspace.hooks';
 import type { PrWorkspaceProps } from './PrWorkspace.types';
@@ -33,11 +39,17 @@ export function PrWorkspace({
   pr,
   onOpenExternal,
   review,
+  lifecycle,
+  statusView,
   statusOverride,
+  changedFilesOverride,
 }: PrWorkspaceProps) {
   const date = pr !== null ? formatPrDate(pr.createdAt) : null;
   const body = pr?.body ?? '';
   const description = useDescriptionCollapse(prNumber, body);
+  const changed = useChangedFiles(prNumber, changedFilesOverride);
+  const tone =
+    lifecycle != null ? lifecycleToneClasses(lifecycle.tone) : null;
 
   return (
     <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6 px-8 py-7">
@@ -79,6 +91,24 @@ export function PrWorkspace({
         {pr !== null && pr.title.length > 0 ? pr.title : `Pull request #${prNumber}`}
       </h2>
 
+      {/* Review-position status line: where this PR sits on the review
+          lifecycle (dot + label + one-line description). role=status so a
+          transition (reviewing → reviewed → posted → stale) is announced. */}
+      {lifecycle != null && tone != null && (
+        <div
+          role="status"
+          className={`flex flex-wrap items-center gap-x-2.5 gap-y-1 rounded-[10px] border px-3.5 py-2 ${tone.border} ${tone.bg}`}
+        >
+          <StatusDot colorClass={tone.dot} pulse={lifecycle.pulse} glow />
+          <span className={`text-[12.5px] font-semibold ${tone.text}`}>
+            {lifecycle.label}
+          </span>
+          <span className="text-[12px] text-muted-foreground">
+            {lifecycle.description}
+          </span>
+        </div>
+      )}
+
       {/* Meta + labels */}
       {pr !== null && (
         <div className="flex flex-col gap-3">
@@ -108,8 +138,100 @@ export function PrWorkspace({
         </p>
       )}
 
-      {/* Live GitHub status (fetch on selection + manual refresh, no polling). */}
-      <PrStatusBlock prNumber={prNumber} override={statusOverride} />
+      {/* Changed files: a clickable count expanding to a per-file list
+          (path · +additions / -deletions), scrollable past ~12 rows, with its
+          own loading / error / empty states. Fetches lazily on first open (works
+          for a typed-number PR too); paths are gh pass-through, rendered inert. */}
+      <div className="flex flex-col gap-2">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={changed.toggle}
+            aria-expanded={changed.expanded}
+            className="inline-flex items-center gap-1.5 rounded-md border border-border bg-white/[0.02] px-2.5 py-1 text-[12.5px] font-medium text-muted-foreground transition-colors hover:border-white/20 hover:text-foreground"
+          >
+            {changed.loading ? <Spinner size={12} /> : <LayersIcon size={13} />}
+            <span>
+              {changed.count !== null
+                ? `${changed.count} ${changed.count === 1 ? 'file' : 'files'}`
+                : 'Files'}
+            </span>
+            {changed.expanded ? (
+              <ChevronDownIcon size={12} />
+            ) : (
+              <ChevronRightIcon size={12} />
+            )}
+          </button>
+          {pr !== null && (pr.additions > 0 || pr.deletions > 0) && (
+            <span className="inline-flex items-center gap-1.5 font-mono text-[11.5px]">
+              <span className="rounded bg-success/10 px-1.5 py-0.5 text-success">
+                +{pr.additions}
+              </span>
+              <span className="rounded bg-destructive/10 px-1.5 py-0.5 text-destructive">
+                -{pr.deletions}
+              </span>
+            </span>
+          )}
+        </div>
+        {changed.expanded && (
+          <div
+            className="overflow-hidden rounded-[10px] border border-border"
+            style={{ animation: 'nc-rise .16s cubic-bezier(.22,1,.36,1)' }}
+          >
+            {changed.loading ? (
+              <div
+                role="status"
+                className="flex items-center gap-2 px-3 py-3 text-[12.5px] text-muted-foreground"
+              >
+                <Spinner size={13} /> Loading changed files…
+              </div>
+            ) : changed.error !== null ? (
+              <div
+                role="alert"
+                className="flex items-center justify-between gap-3 px-3 py-3 text-[12.5px] text-destructive"
+              >
+                <span className="min-w-0 break-words">{changed.error}</span>
+                <button
+                  type="button"
+                  onClick={changed.retry}
+                  className="inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-0.5 text-[11.5px] font-medium text-muted-foreground transition-colors hover:border-white/20 hover:text-foreground"
+                >
+                  <RetryIcon size={12} /> Retry
+                </button>
+              </div>
+            ) : changed.files.length === 0 ? (
+              <p className="px-3 py-3 text-[12.5px] text-muted-foreground">
+                No changed files reported.
+              </p>
+            ) : (
+              <ul className="max-h-[300px] divide-y divide-border overflow-y-auto">
+                {changed.files.map((file, i) => (
+                  <li
+                    key={`${file.path}-${i}`}
+                    className="flex items-center gap-3 px-3 py-1.5"
+                  >
+                    <span
+                      className="min-w-0 flex-1 truncate font-mono text-[12px] text-foreground"
+                      title={file.path}
+                    >
+                      {file.path}
+                    </span>
+                    <span className="shrink-0 font-mono text-[11px]">
+                      <span className="text-success">+{file.additions}</span>{' '}
+                      <span className="text-destructive">-{file.deletions}</span>
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* Live GitHub status (fetch on selection + manual refresh, no polling).
+          The app lifts the fetch into the view model and passes it as `view`;
+          stories/tests use the `override` seam. */}
+      <PrStatusBlock prNumber={prNumber} view={statusView} override={statusOverride} />
 
       {/* Description (untrusted markdown → sanitized), collapsible when long. */}
       {pr !== null && (

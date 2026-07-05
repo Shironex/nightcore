@@ -17,8 +17,13 @@ import type { PrStatusBlockProps } from './PrStatusBlock.types';
 const BADGE_BASE =
   'inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold uppercase tracking-[0.06em]';
 
-export function PrStatusBlock({ prNumber, override }: PrStatusBlockProps) {
-  const view = usePrStatusByNumber(prNumber, override);
+export function PrStatusBlock({ prNumber, view: liftedView, override }: PrStatusBlockProps) {
+  // Self-fetch ONLY when no lifted view is provided (stories/tests): the app
+  // path lifts `usePrStatusByNumber` into the PrReviewView model so the status
+  // line + review-position banners share the fetched state — the hook here stays
+  // mounted (rules of hooks) but inert. Mirrors the board's PrStatusCard.
+  const selfView = usePrStatusByNumber(prNumber, override, liftedView === undefined);
+  const view = liftedView ?? selfView;
   const { status } = view;
 
   const state = status !== null ? prStateBadge(status) : null;
