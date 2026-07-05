@@ -1,6 +1,7 @@
-/** The PR Review list pane (left side of the master-detail): the project's open
- *  PRs as selectable cards, with a filter box that doubles as a manual-number
- *  entry for PRs not in the list (closed / old / beyond the cap). */
+/** The PR Review list pane (left rail of the permanent two-panel workspace): the
+ *  project's open PRs as selectable cards — each carrying its live run badges
+ *  (reviewing spinner / open-finding count) — with a filter box that doubles as a
+ *  manual-number entry for PRs not in the list (closed / old / beyond the cap). */
 import {
   BranchIcon,
   GithubIcon,
@@ -21,8 +22,11 @@ export function PrPicker({
   onChange,
   onRefresh,
   disabled = false,
+  runningPrs = [],
+  findingCounts = {},
 }: PrPickerProps) {
   const { query, setQuery, rows, manualNumber, hasQuery } = usePrPicker(prs, value);
+  const runningSet = new Set(runningPrs);
   const showEmpty = !loading && rows.length === 0 && manualNumber === null;
 
   return (
@@ -128,6 +132,28 @@ export function PrPicker({
                       <span className="rounded-full border border-border px-1.5 py-px text-[9.5px] uppercase tracking-wide text-muted-foreground">
                         Draft
                       </span>
+                    )}
+                    {/* Registry badges: a run in flight wins over the finding
+                        count (a fresh count lands when the run completes).
+                        Plain text (visible + sr-only suffix), never aria-label
+                        on a generic span — the badge text is part of the
+                        option's accessible name. */}
+                    {runningSet.has(pr.number) ? (
+                      <span className="ml-auto inline-flex shrink-0 items-center gap-1 rounded-full border border-primary/40 bg-primary/[0.1] px-1.5 py-px text-[10px] font-medium text-primary">
+                        <Spinner size={10} />
+                        Reviewing
+                      </span>
+                    ) : (
+                      (findingCounts[pr.number] ?? 0) > 0 && (
+                        <span className="ml-auto inline-flex shrink-0 items-center rounded-full border border-warning/40 bg-warning/[0.1] px-1.5 py-px font-mono text-[10px] font-semibold text-warning">
+                          {findingCounts[pr.number]}
+                          <span className="sr-only">
+                            {findingCounts[pr.number] === 1
+                              ? ' open finding'
+                              : ' open findings'}
+                          </span>
+                        </span>
+                      )
                     )}
                   </span>
                   <span className="truncate text-[13.5px] font-medium text-foreground">

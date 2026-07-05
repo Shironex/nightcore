@@ -2,13 +2,12 @@
 import type { ReviewFindingView } from '../prreview.types';
 
 /** Props for the ReviewFindings grid: the findings to render (grouped by severity),
- *  the streaming skeletons, the empty message, and the selection + open handlers. */
+ *  the empty message, and the selection + open handlers. The grid renders only in
+ *  the section's RESULTS mode, so it carries no streaming-skeleton wiring. */
 export interface ReviewFindingsProps {
   /** The findings to render as cards, grouped into severity sections. */
   findings: ReviewFindingView[];
-  /** Number of skeleton placeholder cards to show while a lens is still streaming. */
-  skeletonCount: number;
-  /** Shown when there are no findings and nothing is streaming. */
+  /** Shown when there are no findings. */
   emptyMessage: string;
   /** The set of finding ids selected for the posted review. */
   selection: ReadonlySet<string>;

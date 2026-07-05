@@ -30,7 +30,6 @@ const meta = {
       finding({ id: 'f2', severity: 'high', title: 'Unawaited promise drops errors' }),
       finding({ id: 'f3', severity: 'low', lens: 'tests', title: 'Missing edge-case test' }),
     ],
-    skeletonCount: 0,
     emptyMessage: 'Review a pull request to surface findings across lenses.',
     selection: new Set(['f1']),
     onToggleSelect: fn(),
@@ -43,10 +42,6 @@ type Story = StoryObj<typeof meta>;
 
 export const Grouped: Story = {};
 
-export const Streaming: Story = {
-  args: { findings: [finding()], skeletonCount: 3 },
-};
-
 export const Empty: Story = {
-  args: { findings: [], skeletonCount: 0, selection: new Set() },
+  args: { findings: [], selection: new Set() },
 };

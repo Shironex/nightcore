@@ -74,6 +74,12 @@ export const Selected: Story = {
   args: { value: 127 },
 };
 
+/** Registry badges: #128 has a review streaming, #127's latest completed run
+ *  left 3 open findings. */
+export const WithRunBadges: Story = {
+  args: { runningPrs: [128], findingCounts: { 127: 3 } },
+};
+
 export const Loading: Story = {
   args: { prs: [], loading: true },
 };
