@@ -282,24 +282,22 @@ function BoardImpl({
       </BoardDnd>
     </div>
 
-      {inspector.open && (
-        <ProviderConfigPanel
-          projectName={projectName}
-          projectPath={projectPath}
-          onClose={inspector.hide}
-        />
-      )}
+      <ProviderConfigPanel
+        open={inspector.open}
+        projectName={projectName}
+        projectPath={projectPath}
+        onClose={inspector.hide}
+      />
 
-      {bgPanel.open && (
-        <BoardBackgroundPanel
-          appearance={appearance.appearance}
-          backgroundUrl={appearance.backgroundUrl}
-          onChangeAppearance={onChangeAppearance}
-          onPickImage={onPickBackground}
-          onClearImage={onClearBackground}
-          onClose={bgPanel.hide}
-        />
-      )}
+      <BoardBackgroundPanel
+        open={bgPanel.open}
+        appearance={appearance.appearance}
+        backgroundUrl={appearance.backgroundUrl}
+        onChangeAppearance={onChangeAppearance}
+        onPickImage={onPickBackground}
+        onClearImage={onClearBackground}
+        onClose={bgPanel.hide}
+      />
     </>
   );
 }

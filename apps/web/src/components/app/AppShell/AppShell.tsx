@@ -384,34 +384,36 @@ export function AppShell() {
         </div>
       )}
 
-      {routing.newTaskOpen && (
-        <NewTaskForm onCreate={board.handleCreate} onClose={routing.closeNewTask} />
-      )}
+      <NewTaskForm
+        open={routing.newTaskOpen}
+        onCreate={board.handleCreate}
+        onClose={routing.closeNewTask}
+      />
 
-      {newProjectOpen && (
-        <NewProjectDialog
-          models={MODELS}
-          folder={newProject.folder}
-          gitState={newProject.gitState}
-          onChooseFolder={newProject.pickFolder}
-          onInitGit={newProject.initGit}
-          onCreate={(draft) => {
-            if (draft.folder === null) return;
-            void newProject.create(draft.folder, draft.name);
-          }}
-          onClose={() => {
-            routing.closeNewProject();
-            newProject.reset();
-          }}
-        />
-      )}
+      <NewProjectDialog
+        open={newProjectOpen}
+        models={MODELS}
+        folder={newProject.folder}
+        gitState={newProject.gitState}
+        onChooseFolder={newProject.pickFolder}
+        onInitGit={newProject.initGit}
+        onCreate={(draft) => {
+          if (draft.folder === null) return;
+          void newProject.create(draft.folder, draft.name);
+        }}
+        onClose={() => {
+          routing.closeNewProject();
+          newProject.reset();
+        }}
+      />
 
       {/* The Create PR human gate: opened from the drawer's Create PR button;
-          the mutation (push + `gh pr create`) only fires from its confirm. */}
-      {board.prDialogTaskId !== null && (
+          the mutation (push + `gh pr create`) only fires from its confirm. Mounted
+          once first opened (a one-way latch) so the lazy dialog can animate closed. */}
+      {board.prDialogMounted && (
         <Suspense fallback={null}>
           <CreatePRDialog
-            open
+            open={board.prDialogTaskId !== null}
             task={tasks.find((t) => t.id === board.prDialogTaskId) ?? null}
             onCreate={board.handleCreatePr}
             onClose={board.closePrDialog}
@@ -419,27 +421,33 @@ export function AppShell() {
         </Suspense>
       )}
 
-      {confirm.pendingDelete !== null && (
-        <ConfirmDialog
-          title="Delete this task?"
-          message="This task and its run history will be removed. This can't be undone."
-          confirmLabel="Delete"
-          destructive
-          onConfirm={confirm.confirm}
-          onCancel={confirm.cancel}
-        />
-      )}
+      <ConfirmDialog
+        open={confirm.pendingDelete !== null}
+        title="Delete this task?"
+        message="This task and its run history will be removed. This can't be undone."
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirm.confirm}
+        onCancel={confirm.cancel}
+      />
 
-      {confirm.pendingClear !== null && (
-        <ConfirmDialog
-          title={`Delete all ${confirm.pendingClear.count} tasks in ${confirm.pendingClear.columnTitle}?`}
-          message={`Every task in ${confirm.pendingClear.columnTitle} will be removed. This can't be undone.`}
-          confirmLabel="Delete all"
-          destructive
-          onConfirm={confirm.confirm}
-          onCancel={confirm.cancel}
-        />
-      )}
+      <ConfirmDialog
+        open={confirm.pendingClear !== null}
+        title={
+          confirm.pendingClear !== null
+            ? `Delete all ${confirm.pendingClear.count} tasks in ${confirm.pendingClear.columnTitle}?`
+            : ''
+        }
+        message={
+          confirm.pendingClear !== null
+            ? `Every task in ${confirm.pendingClear.columnTitle} will be removed. This can't be undone.`
+            : ''
+        }
+        confirmLabel="Delete all"
+        destructive
+        onConfirm={confirm.confirm}
+        onCancel={confirm.cancel}
+      />
     </>
   );
 }

@@ -1,4 +1,4 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
   type ActiveWorktree,
@@ -128,6 +128,9 @@ export type BoardController = ReturnType<typeof useBoard> & {
   handleMerge: (id: string) => void;
   /** The task id the Create PR dialog is open for (`null` = closed). */
   prDialogTaskId: string | null;
+  /** True once the Create PR dialog has first opened — keeps the lazy dialog
+   *  mounted thereafter so its close animation can play. */
+  prDialogMounted: boolean;
   /** Close the Create PR dialog. */
   closePrDialog: () => void;
   /** The guarded push + `gh pr create` mutation the dialog confirms. Rejects
@@ -248,6 +251,16 @@ export function useAppShell(): AppShellState {
   const worktrees = useWorktrees();
   const createPr = useCreatePr(action, toast);
   const prLifecycle = usePrLifecycle(action, toast);
+
+  // Latch the Create PR dialog mounted once it first opens. The dialog is a lazy
+  // (worktree-chunk) overlay that now OWNS its close animation via `<Modal open>`,
+  // so it must outlive `prDialogTaskId → null` to animate out. Keying the mount on
+  // this one-way latch keeps the chunk loading on demand (first open), not at
+  // startup, while letting the dialog stay mounted (rendering nothing when closed).
+  const [prDialogMounted, setPrDialogMounted] = useState(false);
+  useEffect(() => {
+    if (createPr.prDialogTaskId !== null) setPrDialogMounted(true);
+  }, [createPr.prDialogTaskId]);
 
   // The real concurrent-run count (tasks default to concurrency 3), not a boolean.
   // The sidebar footer reads this to show "N running"; `anyRunning` is the derived
@@ -787,6 +800,7 @@ export function useAppShell(): AppShellState {
       handleCommit,
       handleMerge,
       prDialogTaskId: createPr.prDialogTaskId,
+      prDialogMounted,
       closePrDialog: createPr.closePrDialog,
       handleCreatePr: createPr.create,
       handleChangeKind,
