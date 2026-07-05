@@ -148,18 +148,7 @@ mod tests {
     fn git_stdout_neutralizes_hostile_fsmonitor_config() {
         let tmp = TempDir::new().expect("tempdir");
         let root = tmp.path();
-        let git = |args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(root)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .expect("git runs");
-            assert!(out.status.success(), "git {args:?} failed");
-        };
+        let git = |args: &[&str]| crate::git::testutil::git_expect(root, args);
         git(&["init", "-b", "main"]);
         std::fs::write(root.join("f.txt"), "x\n").expect("write");
         git(&["add", "-A"]);
@@ -226,18 +215,7 @@ mod tests {
         let tmp = TempDir::new().expect("tempdir");
         let root = tmp.path().join("project");
         std::fs::create_dir_all(&root).expect("mkdir project");
-        let git = |dir: &Path, args: &[&str]| {
-            let out = std::process::Command::new("git")
-                .args(args)
-                .current_dir(dir)
-                .env("GIT_AUTHOR_NAME", "t")
-                .env("GIT_AUTHOR_EMAIL", "t@t")
-                .env("GIT_COMMITTER_NAME", "t")
-                .env("GIT_COMMITTER_EMAIL", "t@t")
-                .output()
-                .expect("git runs");
-            assert!(out.status.success(), "git {args:?}: {:?}", out);
-        };
+        let git = |dir: &Path, args: &[&str]| crate::git::testutil::git_expect(dir, args);
         git(&root, &["init", "-b", "main"]);
         std::fs::write(root.join("AGENTS.md"), "rule\n".repeat(10)).expect("write");
         std::fs::write(root.join("lib.rs"), "fn main() {}\n").expect("write");

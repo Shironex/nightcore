@@ -810,20 +810,7 @@ mod tests {
     /// A git repo fixture: `write` files, then `commit` (add -A + commit) so
     /// `git ls-files` sees them. Mirrors the injection_scan/anti_gaming pattern.
     fn git(root: &Path, args: &[&str]) {
-        let out = std::process::Command::new("git")
-            .args(args)
-            .current_dir(root)
-            .env("GIT_AUTHOR_NAME", "t")
-            .env("GIT_AUTHOR_EMAIL", "t@t")
-            .env("GIT_COMMITTER_NAME", "t")
-            .env("GIT_COMMITTER_EMAIL", "t@t")
-            .output()
-            .expect("git");
-        assert!(
-            out.status.success(),
-            "git {args:?} failed: {}",
-            String::from_utf8_lossy(&out.stderr)
-        );
+        crate::git::testutil::git_expect(root, args);
     }
 
     fn write(root: &Path, rel: &str, content: &str) {
