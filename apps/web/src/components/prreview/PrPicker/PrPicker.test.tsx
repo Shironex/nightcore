@@ -4,7 +4,26 @@ import { render } from 'vitest-browser-react';
 
 import * as stories from './PrPicker.stories';
 
-const { Loaded, Empty, Error: ErrorStory } = composeStories(stories);
+const { Loaded, Empty, Error: ErrorStory, WithRunBadges } = composeStories(stories);
+
+test('rows show the running badge and the open-finding count from the registry props', async () => {
+  const screen = render(<WithRunBadges />);
+  // The badges are plain text (visible + sr-only suffix), never aria-labels on
+  // generic spans — so they land in each option's accessible name directly.
+  // #128 has a run in flight → the "Reviewing" spinner badge.
+  await expect
+    .element(screen.getByRole('option', { name: /#128/ }))
+    .toHaveTextContent('Reviewing');
+  // #127's latest completed run left 3 open findings → the visible count with
+  // the sr-only "open findings" suffix.
+  await expect
+    .element(screen.getByRole('option', { name: /#127/ }))
+    .toHaveTextContent(/3\s*open findings/);
+  // #119 has neither run nor findings → no badge of either kind.
+  const bare = screen.getByRole('option', { name: /#119/ });
+  await expect.element(bare).not.toHaveTextContent('Reviewing');
+  await expect.element(bare).not.toHaveTextContent(/open finding/);
+});
 
 test('selecting a PR from the list reports its number', async () => {
   const onChange = vi.fn();

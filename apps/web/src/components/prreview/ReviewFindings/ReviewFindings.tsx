@@ -89,10 +89,10 @@ function ReviewCard({
 
 /** The results grid: findings bucketed by severity (highest first), each section a
  *  `col-span-full` header followed by its cards. Falls back to the empty message
- *  when there is nothing to show and nothing streaming. */
+ *  when there is nothing to show. The grid renders only in the section's RESULTS
+ *  mode (never mid-run), so it carries no streaming skeletons. */
 export function ReviewFindings({
   findings,
-  skeletonCount,
   emptyMessage,
   selection,
   onToggleSelect,
@@ -133,9 +133,9 @@ export function ReviewFindings({
 
   return (
     <DetailCardGrid
-      isEmpty={findings.length === 0 && skeletonCount === 0}
+      isEmpty={findings.length === 0}
       emptyMessage={emptyMessage}
-      skeletonCount={skeletonCount}
+      skeletonCount={0}
     >
       {/* `children` is a flat list of already-keyed section headers + cards. */}
       {children}

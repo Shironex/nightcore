@@ -1,10 +1,20 @@
-/** Filter + manual-entry state for the PR Review pull-request picker. */
+/** Filter + manual-entry state for the PR Review pull-request picker, plus the
+ *  PR-number parser the manual escape hatch shares with it. */
 import { useMemo, useState } from 'react';
 
 import type { PrSummary } from '@/lib/bridge';
 
-import { parsePrNumber } from '../RunControls';
 import type { PrPickerRow } from './PrPicker.types';
+
+/** Parse a raw PR-number input into a positive integer, or `null` when the input
+ *  is empty / non-numeric / not > 0. Digits-only so `1e3`, `-1`, `1.5`, and
+ *  whitespace all reject. */
+export function parsePrNumber(raw: string): number | null {
+  const trimmed = raw.trim();
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  return Number.isSafeInteger(n) && n > 0 ? n : null;
+}
 
 export interface UsePrPicker {
   /** The filter box text (also the manual-number entry). */

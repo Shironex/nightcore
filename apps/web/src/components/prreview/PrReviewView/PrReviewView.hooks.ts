@@ -1,197 +1,101 @@
-/** Hooks that resolve the PR Review surface into a single view model: the live and
- *  persisted run stream, the lifted run-config, the finding selection, and the
+/** Hooks that resolve the permanent two-panel PR workspace into a single view
+ *  model: the open-PR list, the per-PR run registry (concurrent runs across
+ *  PRs), the selected PR's review-section slice, the finding selection, and the
  *  human-gated post-review state machine. */
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import type {
-  MenuItem,
-  RunPhase,
-  RunProgressCategory,
-} from '@/components/ui';
+import type { MenuItem, RunProgressCategory } from '@/components/ui';
 import { useToast } from '@/components/ui';
 import {
-  cancelPrReview,
   convertReviewFindingToTask,
   dismissReviewFinding,
   type EffortLevel,
-  getPrReviewRun,
-  listPrReviewRuns,
-  onPrReviewEvent,
+  listOpenPrs,
+  openExternal,
   postReviewToGithub,
-  type PrReviewEvent,
-  type PrReviewRun,
+  type PrFixState,
+  type PrSummary,
   restoreReviewFinding,
   type ReviewInlineComment,
   type ReviewLens,
-  startPrReview,
   type Task,
+  viewerLogin,
 } from '@/lib/bridge';
-import { deriveRunPhase, seedStepState } from '@/lib/scan-run';
+import { seedStepState } from '@/lib/scan-run';
 import { useBulkConvert } from '@/lib/useBulkConvert';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
-import { useScanRun } from '@/lib/useScanRun';
+import { useRunConfig } from '@/lib/useRunConfig';
 
 import {
+  ALL_LENSES,
   LENS_META,
   SEVERITY_META,
   SEVERITY_ORDER,
   severityRankValue,
 } from '../prreview.constants';
 import type { ReviewFindingView, ReviewVerdict } from '../prreview.types';
-import {
-  EMPTY_REVIEW_STREAM,
-  foldReview,
-  type LensProgress,
-  type ReviewStream,
-  streamFromRun,
-} from '../prreview-stream';
-import type { PrReviewRunConfig } from '../RunControls';
-import { useRunConfig } from '../RunControls';
+import { usePrFixes } from '../prreview-fixes.hooks';
+import { findingCountForPr, runningPrNumbers } from '../prreview-runs';
+import { usePrReviewRuns } from '../prreview-runs.hooks';
+import { EMPTY_REVIEW_STREAM, type ReviewStream } from '../prreview-stream';
+import type {
+  ReviewSectionMode,
+  ReviewSectionProps,
+} from '../ReviewSection';
 import type { PrReviewViewProps } from './PrReviewView.types';
 
-export interface UsePrReviewResult {
-  stream: ReviewStream;
-  runs: PrReviewRun[];
-  isStarting: boolean;
-  startError: string | null;
-  /** Resolves `true` once the run has actually started (the synchronous
-   *  `gh pr diff` fetch succeeded and the running state is armed); `false` if the
-   *  start was rejected (startError is set) or guarded out. Callers use this to
-   *  decide whether to leave the configure screen. */
-  start: (
-    prNumber: number,
-    lenses: ReviewLens[],
-    model: string | null,
-    effort: string | null,
-  ) => Promise<boolean>;
-  cancel: () => Promise<void>;
-  selectRun: (runId: string) => Promise<void>;
-  dismiss: (findingId: string) => Promise<void>;
-  restore: (findingId: string) => Promise<void>;
-  convert: (findingId: string) => Promise<Task | null>;
+/** The open-PR list state for the left rail. */
+export interface OpenPrs {
+  /** The active project's open pull requests, newest first. */
+  prs: PrSummary[];
+  /** True while the list is being (re)fetched. */
+  loading: boolean;
+  /** A fetch failure (gh missing / no remote / auth), or null. */
+  error: string | null;
+  /** Re-fetch the list. */
+  refresh: () => void;
 }
 
-/** Drive the PR Review view: live `pr-review-*` fold for the active run,
- *  authoritative reconciliation against the persisted run on completion, and
- *  finding actions. Clone of `useInsight`. */
-export function usePrReview(hasProject: boolean): UsePrReviewResult {
-  const scan = useScanRun<PrReviewEvent, PrReviewRun, ReviewStream>({
-    emptyStream: EMPTY_REVIEW_STREAM,
-    listRuns: listPrReviewRuns,
-    getRun: getPrReviewRun,
-    streamFromRun,
-    cancelRun: cancelPrReview,
-    subscribe: onPrReviewEvent,
-    onEvent: (event, { activeRunId, setStream, refreshRuns, reconcile }) => {
-      if (event.type === 'pr-review-finding-converted') {
-        setStream((prev) =>
-          prev.runId === event.runId
-            ? {
-                ...prev,
-                findings: prev.findings.map((f) =>
-                  f.id === event.findingId
-                    ? { ...f, status: 'converted', linkedTaskId: event.taskId }
-                    : f,
-                ),
-              }
-            : prev,
-        );
-        void refreshRuns();
-        return;
+/**
+ * Fetch the active project's open pull requests for the persistent left rail.
+ * Fetches on mount / project arrival and on `refresh()` — the view is now a
+ * permanent workspace, so freshness comes from the explicit Refresh-PRs action
+ * rather than a per-screen remount. A gh failure becomes `error` (the picker
+ * surfaces it inline) — the typed-number escape hatch still works, so a listing
+ * failure never blocks starting a review.
+ */
+export function useOpenPrs(enabled: boolean): OpenPrs {
+  const [prs, setPrs] = useState<PrSummary[]>([]);
+  const [loading, setLoading] = useState(enabled);
+  const [error, setError] = useState<string | null>(null);
+  const [reloadKey, setReloadKey] = useState(0);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let cancelled = false;
+    setLoading(true);
+    setError(null);
+    void (async () => {
+      try {
+        const list = await listOpenPrs();
+        if (!cancelled) setPrs(list);
+      } catch (err) {
+        if (!cancelled) {
+          setError(err instanceof Error ? err.message : String(err));
+          setPrs([]);
+        }
+      } finally {
+        if (!cancelled) setLoading(false);
       }
-      // pr-review-* lens events only apply to the run currently displayed/driven.
-      if (event.runId !== activeRunId.current) return;
-      setStream((prev) => foldReview(prev, event));
-      if (event.type === 'pr-review-completed' || event.type === 'pr-review-failed') {
-        void reconcile(event.runId);
-      }
-    },
-  });
-  const { stream, setStream, runStart, refreshRuns } = scan;
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled, reloadKey]);
 
-  const start = useCallback(
-    (
-      prNumber: number,
-      lenses: ReviewLens[],
-      model: string | null,
-      effort: string | null,
-    ) =>
-      runStart(hasProject && lenses.length > 0 && prNumber > 0, async () => {
-        const runId = await startPrReview(prNumber, lenses, {
-          model,
-          effort: effort as EffortLevel | null,
-        });
-        // Optimistic running state until `pr-review-started` lands. Carries the PR
-        // number (the started event omits it) so the post-review target survives.
-        return {
-          runId,
-          optimistic: {
-            ...EMPTY_REVIEW_STREAM,
-            runId,
-            status: 'running',
-            prNumber,
-            model,
-            requestedLenses: lenses,
-            lensState: seedStepState(lenses),
-          },
-        };
-      }),
-    [hasProject, runStart],
-  );
-
-  const dismiss = useCallback(
-    async (findingId: string) => {
-      if (stream.runId === null) return;
-      const run = await dismissReviewFinding(stream.runId, findingId);
-      if (run !== null) setStream(streamFromRun(run));
-      await refreshRuns();
-    },
-    [stream.runId, setStream, refreshRuns],
-  );
-
-  const restore = useCallback(
-    async (findingId: string) => {
-      if (stream.runId === null) return;
-      const run = await restoreReviewFinding(stream.runId, findingId);
-      if (run !== null) setStream(streamFromRun(run));
-      await refreshRuns();
-    },
-    [stream.runId, setStream, refreshRuns],
-  );
-
-  const convert = useCallback(
-    async (findingId: string): Promise<Task | null> => {
-      if (stream.runId === null) return null;
-      const task = await convertReviewFindingToTask(stream.runId, findingId);
-      setStream((prev) => ({
-        ...prev,
-        findings: prev.findings.map((f) =>
-          f.id === findingId
-            ? { ...f, status: 'converted', linkedTaskId: task.id }
-            : f,
-        ),
-      }));
-      await refreshRuns();
-      return task;
-    },
-    [stream.runId, setStream, refreshRuns],
-  );
-
-  return {
-    stream,
-    runs: scan.runs,
-    isStarting: scan.isStarting,
-    startError: scan.startError,
-    start,
-    cancel: scan.cancel,
-    selectRun: scan.selectRun,
-    dismiss,
-    restore,
-    convert,
-  };
+  const refresh = useCallback(() => setReloadKey((k) => k + 1), []);
+  return { prs, loading, error, refresh };
 }
-
-const RUNNING: LensProgress = 'running';
 
 /** Order findings for display: open before resolved, then severity (high→low). */
 function sortFindings(findings: ReviewFindingView[]): ReviewFindingView[] {
@@ -201,10 +105,6 @@ function sortFindings(findings: ReviewFindingView[]): ReviewFindingView[] {
     if (s !== 0) return s;
     return severityRankValue(b.severity) - severityRankValue(a.severity);
   });
-}
-
-function openCount(findings: ReviewFindingView[]): number {
-  return findings.filter((f) => f.status === 'open').length;
 }
 
 /** The one-line verdict framing prepended to the composed review body. */
@@ -249,76 +149,85 @@ export function composeReviewComments(
     }));
 }
 
-/** Everything the PrReviewView shell renders. `hasProject === false` is the only
- *  early-return branch; every other field is meaningful in the project view. */
+/** Everything the two-panel PrReviewView shell renders. `hasProject === false`
+ *  is the only early-return branch; every other field is meaningful. */
 export interface PrReviewViewModel {
   hasProject: boolean;
   projectName: string | null;
-  stream: ReviewStream;
-  /** Which lifecycle screen (CONFIGURE / RUNNING / RESULTS) is active. */
-  phase: RunPhase;
-  /** The lifted run-config form state, passed straight into RunControls. */
-  config: PrReviewRunConfig;
-  /** The collapsed-config summary string for the shell's summary bar. */
-  summary: string;
-  isStarting: boolean;
-  startError: string | null;
-  /** Run-history menu entries (newest first), each selecting that run. */
-  runHistory: MenuItem[];
-  hasHistory: boolean;
-  /** RunProgress: the requested lenses as ordered descriptors. */
-  progressCategories: RunProgressCategory[];
-  /** RunProgress: total findings produced per lens so far. */
-  findingCounts: Record<string, number>;
-  /** The findings for the RESULTS grid (sorted; grouped by severity downstream). */
-  gridFindings: ReviewFindingView[];
-  skeletonCount: number;
-  emptyMessage: string;
+  // --- Left rail (persistent PR list) ---
+  prs: PrSummary[];
+  prsLoading: boolean;
+  prsError: string | null;
+  /** Re-fetch the open-PR list (the header Refresh-PRs action). */
+  refreshPrs: () => void;
+  /** The selected PR number, or null (empty right panel). */
+  selectedPr: number | null;
+  /** Select a PR. NEVER cancels anything — runs keep streaming in the registry. */
+  selectPr: (prNumber: number | null) => void;
+  /** PR numbers with a review currently in flight (list badges). */
+  runningPrs: readonly number[];
+  /** Open-finding count of each listed PR's latest completed run. */
+  prFindingCounts: Readonly<Record<number, number>>;
+  // --- Right panel (the selected PR's workspace) ---
+  /** The selected PR's open-list summary, or null for a typed number. */
+  selectedSummary: PrSummary | null;
+  /** Open a PR page in the system browser (backend-validated https-only). */
+  onOpenExternal: (url: string) => void;
+  /** The fully-assembled review-section props, or null when nothing is selected. */
+  review: ReviewSectionProps | null;
+  // --- Finding detail overlay ---
   /** The finding open in the detail panel, or `null`. */
   selected: ReviewFindingView | null;
-  openFinding: (finding: ReviewFindingView) => void;
   closeFinding: () => void;
   /** True while a finding action (convert/dismiss/restore) is in flight. */
   pending: boolean;
-  onReview: () => void;
-  onCancel: () => void;
-  /** "New run" / "Retry": back to CONFIGURE, pre-filled from the last run. */
-  startNewRun: () => void;
-  /** Bulk convert: open, not-yet-converted findings → tasks (idempotent). */
-  convertAll: () => void;
-  bulkConverting: boolean;
-  bulkProgress: { done: number; total: number; failed: number };
-  bulkStatusMessage: string;
-  bulkError: string | null;
-  openCount: number;
   onConvert: (findingId: string) => void;
   onDismiss: (findingId: string) => void;
   onRestore: (findingId: string) => void;
   onGotoBoard?: () => void;
-  // --- Selection + post-review gate ---
-  /** The set of finding ids selected for the posted review. */
-  selection: ReadonlySet<string>;
-  onToggleSelect: (findingId: string) => void;
-  selectedCount: number;
-  /** How many selected findings carry a line anchor (become inline comments). */
-  selectedInlineCount: number;
-  /** Whether the post-review toolbar is actionable (completed run + ≥1 selected). */
-  canPost: boolean;
+  // --- Post-review human gate ---
   /** The verdict whose ConfirmDialog is open, or `null`. */
   postVerdict: ReviewVerdict | null;
   posting: boolean;
   postError: string | null;
-  /** Open the ConfirmDialog for a verdict (human gate — never auto-fires). */
-  requestPost: (verdict: ReviewVerdict) => void;
+  /** The PR the armed post targets (the displayed run's PR). */
+  postPrNumber: number | null;
+  selectedCount: number;
+  /** How many selected findings carry a line anchor (become inline comments). */
+  selectedInlineCount: number;
   /** Confirm + await the post (composes body + comments from the selection). */
   confirmPost: () => void;
   /** Cancel the gate. A no-op while a post is in flight. */
   cancelPost: () => void;
+  // --- Address-findings human gate (start a fix agent on the PR branch) ---
+  /** True when the address ConfirmDialog is open. */
+  addressArmed: boolean;
+  /** True while the armed address is in flight (checkout + dispatch). */
+  addressing: boolean;
+  /** This PR's last address rejection (also shown in the toolbar), or null. */
+  addressError: string | null;
+  /** The PR the armed address targets (the displayed run's PR). */
+  addressPrNumber: number | null;
+  /** Selected OPEN findings count — the K the fix prompt will carry. */
+  addressCount: number;
+  /** Confirm + await the address (starts the paid fix session). */
+  confirmAddress: () => void;
+  /** Cancel the gate. A no-op while an address is in flight. */
+  cancelAddress: () => void;
+  // --- Push-fix human gate (THE external side effect of the fix arc) ---
+  /** The fix the armed push targets (dialog open when non-null). */
+  pushArmedFix: PrFixState | null;
+  pushing: boolean;
+  pushError: string | null;
+  /** Confirm + await the push (plain push, never force). */
+  confirmPush: () => void;
+  /** Cancel the gate. A no-op while a push is in flight. */
+  cancelPush: () => void;
 }
 
-/** Resolve the entire PR Review surface into a single view model. Clone of
- *  `useInsightView`, plus the finding selection and the human-gated post-review
- *  state machine. The component shell renders purely from this. */
+/** Resolve the entire PR workspace into a single view model: the persistent
+ *  left list + the selected PR's registry-driven right panel. The component
+ *  shell renders purely from this. */
 export function usePrReviewView({
   projectPath,
   projectName,
@@ -328,114 +237,218 @@ export function usePrReviewView({
 }: PrReviewViewProps): PrReviewViewModel {
   const hasProject = projectPath !== null;
   const toast = useToast();
-  const prReview = usePrReview(hasProject);
-  const { stream } = prReview;
+  const runs = usePrReviewRuns(hasProject);
+  const { registry, startErrors, start, cancel, selectRun, byPr, refreshRuns } = runs;
+  const fixes = usePrFixes(hasProject);
+  const openPrs = useOpenPrs(hasProject);
+  // The lens/model/effort form state — lives above the section so it survives
+  // PR switches and prefills on "New review".
+  const config = useRunConfig<ReviewLens>(ALL_LENSES, !hasProject);
 
-  // Lifted run-config form state — lives above RunControls so it survives the
-  // CONFIGURE → RUNNING → RESULTS phase swaps and pre-fills on "New run".
-  const config = useRunConfig(!hasProject);
-
+  const [selectedPr, setSelectedPr] = useState<number | null>(null);
+  /** A history selection: display THIS run instead of the PR's latest. */
+  const [viewingRunId, setViewingRunId] = useState<string | null>(null);
+  /** "New review" over existing results: show config without dropping them. */
+  const [reconfiguring, setReconfiguring] = useState(false);
+  /** PRs inside the Review-click → optimistic-entry IPC gap (per-PR spinner). */
+  const [startingPrs, setStartingPrs] = useState<ReadonlySet<number>>(
+    () => new Set(),
+  );
+  /** The gh viewer login, fetched ONCE per mount. `null` = unknown → the
+   *  own-PR guard fails open (all verdicts enabled). */
+  const [login, setLogin] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
-  const [reconfiguring, setReconfiguring] = useState(false);
   // The findings checked for inclusion in the posted review.
   const [selection, setSelection] = useState<ReadonlySet<string>>(() => new Set());
-  // Bulk convert-all progress + loop (shared with the Insight sibling).
-  const { resetBulk, convertAll, bulkConverting, bulkProgress, bulkStatusMessage, bulkError } =
-    useBulkConvert(prReview.convert, 'convertReviewFindingToTask failed');
   // Post-review human gate: the pending verdict (dialog open when non-null), the
   // in-flight flag (blocks double-fire + cancel), and the last error.
   const [postVerdict, setPostVerdict] = useState<ReviewVerdict | null>(null);
   const [posting, setPosting] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
   const postInFlight = useRef(false);
+  // Address-findings human gate: the dialog flag, the in-flight flag (blocks
+  // double-fire + cancel), and its ref twin (synchronous re-entrancy check).
+  const [addressArmed, setAddressArmed] = useState(false);
+  const [addressing, setAddressing] = useState(false);
+  const addressInFlight = useRef(false);
+  // Push-fix human gate: the armed fix id (dialog open when non-null), the
+  // in-flight flag, and the last push error (kept-open dialog, like the post).
+  const [pushFixId, setPushFixId] = useState<string | null>(null);
+  const [pushing, setPushing] = useState(false);
+  const [pushError, setPushError] = useState<string | null>(null);
+  const pushInFlight = useRef(false);
 
-  // Board→scan provenance navigation: a task's `sourceRef` chip landed here with a
-  // run + finding to open. Consume the target FIRST, land on that run's RESULTS,
-  // and open the finding's detail panel.
-  usePreselectNavigation({
-    preselect,
-    onPreselectConsumed,
-    selectRun: prReview.selectRun,
-    onEnter: () => {
-      setReconfiguring(false);
-      resetBulk();
-      setSelection(new Set());
-    },
-    onOpenItem: (target) => setSelectedId(target.itemId),
-  });
+  // Project-switch reset, synchronously before paint (the render-adjust
+  // pattern): the selection belongs to the previous project's PR numbers.
+  const [lastProject, setLastProject] = useState(projectPath);
+  if (lastProject !== projectPath) {
+    setLastProject(projectPath);
+    setSelectedPr(null);
+    setViewingRunId(null);
+    setReconfiguring(false);
+    setSelectedId(null);
+    setSelection(new Set());
+    setPostVerdict(null);
+    setPostError(null);
+    setAddressArmed(false);
+    setPushFixId(null);
+    setPushError(null);
+  }
 
-  const phase: RunPhase = deriveRunPhase(stream.status, prReview.isStarting, reconfiguring);
+  // The viewer login, once per mount. A rejection leaves `null` — fail-open.
+  useEffect(() => {
+    let cancelled = false;
+    viewerLogin().then(
+      (l) => {
+        // Coerce a void resolution (mock/browser seams) to the null sentinel.
+        if (!cancelled) setLogin(l ?? null);
+      },
+      (err: unknown) => console.error('viewer_login failed (guard fails open)', err),
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
-  const gridFindings = useMemo(() => sortFindings(stream.findings), [stream.findings]);
+  // --- Registry projections for the selected PR --------------------------
+  const prView = selectedPr !== null ? byPr(selectedPr) : null;
+  const latestStream = prView?.stream ?? null;
+  const viewedStream =
+    viewingRunId !== null ? (registry.get(viewingRunId)?.stream ?? null) : null;
+  /** The stream the right panel displays: a history selection wins, else the
+   *  PR's latest (running-first) stream. */
+  const displayStream = viewedStream ?? latestStream;
+  const displayRunId = displayStream?.runId ?? null;
+  const viewingPastRun =
+    viewingRunId !== null &&
+    displayStream !== null &&
+    latestStream !== null &&
+    displayStream.runId !== latestStream.runId;
 
-  const skeletonCount = useMemo(() => {
-    if (stream.status !== 'running') return 0;
-    const running = Object.values(stream.lensState).filter(
-      (s) => s === RUNNING,
-    ).length;
-    return Math.min(6, running * 2);
-  }, [stream.status, stream.lensState]);
+  const isStarting = selectedPr !== null && startingPrs.has(selectedPr);
+  const startError =
+    selectedPr !== null ? (startErrors.get(selectedPr) ?? null) : null;
+
+  const mode: ReviewSectionMode =
+    isStarting || displayStream?.status === 'running'
+      ? 'running'
+      : reconfiguring || displayStream === null
+        ? 'config'
+        : 'results';
+
+  // The stream the RUNNING branch renders: the live run, or a seeded synthetic
+  // one during the Review-click → optimistic-entry IPC gap (so the progress
+  // rows lay out immediately, exactly like the old running screen's seed).
+  const runningStream: ReviewStream | null = useMemo(() => {
+    if (displayStream !== null && displayStream.status === 'running') {
+      return displayStream;
+    }
+    if (!isStarting) return null;
+    return {
+      ...EMPTY_REVIEW_STREAM,
+      status: 'running',
+      prNumber: selectedPr,
+      model: config.model,
+      requestedLenses: config.orderedSelected,
+      lensState: seedStepState(config.orderedSelected),
+    };
+  }, [displayStream, isStarting, selectedPr, config.model, config.orderedSelected]);
+
+  const runningPrs = useMemo(() => runningPrNumbers(registry), [registry]);
+
+  const prFindingCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const pr of openPrs.prs) {
+      counts[pr.number] = findingCountForPr(registry, pr.number);
+    }
+    return counts;
+  }, [openPrs.prs, registry]);
+
+  const selectedSummary = useMemo(
+    () =>
+      selectedPr !== null
+        ? (openPrs.prs.find((pr) => pr.number === selectedPr) ?? null)
+        : null,
+    [openPrs.prs, selectedPr],
+  );
+  const ownPr =
+    login !== null && selectedSummary !== null && selectedSummary.author === login;
+
+  const gridFindings = useMemo(
+    () => sortFindings(displayStream?.findings ?? []),
+    [displayStream?.findings],
+  );
 
   const selected = useMemo(
-    () => stream.findings.find((f) => f.id === selectedId) ?? null,
-    [stream.findings, selectedId],
+    () => displayStream?.findings.find((f) => f.id === selectedId) ?? null,
+    [displayStream?.findings, selectedId],
   );
 
   const progressCategories: RunProgressCategory[] = useMemo(
     () =>
-      stream.requestedLenses.map((l) => ({
+      (runningStream?.requestedLenses ?? []).map((l) => ({
         key: l,
         label: LENS_META[l].label,
         icon: LENS_META[l].icon,
       })),
-    [stream.requestedLenses],
+    [runningStream?.requestedLenses],
   );
 
-  const findingCounts = useMemo(() => {
+  const lensFindingCounts = useMemo(() => {
     const counts: Record<string, number> = {};
-    for (const f of stream.findings) {
+    for (const f of runningStream?.findings ?? []) {
       counts[f.lens] = (counts[f.lens] ?? 0) + 1;
     }
     return counts;
-  }, [stream.findings]);
-
-  const summary = useMemo(() => {
-    const n = stream.requestedLenses.length;
-    const parts = [
-      stream.prNumber !== null ? `PR #${stream.prNumber}` : 'PR',
-      stream.model ?? 'default',
-      ...(config.effort != null ? [config.effort] : []),
-      `${n} ${n === 1 ? 'lens' : 'lenses'}`,
-    ];
-    return `⌖ ${parts.join(' · ')}`;
-  }, [stream.prNumber, stream.model, stream.requestedLenses, config.effort]);
-
-  const runHistory: MenuItem[] = useMemo(
-    () =>
-      prReview.runs.map((run) => ({
-        label: `PR #${run.prNumber} · ${new Date(run.createdAt).toLocaleString()} · ${run.findings.length} findings`,
-        onClick: () => {
-          setReconfiguring(false);
-          resetBulk();
-          setSelection(new Set());
-          void prReview.selectRun(run.id);
-        },
-      })),
-    [prReview, resetBulk],
-  );
+  }, [runningStream?.findings]);
 
   const emptyMessage = useMemo(() => {
-    if (stream.status === 'idle') {
-      return 'Review a pull request to surface findings across the review lenses.';
+    if (displayStream === null) {
+      return 'Review this pull request to surface findings across the review lenses.';
     }
-    if (stream.status === 'running') return 'Reviewing…';
-    if (stream.status === 'failed') {
-      if (stream.failureReason === 'aborted') return 'Review cancelled.';
-      return `Review failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
+    if (displayStream.status === 'running') return 'Reviewing…';
+    if (displayStream.status === 'failed') {
+      if (displayStream.failureReason === 'aborted') return 'Review cancelled.';
+      return `Review failed${
+        displayStream.error !== null ? `: ${displayStream.error}` : ''
+      }.`;
     }
     return 'No findings — the diff looks clean across the selected lenses.';
-  }, [stream.status, stream.error, stream.failureReason]);
+  }, [displayStream]);
+
+  // --- Finding lifecycle actions (against the DISPLAYED run) -------------
+  // Bulk convert-all progress + loop (shared with the Insight sibling). The
+  // convert closure is read through a ref inside, so rebinding on the displayed
+  // run is safe.
+  const convertFinding = useCallback(
+    async (findingId: string): Promise<Task | null> => {
+      if (displayRunId === null) return null;
+      const task = await convertReviewFindingToTask(displayRunId, findingId);
+      // The `pr-review-finding-converted` event folds the registry too; the
+      // explicit persisted reconcile makes the mark deterministic.
+      await selectRun(displayRunId);
+      void refreshRuns();
+      return task;
+    },
+    [displayRunId, selectRun, refreshRuns],
+  );
+  const {
+    resetBulk,
+    convertAll,
+    bulkConverting,
+    bulkProgress,
+    bulkStatusMessage,
+    bulkError,
+  } = useBulkConvert(convertFinding, 'convertReviewFindingToTask failed');
+
+  /** Drop the per-run finding UI (detail panel, post selection, bulk counters)
+   *  — applied when the displayed run changes (PR switch, history, new run). */
+  const resetFindingUi = useCallback(() => {
+    setSelectedId(null);
+    setSelection(new Set());
+    resetBulk();
+  }, [resetBulk]);
 
   const runAction = useCallback(
     async (label: string, fn: () => Promise<unknown>) => {
@@ -452,6 +465,26 @@ export function usePrReviewView({
     [toast],
   );
 
+  const dismiss = useCallback(
+    async (findingId: string) => {
+      if (displayRunId === null) return;
+      await dismissReviewFinding(displayRunId, findingId);
+      await selectRun(displayRunId);
+      void refreshRuns();
+    },
+    [displayRunId, selectRun, refreshRuns],
+  );
+
+  const restore = useCallback(
+    async (findingId: string) => {
+      if (displayRunId === null) return;
+      await restoreReviewFinding(displayRunId, findingId);
+      await selectRun(displayRunId);
+      void refreshRuns();
+    },
+    [displayRunId, selectRun, refreshRuns],
+  );
+
   const onToggleSelect = useCallback((findingId: string) => {
     setSelection((prev) => {
       const next = new Set(prev);
@@ -461,30 +494,56 @@ export function usePrReviewView({
     });
   }, []);
 
-  // Dismiss also deselects — a dismissed finding must not be posted.
+  // Dismiss also deselects — a dismissed finding must not be posted. The
+  // deselect is optimistic: a FAILED dismiss restores the selection (the
+  // finding is still open and postable, so silently dropping it would shrink
+  // the composed review with no signal beyond the toast).
   const onDismiss = useCallback(
     (id: string) => {
-      setSelection((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
+      const wasSelected = selection.has(id);
+      if (wasSelected) {
+        setSelection((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      }
+      void runAction('dismiss', async () => {
+        try {
+          await dismiss(id);
+        } catch (err) {
+          if (wasSelected) {
+            setSelection((prev) => {
+              if (prev.has(id)) return prev;
+              const next = new Set(prev);
+              next.add(id);
+              return next;
+            });
+          }
+          throw err;
+        }
       });
-      void runAction('dismiss', () => prReview.dismiss(id));
     },
-    [runAction, prReview],
+    [selection, runAction, dismiss],
   );
 
+  // --- Selection + post gate ---------------------------------------------
   const selectedFindings = useMemo(
-    () => stream.findings.filter((f) => selection.has(f.id) && f.status !== 'dismissed'),
-    [stream.findings, selection],
+    () =>
+      (displayStream?.findings ?? []).filter(
+        (f) => selection.has(f.id) && f.status !== 'dismissed',
+      ),
+    [displayStream?.findings, selection],
   );
   const selectedCount = selectedFindings.length;
   const selectedInlineCount = useMemo(
     () => selectedFindings.filter((f) => f.line !== null).length,
     [selectedFindings],
   );
-  const canPost = stream.status === 'completed' && stream.prNumber !== null && selectedCount > 0;
+  const canPost =
+    displayStream?.status === 'completed' &&
+    displayStream.prNumber !== null &&
+    selectedCount > 0;
 
   const requestPost = useCallback((verdict: ReviewVerdict) => {
     setPostError(null);
@@ -498,11 +557,13 @@ export function usePrReviewView({
     setPostError(null);
   }, []);
 
+  const postPrNumber = displayStream?.prNumber ?? null;
+
   const confirmPost = useCallback(() => {
     if (postVerdict === null || postInFlight.current) return;
-    if (stream.prNumber === null || selectedFindings.length === 0) return;
+    if (postPrNumber === null || selectedFindings.length === 0) return;
     const verdict = postVerdict;
-    const prNumber = stream.prNumber;
+    const prNumber = postPrNumber;
     const body = composeReviewBody(verdict, selectedFindings);
     const comments = composeReviewComments(selectedFindings);
     postInFlight.current = true;
@@ -515,8 +576,8 @@ export function usePrReviewView({
         setPostVerdict(null);
         setSelection(new Set());
       } catch (err) {
-        // Surface BOTH inline (kept dialog) and via toast (the useToast discipline),
-        // and keep the verdict open so the user can retry or cancel.
+        // Surface BOTH inline (kept dialog) and via toast (the useToast
+        // discipline), and keep the verdict open so the user can retry/cancel.
         console.error('postReviewToGithub failed', err);
         setPostError(err instanceof Error ? err.message : String(err));
         toast.error('Could not post the review', err);
@@ -525,76 +586,361 @@ export function usePrReviewView({
         postInFlight.current = false;
       }
     })();
-  }, [postVerdict, stream.prNumber, selectedFindings, toast]);
+  }, [postVerdict, postPrNumber, selectedFindings, toast]);
+
+  // --- Address-findings gate + fix lifecycle (per-PR fix registry) ---------
+  /** The selected PR's displayed fix (latest by `updatedAt`), or null. */
+  const prFix = selectedPr !== null ? fixes.fixForPr(selectedPr) : null;
+  const fixRunning = prFix !== null && prFix.status === 'running';
+  /** Only OPEN selected findings feed the fix prompt (converted stay postable
+   *  but are already tracked as tasks; dismissed never make the selection). */
+  const selectedOpenFindings = useMemo(
+    () => selectedFindings.filter((f) => f.status === 'open'),
+    [selectedFindings],
+  );
+  const addressCount = selectedOpenFindings.length;
+  const addressPrNumber = displayStream?.prNumber ?? selectedPr;
+  // Own-PR is deliberately NOT guarded: fixing your own PR is the normal case.
+  const canAddress =
+    displayStream?.status === 'completed' &&
+    displayRunId !== null &&
+    addressCount > 0 &&
+    !fixRunning;
+  const addressError =
+    selectedPr !== null ? (fixes.fixErrors.get(selectedPr) ?? null) : null;
+
+  const requestAddress = useCallback(() => setAddressArmed(true), []);
+
+  const cancelAddress = useCallback(() => {
+    // Inert while an address is in flight (the dialog's Cancel is disabled too).
+    if (addressInFlight.current) return;
+    setAddressArmed(false);
+  }, []);
+
+  const confirmAddress = useCallback(() => {
+    if (addressInFlight.current) return;
+    const prNumber = addressPrNumber;
+    const runId = displayRunId;
+    const findingIds = selectedOpenFindings.map((f) => f.id);
+    if (prNumber === null || runId === null || findingIds.length === 0) return;
+    addressInFlight.current = true;
+    setAddressing(true);
+    void (async () => {
+      try {
+        const { fixId, error } = await fixes.address(prNumber, runId, findingIds);
+        // Success closes the gate (the running strip takes over via nc:pr-fix).
+        // A rejection keeps the dialog open — the per-PR fix error renders
+        // inline there — AND toasts (the post/push failure discipline). A
+        // guarded-out null (no error) stays silent.
+        if (fixId !== null) setAddressArmed(false);
+        else if (error !== null) toast.error('Could not start the fix agent', error);
+      } finally {
+        setAddressing(false);
+        addressInFlight.current = false;
+      }
+    })();
+  }, [addressPrNumber, displayRunId, selectedOpenFindings, fixes, toast]);
+
+  const pushArmedFix =
+    pushFixId !== null ? (fixes.fixes.get(pushFixId) ?? null) : null;
+
+  const cancelPush = useCallback(() => {
+    // Inert while a push is in flight (the dialog's Cancel is disabled too).
+    if (pushInFlight.current) return;
+    setPushFixId(null);
+    setPushError(null);
+  }, []);
+
+  const confirmPush = useCallback(() => {
+    if (pushFixId === null || pushInFlight.current) return;
+    const fixId = pushFixId;
+    pushInFlight.current = true;
+    setPushing(true);
+    setPushError(null);
+    void (async () => {
+      try {
+        await fixes.push(fixId);
+        toast.push({ tone: 'success', title: 'Fix pushed to the PR branch' });
+        setPushFixId(null);
+      } catch (err) {
+        // Surface BOTH inline (kept dialog) and via toast (the useToast
+        // discipline), and keep the gate open so the user can retry/cancel.
+        console.error('push_pr_fix failed', err);
+        setPushError(err instanceof Error ? err.message : String(err));
+        toast.error('Could not push the fix', err);
+      } finally {
+        setPushing(false);
+        pushInFlight.current = false;
+      }
+    })();
+  }, [pushFixId, fixes, toast]);
+
+  // --- Navigation + run actions ------------------------------------------
+  const selectPr = useCallback(
+    (prNumber: number | null) => {
+      // Selection ONLY: any in-flight run keeps streaming in the registry and
+      // shows as a badge in the list (and every fix keeps its per-PR state).
+      setSelectedPr(prNumber);
+      setViewingRunId(null);
+      setReconfiguring(false);
+      resetFindingUi();
+      // Close ALL the human gates — they were armed against the previous PR's
+      // selection/fix (a programmatic switch, e.g. preselect, can land while
+      // a dialog is open). The post gate especially must not survive: its
+      // verdict would target the NEW PR's displayed run.
+      setPostVerdict(null);
+      setPostError(null);
+      setAddressArmed(false);
+      setPushFixId(null);
+      setPushError(null);
+    },
+    [resetFindingUi],
+  );
+
+  const viewRun = useCallback(
+    (runId: string) => {
+      resetFindingUi();
+      setReconfiguring(false);
+      setViewingRunId(runId);
+      // Authoritative reload of the persisted run into the registry.
+      void selectRun(runId);
+    },
+    [resetFindingUi, selectRun],
+  );
+
+  const backToLatest = useCallback(() => {
+    resetFindingUi();
+    setViewingRunId(null);
+    setReconfiguring(false);
+  }, [resetFindingUi]);
+
+  // Plain per-render projection (MenuItem construction is trivial; the history
+  // array itself is already a fresh filter per render inside `byPr`).
+  const historyItems: MenuItem[] = (prView?.history ?? []).map((run) => ({
+    label: `${new Date(run.createdAt).toLocaleString()} · ${run.findings.length} ${
+      run.findings.length === 1 ? 'finding' : 'findings'
+    }`,
+    onClick: () => viewRun(run.id),
+  }));
+
+  // The latest selected PR, readable inside async continuations (a state read
+  // there can be a render behind).
+  const selectedPrRef = useRef(selectedPr);
+  selectedPrRef.current = selectedPr;
+
+  const onReview = useCallback(() => {
+    const prNumber = selectedPrRef.current;
+    if (prNumber === null) return;
+    resetFindingUi();
+    setStartingPrs((prev) => new Set(prev).add(prNumber));
+    void (async () => {
+      try {
+        const runId = await start(prNumber, config.orderedSelected, {
+          model: config.model,
+          effort: config.effort as EffortLevel | null,
+        });
+        // Leave config only once the run actually starts — a rejected start
+        // lands in the per-PR startErrors and config STAYS up so the banner is
+        // seen. Skip the flag clears when the user already switched PRs
+        // (selectPr reset them; clearing again could collapse the OTHER PR's
+        // freshly opened config).
+        if (runId !== null && selectedPrRef.current === prNumber) {
+          setReconfiguring(false);
+          setViewingRunId(null);
+        }
+      } finally {
+        setStartingPrs((prev) => {
+          const next = new Set(prev);
+          next.delete(prNumber);
+          return next;
+        });
+      }
+    })();
+  }, [resetFindingUi, start, config.orderedSelected, config.model, config.effort]);
+
+  const runningRunId =
+    displayStream !== null && displayStream.status === 'running'
+      ? displayStream.runId
+      : null;
+  const onCancelRun = useCallback(() => {
+    if (runningRunId === null) return;
+    void cancel(runningRunId).catch((err: unknown) => {
+      console.error('cancel_pr_review failed', err);
+      toast.error('Could not cancel the review', err);
+    });
+  }, [runningRunId, cancel, toast]);
+
+  // Plain closure (config is a fresh object each render, so memoizing over it
+  // buys nothing): "New review" re-opens config prefilled from the displayed run.
+  const startNewReview = () => {
+    config.prefill({
+      model: displayStream?.model,
+      categories: displayStream?.requestedLenses,
+    });
+    resetFindingUi();
+    setReconfiguring(true);
+  };
+
+  // Board→scan provenance navigation: a task's `sourceRef` chip landed here
+  // with a run + finding to open. Consume the target FIRST, select the run's
+  // PR, project that run's stream, and open the finding's detail panel.
+  const preselectRun = useCallback(
+    async (runId: string) => {
+      const stream = await selectRun(runId);
+      if (stream !== null && stream.prNumber !== null) {
+        setSelectedPr(stream.prNumber);
+        setViewingRunId(runId);
+      }
+    },
+    [selectRun],
+  );
+  usePreselectNavigation({
+    preselect,
+    onPreselectConsumed,
+    selectRun: preselectRun,
+    onEnter: () => {
+      setReconfiguring(false);
+      resetFindingUi();
+      // Close ALL the human gates, exactly like a manual selectPr — a
+      // preselect can land while any of the three dialogs is open against a
+      // different PR's run/fix, and this path bypasses selectPr entirely.
+      setPostVerdict(null);
+      setPostError(null);
+      setAddressArmed(false);
+      setPushFixId(null);
+      setPushError(null);
+    },
+    onOpenItem: (target) => setSelectedId(target.itemId),
+  });
+
+  // --- The assembled review-section slice ---------------------------------
+  const review: ReviewSectionProps | null =
+    selectedPr === null
+      ? null
+      : {
+          prNumber: selectedPr,
+          mode,
+          stream: mode === 'running' ? runningStream : displayStream,
+          configure: {
+            config,
+            isStarting,
+            startError,
+            onReview,
+            onBackToResults:
+              reconfiguring && displayStream !== null
+                ? () => setReconfiguring(false)
+                : null,
+          },
+          running: {
+            categories: progressCategories,
+            findingCounts: lensFindingCounts,
+            onCancel: onCancelRun,
+          },
+          results: {
+            gridFindings,
+            emptyMessage,
+            selection,
+            onToggleSelect,
+            onOpenFinding: (finding) => setSelectedId(finding.id),
+            onNewReview: startNewReview,
+            toolbar: {
+              openCount: (displayStream?.findings ?? []).filter(
+                (f) => f.status === 'open',
+              ).length,
+              onConvertAll: () =>
+                convertAll(
+                  (displayStream?.findings ?? []).filter((f) => f.status === 'open'),
+                ),
+              bulkConverting,
+              bulkProgress,
+              bulkStatusMessage,
+              bulkError,
+              selectedCount,
+              canPost,
+              requestPost,
+              ownPr,
+              addressCount,
+              canAddress,
+              fixRunning,
+              requestAddress,
+              addressError,
+            },
+            // The PR's fix strip: plain closures over `prFix` (fresh per render;
+            // the card is inert chrome, so memoizing buys nothing). The push
+            // button ARMS the gate — the actual push lives behind confirmPush.
+            fix:
+              prFix === null
+                ? null
+                : {
+                    fix: prFix,
+                    pushing: pushing && pushFixId === prFix.id,
+                    onCancel: () => {
+                      void fixes.cancel(prFix.id).catch((err: unknown) => {
+                        console.error('cancel_pr_fix failed', err);
+                        toast.error('Could not cancel the fix', err);
+                      });
+                    },
+                    onRequestPush: () => {
+                      setPushError(null);
+                      setPushFixId(prFix.id);
+                    },
+                    // Fresh review of the same PR with the last config (the
+                    // lifted RunConfig survives runs and PR switches).
+                    onReReview: onReview,
+                    onDismiss: () => fixes.dismiss(prFix.id),
+                  },
+          },
+          history: {
+            items: historyItems,
+            viewingPastRun,
+            onBackToLatest: backToLatest,
+          },
+        };
 
   return {
     hasProject,
     projectName,
-    stream,
-    phase,
-    config,
-    summary,
-    isStarting: prReview.isStarting,
-    startError: prReview.startError,
-    runHistory,
-    hasHistory: prReview.runs.length > 0,
-    progressCategories,
-    findingCounts,
-    gridFindings,
-    skeletonCount,
-    emptyMessage,
+    prs: openPrs.prs,
+    prsLoading: openPrs.loading,
+    prsError: openPrs.error,
+    refreshPrs: openPrs.refresh,
+    selectedPr,
+    selectPr,
+    runningPrs,
+    prFindingCounts,
+    selectedSummary,
+    onOpenExternal: (url: string) =>
+      void openExternal(url).catch((err: unknown) => {
+        console.error('open_external failed', err);
+        toast.error('Could not open the pull request', err);
+      }),
+    review,
     selected,
-    openFinding: (finding: ReviewFindingView) => setSelectedId(finding.id),
     closeFinding: () => setSelectedId(null),
     pending,
-    onReview: () => {
-      resetBulk();
-      setSelection(new Set());
-      // Leave the configure screen only once the run actually starts. start()
-      // performs a synchronous `gh pr diff` fetch that rejects on common inputs
-      // (missing PR, expired token, a run already in flight); on rejection it
-      // sets startError and we STAY on configure so that banner is seen —
-      // clearing reconfiguring eagerly would drop the view to the previous
-      // run's stale results, where startError is never rendered.
-      void (async () => {
-        const started = await prReview.start(
-          config.prNumberValue ?? 0,
-          config.orderedSelected,
-          config.model,
-          config.effort,
-        );
-        if (started) setReconfiguring(false);
-      })();
-    },
-    onCancel: () => void prReview.cancel(),
-    startNewRun: () => {
-      config.prefill({
-        prNumber: stream.prNumber,
-        model: stream.model,
-        categories: stream.requestedLenses,
-      });
-      setReconfiguring(true);
-    },
-    convertAll: () => convertAll(stream.findings.filter((f) => f.status === 'open')),
-    bulkConverting,
-    bulkProgress,
-    bulkStatusMessage,
-    bulkError,
-    openCount: openCount(stream.findings),
-    onConvert: (id) => void runAction('convert', () => prReview.convert(id)),
+    onConvert: (id) => void runAction('convert', () => convertFinding(id)),
     onDismiss,
-    onRestore: (id) => void runAction('restore', () => prReview.restore(id)),
+    onRestore: (id) => void runAction('restore', () => restore(id)),
     onGotoBoard,
-    selection,
-    onToggleSelect,
-    selectedCount,
-    selectedInlineCount,
-    canPost,
     postVerdict,
     posting,
     postError,
-    requestPost,
+    postPrNumber,
+    selectedCount,
+    selectedInlineCount,
     confirmPost,
     cancelPost,
+    addressArmed,
+    addressing,
+    addressError,
+    addressPrNumber,
+    addressCount,
+    confirmAddress,
+    cancelAddress,
+    pushArmedFix,
+    pushing,
+    pushError,
+    confirmPush,
+    cancelPush,
   };
 }

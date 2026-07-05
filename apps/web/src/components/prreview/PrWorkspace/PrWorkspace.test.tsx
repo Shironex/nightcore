@@ -2,17 +2,20 @@ import { composeStories } from '@storybook/react-vite';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
-import * as stories from './PrDetail.stories';
+import * as stories from './PrWorkspace.stories';
 
-const { Selected, NothingSelected, TypedNumberNotInList } = composeStories(stories);
+const { Selected, TypedNumberNotInList } = composeStories(stories);
 
-test('renders the selected PR title, labels, and description', async () => {
+test('renders the PR header: title, author, labels, and the status block', async () => {
   const screen = render(<Selected />);
   await expect
     .element(screen.getByRole('heading', { name: /youtube cookie auth/i }))
     .toBeInTheDocument();
+  await expect.element(screen.getByText('@Shironex')).toBeInTheDocument();
   await expect.element(screen.getByText('enhancement')).toBeInTheDocument();
-  await expect.element(screen.getByText(/^background$/i)).toBeInTheDocument();
+  // The status block renders from the override snapshot.
+  await expect.element(screen.getByText('Clean against base')).toBeInTheDocument();
+  await expect.element(screen.getByText(/base: main/)).toBeInTheDocument();
 });
 
 test('the open-on-GitHub button reports the PR url', async () => {
@@ -24,22 +27,12 @@ test('the open-on-GitHub button reports the PR url', async () => {
   );
 });
 
-test('toggling a lens updates the review hint', async () => {
+test('frames the description as untrusted, sanitized content', async () => {
   const screen = render(<Selected />);
   await expect
-    .element(screen.getByText(/across 5 lenses/i))
+    .element(screen.getByText(/untrusted contributor content · sanitized/i))
     .toBeInTheDocument();
-  await screen.getByRole('button', { name: /^security$/i }).click();
-  await expect
-    .element(screen.getByText(/across 4 lenses/i))
-    .toBeInTheDocument();
-});
-
-test('shows the empty prompt when nothing is selected', async () => {
-  const screen = render(<NothingSelected />);
-  await expect
-    .element(screen.getByText(/select a pull request to review/i))
-    .toBeInTheDocument();
+  await expect.element(screen.getByText(/^background$/i)).toBeInTheDocument();
 });
 
 test('a typed number not in the list still offers the review action', async () => {
