@@ -385,6 +385,95 @@ mod tests {
         assert!(f.suggested_fix.is_none());
     }
 
+    /// A `running` run for `pr_number` (the shape `start_pr_review` persists up front).
+    fn running_run(id: &str, pr_number: u64) -> PrReviewRun {
+        let mut r = run(id, vec![]);
+        r.pr_number = pr_number;
+        r.status = "running".into();
+        r
+    }
+
+    #[test]
+    fn upsert_if_idle_when_rejects_a_running_run_for_the_same_pr() {
+        let (store, _tmp) = store();
+        store
+            .upsert_if_idle_when(&running_run("r1", 7), |r| r.pr_number == 7, "busy")
+            .unwrap();
+        // A second start for the SAME PR is the duplicate-spend case — refused.
+        let err = store
+            .upsert_if_idle_when(&running_run("r2", 7), |r| r.pr_number == 7, "busy #7")
+            .unwrap_err();
+        assert_eq!(err, "busy #7");
+        assert!(
+            store.get("r2").is_none(),
+            "the losing run is never inserted"
+        );
+    }
+
+    #[test]
+    fn upsert_if_idle_when_allows_a_concurrent_run_for_a_different_pr() {
+        let (store, _tmp) = store();
+        store
+            .upsert_if_idle_when(&running_run("r1", 7), |r| r.pr_number == 7, "busy")
+            .unwrap();
+        // A DIFFERENT PR does not conflict: both reviews run concurrently.
+        store
+            .upsert_if_idle_when(&running_run("r2", 8), |r| r.pr_number == 8, "busy")
+            .unwrap();
+        assert_eq!(store.get("r1").unwrap().status, "running");
+        assert_eq!(store.get("r2").unwrap().status, "running");
+        // And a completed run for yet another PR never blocks anything.
+        assert!(store
+            .upsert_if_idle_when(&running_run("r3", 9), |r| r.pr_number == 9, "busy")
+            .is_ok());
+    }
+
+    #[test]
+    fn upsert_if_idle_still_rejects_any_running_run() {
+        // The blanket guard the OTHER scan stores rely on is unchanged: any
+        // `running` run — whatever its pr_number — blocks a store-wide insert.
+        let (store, _tmp) = store();
+        store.upsert(&running_run("r1", 7)).unwrap();
+        let err = store
+            .upsert_if_idle(&running_run("r2", 8), "busy")
+            .unwrap_err();
+        assert_eq!(err, "busy");
+    }
+
+    #[test]
+    fn upsert_if_idle_when_is_atomic_under_racing_starts_for_the_same_pr() {
+        // Two racing `start_pr_review` calls for the SAME PR: the conflict check and
+        // the insert share ONE `runs` lock, so exactly one may win — the invariant
+        // the store-wide guard had, preserved under the scoped predicate.
+        let (store, _tmp) = store();
+        let store = std::sync::Arc::new(store);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let threads: Vec<_> = (0..2)
+            .map(|i| {
+                let store = std::sync::Arc::clone(&store);
+                let barrier = std::sync::Arc::clone(&barrier);
+                std::thread::spawn(move || {
+                    let r = running_run(&format!("race-{i}"), 7);
+                    barrier.wait();
+                    store
+                        .upsert_if_idle_when(&r, |o| o.pr_number == 7, "busy")
+                        .is_ok()
+                })
+            })
+            .collect();
+        let wins = threads
+            .into_iter()
+            .map(|t| t.join().expect("thread"))
+            .filter(|&won| won)
+            .count();
+        assert_eq!(wins, 1, "exactly one racing start may pass the guard");
+        assert_eq!(
+            store.list().len(),
+            1,
+            "the loser inserted nothing (no phantom run)"
+        );
+    }
+
     #[test]
     fn set_finding_status_persists() {
         let (store, _tmp) = store();
