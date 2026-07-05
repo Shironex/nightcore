@@ -84,9 +84,13 @@ export function RunProgress({
             aria-valuemax={100}
             className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-white/[0.06]"
           >
+            {/* Determinate fill as a compositor-only transform: `scaleX` off a
+                left origin (never `width`, which reflows). The track is full-width
+                and clipped by the rounded container; the fill scales from the left.
+                The global reduced-motion guard still zeroes this CSS transition. */}
             <div
-              className="h-full rounded-full bg-primary transition-[width] duration-500 ease-out"
-              style={{ width: `${synthesizing ? 100 : pct}%` }}
+              className="h-full w-full origin-left rounded-full bg-primary transition-transform duration-500 ease-out"
+              style={{ transform: `scaleX(${synthesizing ? 1 : pct / 100})` }}
             />
             {synthesizing && (
               <span

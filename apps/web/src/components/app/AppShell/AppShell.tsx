@@ -3,6 +3,7 @@ import { lazy, Suspense } from 'react';
 import { Board, EMPTY_TRANSCRIPT, NewTaskForm } from '@/components/board';
 import { NewProjectDialog } from '@/components/new-project';
 import {
+  AnimatePresence,
   BoardIcon,
   BranchIcon,
   Button,
@@ -260,29 +261,35 @@ export function AppShell() {
               )}
             </div>
 
-            {selected !== null && (
-              <Suspense fallback={null}>
-              <TaskDetail
-                task={selected}
-                stream={board.streams[selected.id] ?? EMPTY_TRANSCRIPT}
-                anyRunning={anyRunning}
-                prompts={board.prompts[selected.id] ?? NO_PROMPTS}
-                questions={board.questions[selected.id] ?? NO_QUESTIONS}
-                gauntlet={board.gauntletResults[selected.id] ?? null}
-                gauntletRunning={board.gauntletRunning.has(selected.id)}
-                onClose={board.closeDetail}
-                // The drawer's ~25 action callbacks travel as one grouped object,
-                // pre-assembled once in the `board` controller (`detailActions`) so
-                // its identity is stable across the per-frame stream flush. Delete
-                // routes through the confirm-gated `requestDelete` (matching the
-                // card/column deletes).
-                actions={board.detailActions}
-                isActionPending={board.isActionPending}
-                // Provenance chip → the originating scan run/item (routing concern).
-                onOpenSourceRef={routing.gotoSourceRef}
-              />
-              </Suspense>
-            )}
+            {/* Drawer presence: AnimatePresence lives at the mount conditional so
+                the drawer's `m.aside` (slideIn variant) can play its exit on close.
+                TaskDetail is already loaded by the time it exits, so the Suspense
+                fallback never flashes. */}
+            <AnimatePresence>
+              {selected !== null && (
+                <Suspense fallback={null}>
+                  <TaskDetail
+                    task={selected}
+                    stream={board.streams[selected.id] ?? EMPTY_TRANSCRIPT}
+                    anyRunning={anyRunning}
+                    prompts={board.prompts[selected.id] ?? NO_PROMPTS}
+                    questions={board.questions[selected.id] ?? NO_QUESTIONS}
+                    gauntlet={board.gauntletResults[selected.id] ?? null}
+                    gauntletRunning={board.gauntletRunning.has(selected.id)}
+                    onClose={board.closeDetail}
+                    // The drawer's ~25 action callbacks travel as one grouped object,
+                    // pre-assembled once in the `board` controller (`detailActions`) so
+                    // its identity is stable across the per-frame stream flush. Delete
+                    // routes through the confirm-gated `requestDelete` (matching the
+                    // card/column deletes).
+                    actions={board.detailActions}
+                    isActionPending={board.isActionPending}
+                    // Provenance chip → the originating scan run/item (routing concern).
+                    onOpenSourceRef={routing.gotoSourceRef}
+                  />
+                </Suspense>
+              )}
+            </AnimatePresence>
           </div>
         )}
 
