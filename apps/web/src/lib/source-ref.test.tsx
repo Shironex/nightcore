@@ -29,6 +29,24 @@ test('parses each known scheme to its owning view and selection channel', () => 
   });
 });
 
+test('parses the run-level issue-triage scheme (2-segment token, empty itemId)', () => {
+  // The Rust convert mints `issue-triage:<runId>` (no item — the run IS the item).
+  // The KEY is hyphenated; the AppView it targets is not (`issuetriage`).
+  expect(parseSourceRef('issue-triage:val-7')).toEqual({
+    view: 'issuetriage',
+    kind: 'validation',
+    runId: 'val-7',
+    itemId: '',
+  });
+  // A stray third segment is tolerated and kept as the itemId.
+  expect(parseSourceRef('issue-triage:val-7:extra')).toEqual({
+    view: 'issuetriage',
+    kind: 'validation',
+    runId: 'val-7',
+    itemId: 'extra',
+  });
+});
+
 test('keeps colons inside the item id — only the first two separators are structural', () => {
   expect(parseSourceRef('insight:run-1:file.ts:12')).toEqual({
     view: 'insight',
@@ -52,6 +70,7 @@ test('labels known schemes and degrades unknown/absent ones to null', () => {
   expect(sourceRefLabel('scorecard:r:i')).toBe('Scorecard reading');
   expect(sourceRefLabel('harness:r:i')).toBe('Harness convention');
   expect(sourceRefLabel('harness-proposal:r:i')).toBe('Harness proposal');
+  expect(sourceRefLabel('issue-triage:val-7')).toBe('Issue validation');
   expect(sourceRefLabel('mystery:r:i')).toBeNull();
   expect(sourceRefLabel(null)).toBeNull();
 });

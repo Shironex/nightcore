@@ -386,6 +386,45 @@ export async function onPrReviewEvent(
   return subscribeChannel('nc:pr-review', parsePrReviewEvent, handler);
 }
 
+// --- Issue Triage (GitHub issue intake + validation) ----------------------
+
+/** The Issue Triage event family streamed over `nc:issue-triage`, narrowed from the
+ *  authoritative `NightcoreEvent` union. Like PR Review — and unlike Insight — the
+ *  convert acknowledgement (`issue-validation-converted`) is itself a `NightcoreEvent`,
+ *  so the whole channel narrows as one validated family with no separate notice
+ *  branch. This is ONE read-only session per run, so there are no per-pass events. */
+export type IssueTriageEvent = Extract<
+  NcEvent,
+  {
+    type:
+      | 'issue-validation-started'
+      | 'issue-validation-progress'
+      | 'issue-validation-completed'
+      | 'issue-validation-failed'
+      | 'issue-validation-converted';
+  }
+>;
+
+/** Narrow an unknown `nc:issue-triage` payload to an `IssueTriageEvent`. The whole
+ *  `issue-validation-*` family (including the convert acknowledgement) is a
+ *  `NightcoreEvent`, so a single `NightcoreEventSchema` validation + prefix check is
+ *  enough. */
+function parseIssueTriageEvent(value: unknown): IssueTriageEvent | null {
+  const parsed = NightcoreEventSchema.safeParse(value);
+  if (parsed.success && parsed.data.type.startsWith('issue-validation-')) {
+    return parsed.data as IssueTriageEvent;
+  }
+  return null;
+}
+
+/** Subscribe to `nc:issue-triage` streamed validation events. Returns an unlisten
+ *  function (a no-op outside Tauri). */
+export async function onIssueTriageEvent(
+  handler: (event: IssueTriageEvent) => void,
+): Promise<UnlistenFn> {
+  return subscribeChannel('nc:issue-triage', parseIssueTriageEvent, handler);
+}
+
 // --- PR fix (address review findings) --------------------------------------
 
 /** The KNOWN pr-fix lifecycle statuses (running → committing → awaiting_push →

@@ -138,6 +138,30 @@ export type { PrChangedFile } from '../generated/PrChangedFile';
 // Address-review-findings fix snapshots (ts-rs from `workflow/pr_fix/state.rs`):
 // the full state emitted on every `nc:pr-fix` change and listed by `list_pr_fixes`.
 export type { PrFixState } from '../generated/PrFixState';
+// Issue Triage (GitHub issue intake + validation) persisted shapes (ts-rs from
+// `store/issue_triage.rs`). `IssueValidationRun` reuses the shared `InsightUsage`
+// token totals; `StoredIssueValidationResult` / `StoredIssuePrAnalysis` keep their
+// enum-ish fields as `string`, so the Issue Triage view casts to the unions below.
+export type { IssueValidationRun } from '../generated/IssueValidationRun';
+export type { StoredIssuePrAnalysis } from '../generated/StoredIssuePrAnalysis';
+export type { StoredIssueValidationResult } from '../generated/StoredIssueValidationResult';
+// The issue-triage taxonomy + list/detail wire shapes come from the zod contract
+// (the `gh` seam's / engine's shape); the generated `Stored*` types keep the enum
+// fields as `string`, so the Issue Triage view casts to these unions.
+export type {
+  IssueComment,
+  IssueComplexity,
+  IssueConfidence,
+  IssueKind,
+  IssueLinkedPr,
+  IssuePrAnalysis,
+  IssuePrRecommendation,
+  IssuePrState,
+  IssueState,
+  IssueSummary,
+  IssueValidationResult,
+  IssueVerdict,
+} from '@nightcore/contracts';
 
 /** The kind preset a task runs under and the four UI permission modes are
  *  generated FROM the Rust enums (`TaskKind` / `PermissionMode` in

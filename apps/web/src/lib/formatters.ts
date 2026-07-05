@@ -42,6 +42,34 @@ export function formatCostUsd(usd: number): string {
 }
 
 /**
+ * Format a timestamp as a compact "time ago" label (`just now`, `5m`, `3h`, `2d`,
+ * `4w`, `6mo`, `2y`), for issue/comment age chips. Accepts an ISO-8601 string
+ * (GitHub's wire format) or epoch ms; an unparseable value returns `''` so the
+ * caller can omit the chip rather than render `NaN`. `now` is injectable for
+ * deterministic tests.
+ */
+export function formatRelativeTime(
+  value: string | number,
+  now: number = Date.now(),
+): string {
+  const then = typeof value === 'number' ? value : Date.parse(value);
+  if (Number.isNaN(then)) return '';
+  const seconds = Math.max(0, Math.floor((now - then) / 1000));
+  if (seconds < 45) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  const weeks = Math.floor(days / 7);
+  if (days < 30) return `${weeks}w`;
+  const months = Math.floor(days / 30);
+  if (months < 12) return `${months}mo`;
+  return `${Math.floor(days / 365)}y`;
+}
+
+/**
  * Format a millisecond elapsed span as `m:ss`, clamping negatives to zero.
  * Seconds are always zero-padded to two digits; minutes are padded only when
  * `padMinutes` is set — the board's live card timer shows `01:05`, while the

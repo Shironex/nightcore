@@ -7,6 +7,7 @@ export type AppView =
   | 'scorecard'
   | 'harness'
   | 'prreview'
+  | 'issuetriage'
   | 'projects'
   | 'settings';
 
