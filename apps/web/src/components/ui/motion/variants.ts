@@ -60,6 +60,39 @@ export const popover: Variants = {
   },
 };
 
+/** Backdrop scrim for a modal overlay — a plain opacity fade in/out. Pairs with a
+ *  panel variant (`scaleFade` for centered dialogs, `slideIn` for edge sheets). */
+export const backdrop: Variants = {
+  initial: { opacity: 0 },
+  animate: {
+    opacity: 1,
+    transition: { duration: DURATION.fast, ease: EASE.standard },
+  },
+  exit: {
+    opacity: 0,
+    transition: { duration: DURATION.fast, ease: EASE.standard },
+  },
+};
+
+/** Scale + fade for a centered dialog panel — grows in from 96%, settles out on
+ *  exit. Transform + opacity only; drive it from a `Modal`-owned `AnimatePresence`
+ *  so the panel animates BOTH mount and unmount. */
+export const scaleFade: Variants = {
+  initial: { opacity: 0, scale: 0.96, y: 8 },
+  animate: {
+    opacity: 1,
+    scale: 1,
+    y: 0,
+    transition: { duration: DURATION.base, ease: EASE.outQuint },
+  },
+  exit: {
+    opacity: 0,
+    scale: 0.98,
+    y: 6,
+    transition: { duration: DURATION.fast, ease: EASE.standard },
+  },
+};
+
 /** A container that staggers its children's `animate` reveal. Give children the
  *  `fadeRise` (or similar) variants and this parent the same state names. */
 export const stagger: Variants = {

@@ -6,7 +6,7 @@
  */
 export { MotionProvider } from './MotionProvider';
 export { DURATION, EASE } from './tokens';
-export { fadeRise, popover, slideIn, stagger } from './variants';
+export { backdrop, fadeRise, popover, scaleFade, slideIn, stagger } from './variants';
 
 // The motion/react runtime, funnelled through the ui barrel. `m` is the strict lazy
 // component proxy (never the heavy `motion`); `AnimatePresence` drives enter/exit;

@@ -33,7 +33,7 @@ export { Markdown, renderMarkdown } from './Markdown';
 export type { MenuItem, MenuProps } from './Menu';
 export { Menu } from './Menu';
 export type { ModalProps } from './Modal';
-export { Modal, useModal } from './Modal';
+export { Modal, useLastPresent, useModal } from './Modal';
 export { ModelEffortPicker } from './ModelEffortPicker';
 export type { ModelEffortPickerProps } from './ModelEffortPicker/ModelEffortPicker.types';
 export * from './motion';
