@@ -23,6 +23,21 @@ export function severityRankValue(s: Severity): number {
   return SEVERITY_ORDER.length - SEVERITY_ORDER.indexOf(s);
 }
 
+/** Order grounded findings for display: open before resolved (dismissed /
+ *  converted), then severity high→low. This exact comparator was cloned by
+ *  every scan family's results grid (Insight / Harness / PR-Review). Returns a
+ *  new array; the input is untouched. */
+export function sortBySeverityThenStatus<
+  T extends { status: string; severity: Severity },
+>(items: readonly T[]): T[] {
+  const statusRank = (i: T) => (i.status === 'open' ? 0 : 1);
+  return [...items].sort((a, b) => {
+    const s = statusRank(a) - statusRank(b);
+    if (s !== 0) return s;
+    return severityRankValue(b.severity) - severityRankValue(a.severity);
+  });
+}
+
 export interface SeverityMeta {
   label: string;
   /** Tailwind text tone for the badge. */

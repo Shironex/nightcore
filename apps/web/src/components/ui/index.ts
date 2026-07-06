@@ -22,12 +22,29 @@ export type { DetailPanelShellProps } from './DetailPanelShell';
 export { DetailLocation, DetailPanelShell, DetailSection } from './DetailPanelShell';
 export { EmptyState } from './EmptyState';
 export { FieldValue } from './FieldValue';
+export type {
+  GroundedFindingBodyProps,
+  GroundedFindingSections,
+  GroundedFindingView,
+  GroundedLifecycleFooterProps,
+} from './GroundedFindingBody';
+export {
+  GroundedFindingBody,
+  GroundedLifecycleFooter,
+  inferLanguageFromFile,
+} from './GroundedFindingBody';
 export { IconButton } from './IconButton';
 export * from './icons';
 export { IconTile } from './IconTile';
 export type { ImageDropzoneItem, ImageDropzoneProps } from './ImageDropzone';
 export { ImageDropzone } from './ImageDropzone';
 export { Kbd } from './Kbd';
+export type {
+  LensChipDescriptor,
+  LensChipGridProps,
+  ScanConfigFormProps,
+} from './LensChipGrid';
+export { chipClass, LensChipGrid, ScanConfigForm } from './LensChipGrid';
 export type { MarkdownProps } from './Markdown';
 export { Markdown, renderMarkdown } from './Markdown';
 export type { MenuItem, MenuProps } from './Menu';

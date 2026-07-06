@@ -20,7 +20,7 @@ Guardrails enforced by `@nightcore/eslint-plugin` (scoped in the root `eslint.co
 - `lib/**` is the framework-neutral leaf BELOW the rendering layer: it MUST NOT import `@/components/**` (or `motion`) — not even `components/ui`. Data flows upward from lib to components, never back down.
 
 ## The single Tauri seam
-- ONLY `apps/web/src/lib/bridge.ts` may import `@tauri-apps/api` / `@tauri-apps/plugin-*`. Every other module talks to the Rust core through `bridge.ts` — never call `invoke()`/`listen()` directly.
+- ONLY the `apps/web/src/lib/bridge/` directory may import `@tauri-apps/api` / `@tauri-apps/plugin-*` — the seam is the folder (`commands.ts` re-exports the per-domain `commands/*` modules; `events.ts` / `internal.ts` / `mocks.ts` / `types.ts`), and its test sits at `lib/bridge.test.tsx`. Every other module talks to the Rust core through `@/lib/bridge` — never call `invoke()`/`listen()` directly.
 - One command, three coupled names: the Rust `#[tauri::command]` fn is snake_case, the `invoke('...')` string must equal that fn name byte-for-byte (the string is untyped — a one-sided rename surfaces only as a runtime "command not found"), and the bridge wrapper is the camelCase of the same verb+noun (`listTasks()` → `invoke('list_tasks')`).
 - Generated Rust→TS IPC types are consumed through the bridge re-export, never imported from `./generated/*` or `**/lib/generated/*` directly. Never hand-edit `src/lib/generated/**` — change the Rust struct and regenerate via `cargo test`.
 - The SDK is never imported here — go through `@nightcore/engine`.
