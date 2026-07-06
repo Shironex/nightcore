@@ -18,12 +18,12 @@
 import type { Config, TokenUsage } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
+import { makeHeartbeat } from './observability.js';
 import {
   addUsage,
   type BaseScanCommand,
   DEFAULT_MAX_TURNS,
   EMPTY_USAGE,
-  makeHeartbeat,
   type ScanRunnerFactory,
   type ScanSessionRunner,
   type SessionFailedReason,

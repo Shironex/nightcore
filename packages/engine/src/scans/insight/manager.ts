@@ -24,6 +24,7 @@ import {
   groundFindings,
   parseFindings,
 } from '../shared/findings.js';
+import { fmtCost, fmtElapsed, fmtSecs } from '../shared/format.js';
 import {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
@@ -32,9 +33,6 @@ import {
 import {
   DEFAULT_MAX_TURNS,
   type FinalizeArgs,
-  fmtCost,
-  fmtElapsed,
-  fmtSecs,
   type ItemCompletedArgs,
   RETRY_REMINDER_ARRAY,
   type ScanFailureReason,

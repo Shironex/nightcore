@@ -30,12 +30,10 @@ import type {
   SurfaceCommand,
 } from '@nightcore/contracts';
 
+import { fmtCost, fmtElapsed, fmtSecs } from '../shared/format.js';
 import {
   DEFAULT_MAX_TURNS,
   type FinalizeArgs,
-  fmtCost,
-  fmtElapsed,
-  fmtSecs,
   type ItemCompletedArgs,
   RETRY_REMINDER_OBJECT,
   type ScanFailureReason,
