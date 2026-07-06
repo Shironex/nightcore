@@ -1,488 +1,47 @@
-/** Data + UI-state hooks for the Harness surface: `useHarness` drives the live/
- *  persisted run and lifecycle actions, `useHarnessView` resolves the full view model. */
+/** The Harness surface resolved into a single view model. This hook is a thin
+ *  composition of focused concerns, each its own feature-root module:
+ *    - the data layer         (`useHarness`)
+ *    - the shared results view  (`useScanResultsView` — tab / selection / peek)
+ *    - the proposals concern     (`useHarnessProposals`)
+ *    - the artifacts + apply/arm  (`useHarnessApply`)
+ *  plus the CONFIGURE run config, the convention-grid derivations, and the
+ *  preselect provenance wiring. The component shell renders purely from the
+ *  returned {@link HarnessViewModel}. */
 import { useCallback, useMemo, useState } from 'react';
 
-import type {
-  CategoryRunState,
-  MenuItem,
-  RunPhase,
-  RunProgressCategory,
-} from '@/components/ui';
+import type { MenuItem, RunPhase, RunProgressCategory } from '@/components/ui';
 import { useToast } from '@/components/ui';
-import {
-  applyHarnessArtifact,
-  applyHarnessProposal,
-  armHarnessGauntletCheck,
-  cancelHarnessScan,
-  type ConventionCategory,
-  convertHarnessFindingToTask,
-  convertHarnessProposal,
-  dismissHarnessArtifact,
-  dismissHarnessFinding,
-  dismissHarnessProposal,
-  type EffortLevel,
-  getHarnessRun,
-  type HarnessEvent,
-  type HarnessRun,
-  listHarnessRuns,
-  onHarnessEvent,
-  restoreHarnessArtifact,
-  restoreHarnessFinding,
-  restoreHarnessProposal,
-  startHarnessScan,
-  type Task,
-} from '@/lib/bridge';
+import type { ConventionCategory } from '@/lib/bridge';
 import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
 import {
   buildLensTabs,
   countByLens,
   countOpenItems,
   deriveRunPhase,
-  patchStreamItem,
   scanSkeletonCount,
-  seedStepState,
 } from '@/lib/scan-run';
 import { sortBySeverityThenStatus } from '@/lib/severity';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
-import type { RunConfig } from '@/lib/useRunConfig';
-import { useScanItemActions } from '@/lib/useScanItemActions';
 import { useScanResultsView } from '@/lib/useScanResultsView';
-import { useScanRun } from '@/lib/useScanRun';
 
 import type { CategoryTab } from '../CategoryTabs';
 import { ALL_CATEGORIES, CATEGORY_META } from '../harness.constants';
-import type {
-  ConventionFindingVM,
-  HarnessProposalVM,
-  ProposedArtifactVM,
-} from '../harness.types';
-import {
-  EMPTY_HARNESS_STREAM,
-  foldHarness,
-  type HarnessStream,
-  streamFromRun,
-} from '../harness-stream';
+import type { ConventionFindingVM } from '../harness.types';
+import { useHarnessApply } from '../harness-apply.hooks';
+import { useHarness } from '../harness-data.hooks';
+import { useHarnessProposals } from '../harness-proposals.hooks';
 import { useRunConfig } from '../RunControls/RunControls.hooks';
-import type { HarnessViewProps } from './HarnessView.types';
+import type {
+  HarnessSection,
+  HarnessViewModel,
+  HarnessViewProps,
+} from './HarnessView.types';
 
-/** The data layer `useHarness` exposes: the current stream, run history, start
- *  state, and the scan + finding/artifact lifecycle actions. */
-export interface UseHarnessResult {
-  stream: HarnessStream;
-  runs: HarnessRun[];
-  isStarting: boolean;
-  startError: string | null;
-  start: (
-    categories: ConventionCategory[],
-    model: string | null,
-    effort: string | null,
-  ) => Promise<void>;
-  cancel: () => Promise<void>;
-  selectRun: (runId: string) => Promise<void>;
-  dismissFinding: (findingId: string) => Promise<void>;
-  restoreFinding: (findingId: string) => Promise<void>;
-  /** Convert a convention finding into a board task (idempotent). Returns the task. */
-  convertFinding: (findingId: string) => Promise<Task | null>;
-  dismissProposal: (proposalId: string) => Promise<void>;
-  restoreProposal: (proposalId: string) => Promise<void>;
-  /** Convert a task-shaped proposal into a board task (idempotent). Returns the task. */
-  convertProposal: (proposalId: string) => Promise<Task | null>;
-  /** Apply an `apply-artifacts` proposal as a bundle (writes every artifact to disk).
-   *  Resolves on success; REJECTS with the write error (surfaced inline). */
-  applyProposal: (proposalId: string) => Promise<void>;
-  dismissArtifact: (artifactId: string) => Promise<void>;
-  restoreArtifact: (artifactId: string) => Promise<void>;
-  /** Apply an artifact to disk. Resolves on success; REJECTS with the write error
-   *  (surfaced inline by the confirm dialog) so a refused overwrite isn't swallowed. */
-  applyArtifact: (artifactId: string) => Promise<void>;
-  /** Arm a Structure-Lock check into the project's `.nightcore/harness.json` so the
-   *  gauntlet enforces it on every future task. Command is user-confirmed, not derived. */
-  armCheck: (name: string, kind: string, command: string) => Promise<void>;
-}
-
-/** Drive the Harness data layer: live `harness-*` fold for the active run,
- *  authoritative reconciliation against the persisted run on completion, and the
- *  finding/artifact lifecycle actions. */
-export function useHarness(hasProject: boolean): UseHarnessResult {
-  const scan = useScanRun<HarnessEvent, HarnessRun, HarnessStream>({
-    emptyStream: EMPTY_HARNESS_STREAM,
-    listRuns: listHarnessRuns,
-    getRun: getHarnessRun,
-    streamFromRun,
-    cancelRun: cancelHarnessScan,
-    subscribe: onHarnessEvent,
-    // The persisted run drops the failure `reason`, so keep the live fold's reason
-    // for the same run — otherwise reconciling a user cancel reverts the neutral
-    // "cancelled" notice straight back to a red failure banner.
-    reconcileStream: (run, prev) => ({
-      ...streamFromRun(run),
-      failureReason: prev.runId === run.id ? prev.failureReason : null,
-    }),
-    onEvent: (event, { activeRunId, setStream, refreshRuns, reconcile }) => {
-      if (event.type === 'artifact-applied') {
-        setStream((prev) =>
-          patchStreamItem(prev, {
-            runId: event.runId,
-            itemId: event.artifactId,
-            items: (s) => s.artifacts,
-            write: (s, artifacts) => ({ ...s, artifacts }),
-            patch: (a) => ({ ...a, status: 'applied' as const, appliedPath: event.path }),
-          }),
-        );
-        void refreshRuns();
-        return;
-      }
-      if (event.type === 'finding-converted') {
-        // patchStreamItem matches on stream.runId (NOT the activeRunId gate below)
-        // so a convert against a displayed-but-not-live run still updates in place
-        // — mirrors Insight.
-        setStream((prev) =>
-          patchStreamItem(prev, {
-            runId: event.runId,
-            itemId: event.findingId,
-            items: (s) => s.findings,
-            write: (s, findings) => ({ ...s, findings }),
-            patch: (f) => ({ ...f, status: 'converted' as const, linkedTaskId: event.taskId }),
-          }),
-        );
-        void refreshRuns();
-        return;
-      }
-      if (event.type === 'proposal-converted') {
-        setStream((prev) =>
-          patchStreamItem(prev, {
-            runId: event.runId,
-            itemId: event.proposalId,
-            items: (s) => s.proposals,
-            write: (s, proposals) => ({ ...s, proposals }),
-            patch: (p) => ({ ...p, status: 'converted' as const, linkedTaskId: event.taskId }),
-          }),
-        );
-        void refreshRuns();
-        return;
-      }
-      if (event.type === 'proposal-applied') {
-        // The bundle's per-artifact writes each emit their own `artifact-applied`
-        // notice (which flips the artifact rows); this one flips the PROPOSAL to
-        // applied.
-        setStream((prev) =>
-          patchStreamItem(prev, {
-            runId: event.runId,
-            itemId: event.proposalId,
-            items: (s) => s.proposals,
-            write: (s, proposals) => ({ ...s, proposals }),
-            patch: (p) => ({ ...p, status: 'applied' as const }),
-          }),
-        );
-        void refreshRuns();
-        return;
-      }
-      if (event.type === 'check-armed') {
-        // Arming writes only to the project's harness.json (no run/stream change);
-        // the arm action surfaces its own success toast, so this notice is a no-op.
-        return;
-      }
-      // harness-* events only apply to the run currently displayed/driven.
-      if (event.runId !== activeRunId.current) return;
-      setStream((prev) => foldHarness(prev, event));
-      if (
-        event.type === 'harness-scan-completed' ||
-        event.type === 'harness-scan-failed'
-      ) {
-        void reconcile(event.runId);
-      }
-    },
-  });
-  const { stream, setStream, runStart, refreshRuns } = scan;
-
-  const start = useCallback(
-    async (
-      categories: ConventionCategory[],
-      model: string | null,
-      effort: string | null,
-    ) => {
-      await runStart(hasProject && categories.length > 0, async () => {
-        const runId = await startHarnessScan(categories, {
-          model,
-          effort: effort as EffortLevel | null,
-        });
-        // Optimistic running state until `harness-scan-started` lands.
-        return {
-          runId,
-          optimistic: {
-            ...EMPTY_HARNESS_STREAM,
-            runId,
-            status: 'running',
-            model,
-            requestedCategories: categories,
-            categoryState: seedStepState(categories),
-          },
-        };
-      });
-    },
-    [hasProject, runStart],
-  );
-
-  // The shared dismiss/restore/convert triple, instantiated per item family.
-  // The convert mark is optimistic (the command returns a Task, not the updated
-  // run); refreshRuns reconciles history, and the `finding-converted` /
-  // `proposal-converted` notices idempotently apply the same flip for any other
-  // open view.
-  const {
-    dismiss: dismissFinding,
-    restore: restoreFinding,
-    convert: convertFinding,
-  } = useScanItemActions<HarnessRun, HarnessStream, ConventionFindingVM>({
-    runId: stream.runId,
-    setStream,
-    refreshRuns,
-    streamFromRun,
-    items: (s) => s.findings,
-    writeItems: (s, findings) => ({ ...s, findings }),
-    dismissItem: dismissHarnessFinding,
-    restoreItem: restoreHarnessFinding,
-    convert: {
-      run: convertHarnessFindingToTask,
-      mark: (f, taskId) => ({ ...f, status: 'converted' as const, linkedTaskId: taskId }),
-    },
-  });
-
-  const {
-    dismiss: dismissProposal,
-    restore: restoreProposal,
-    convert: convertProposal,
-  } = useScanItemActions<HarnessRun, HarnessStream, HarnessProposalVM>({
-    runId: stream.runId,
-    setStream,
-    refreshRuns,
-    streamFromRun,
-    items: (s) => s.proposals,
-    writeItems: (s, proposals) => ({ ...s, proposals }),
-    dismissItem: dismissHarnessProposal,
-    restoreItem: restoreHarnessProposal,
-    convert: {
-      run: convertHarnessProposal,
-      mark: (p, taskId) => ({ ...p, status: 'converted' as const, linkedTaskId: taskId }),
-    },
-  });
-
-  const applyProposal = useCallback(
-    async (proposalId: string) => {
-      if (stream.runId === null) return;
-      // Writes every bundled artifact to disk — `apply_harness_proposal` rejects on a
-      // refused overwrite (or an agent-task proposal with no artifacts); let it
-      // propagate so the confirm dialog can surface the error inline.
-      const run = await applyHarnessProposal(stream.runId, proposalId);
-      // The write succeeded. The `proposal-applied` + per-artifact `artifact-applied`
-      // notices already drive authoritative state; the run-list reconcile is
-      // best-effort, so a `listHarnessRuns` failure here must NOT re-open the dialog.
-      setStream(streamFromRun(run));
-      await refreshRuns().catch((err) => {
-        console.error('listHarnessRuns failed', err);
-      });
-    },
-    [stream.runId, setStream, refreshRuns],
-  );
-
-  const { dismiss: dismissArtifact, restore: restoreArtifact } =
-    useScanItemActions<HarnessRun, HarnessStream, ProposedArtifactVM>({
-      runId: stream.runId,
-      setStream,
-      refreshRuns,
-      streamFromRun,
-      items: (s) => s.artifacts,
-      writeItems: (s, artifacts) => ({ ...s, artifacts }),
-      dismissItem: dismissHarnessArtifact,
-      restoreItem: restoreHarnessArtifact,
-      // Artifacts have no convert-to-task; `applyArtifact` below is their write path.
-    });
-
-  const applyArtifact = useCallback(
-    async (artifactId: string) => {
-      if (stream.runId === null) return;
-      // Writes to disk — `apply_harness_artifact` rejects on a refused overwrite;
-      // let it propagate so the confirm dialog can surface the error inline.
-      const run = await applyHarnessArtifact(stream.runId, artifactId);
-      // The write succeeded — from the user's perspective the apply is DONE.
-      // The post-write run-list reconcile is best-effort (the `artifact-applied`
-      // listener already drives authoritative state), so a `listHarnessRuns`
-      // failure here must NOT surface as a write failure and re-open the confirm
-      // dialog. Isolate it in its own catch and log rather than rethrow.
-      setStream(streamFromRun(run));
-      await refreshRuns().catch((err) => {
-        console.error('listHarnessRuns failed', err);
-      });
-    },
-    [stream.runId, setStream, refreshRuns],
-  );
-
-  const armCheck = useCallback(
-    async (name: string, kind: string, command: string) => {
-      if (stream.runId === null) return;
-      // Writes only to the project's harness.json; the `check-armed` notice is a
-      // no-op for the stream, so nothing to reconcile here.
-      await armHarnessGauntletCheck(stream.runId, name, kind, command);
-    },
-    [stream.runId],
-  );
-
-  return {
-    stream,
-    runs: scan.runs,
-    isStarting: scan.isStarting,
-    startError: scan.startError,
-    start,
-    cancel: scan.cancel,
-    selectRun: scan.selectRun,
-    dismissFinding,
-    restoreFinding,
-    convertFinding,
-    dismissProposal,
-    restoreProposal,
-    convertProposal,
-    applyProposal,
-    dismissArtifact,
-    restoreArtifact,
-    applyArtifact,
-    armCheck,
-  };
-}
-
-/** The Rust check kind + suggested command shown (verbatim) when arming an eslint-class
- *  artifact as a gauntlet check. `lint-plugin` is the gauntlet's kind for an ESLint gate;
- *  `npx eslint .` is the conventional whole-repo lint the user reviews + confirms. */
-const ARM_SUGGESTION = { kind: 'lint-plugin', command: 'npx eslint .' } as const;
-
-/** Which body section is showing: the convention grid, the task-shaped proposals,
- *  the file-level artifacts, or the runtime-policy editor + injection scan. */
-export type HarnessSection = 'conventions' | 'proposals' | 'artifacts' | 'policy';
-
-/** Everything the HarnessView shell renders. `hasProject === false` is the only
- *  early-return branch; every other field is meaningful in the project view. */
-export interface HarnessViewModel {
-  hasProject: boolean;
-  projectName: string | null;
-  stream: HarnessStream;
-  isStarting: boolean;
-  startError: string | null;
-  /** Which lifecycle screen the shell renders: configure / running / results. */
-  phase: RunPhase;
-  /** Collapsed-config summary text (`⌖ Opus 4.8 · high · 8 lenses`). */
-  summary: string;
-  /** Return to CONFIGURE ("New run") with the last run's config pre-filled. */
-  reconfigure: () => void;
-  /** Lifted CONFIGURE run config (survives phase swaps, pre-fills on a new run).
-   *  The shared shape Insight uses too. */
-  config: RunConfig<ConventionCategory>;
-  /** RUNNING-screen RunProgress inputs (view-agnostic shape). */
-  progressCategories: RunProgressCategory[];
-  categoryRunState: Record<string, CategoryRunState>;
-  findingCounts: Record<string, number>;
-  synthesizing: boolean;
-  /** Progressive reveal: the finished lens peeked while others run, or `null`. */
-  peekCategory: ConventionCategory | null;
-  peekLabel: string | null;
-  peekFindings: ConventionFindingVM[];
-  openCategory: (key: string) => void;
-  clearPeek: () => void;
-  /** Run-history menu entries (newest first), each selecting that run. */
-  runHistory: MenuItem[];
-  /** Whether to surface the history affordance (≥1 persisted run). */
-  hasHistory: boolean;
-  /** Whether the profile banner should show its skeleton (scan running, no profile). */
-  profileLoading: boolean;
-  /** Which body section is active, and the toggle. */
-  section: HarnessSection;
-  setSection: (section: HarnessSection) => void;
-  /** Section-toggle badge counts: open findings, open proposals, proposed artifacts. */
-  conventionCount: number;
-  proposalCount: number;
-  artifactCount: number;
-  /** Convention-lens tabs + active tab. */
-  tabs: CategoryTab[];
-  activeTab: 'all' | ConventionCategory;
-  setActiveTab: (key: 'all' | ConventionCategory) => void;
-  gridFindings: ConventionFindingVM[];
-  skeletonCount: number;
-  emptyMessage: string;
-  /** Task-shaped proposals panel inputs (the convert-to-task units). */
-  proposals: HarnessProposalVM[];
-  proposalsLoading: boolean;
-  proposalsEmptyMessage: string;
-  /** File-level artifacts panel inputs. */
-  artifacts: ProposedArtifactVM[];
-  artifactsLoading: boolean;
-  artifactsEmptyMessage: string;
-  /** The finding open in the detail panel, or `null`. */
-  selectedFinding: ConventionFindingVM | null;
-  openFinding: (finding: ConventionFindingVM) => void;
-  closeFinding: () => void;
-  /** The proposal open in the detail panel, or `null`. */
-  selectedProposal: HarnessProposalVM | null;
-  openProposal: (proposal: HarnessProposalVM) => void;
-  closeProposal: () => void;
-  /** Whether any proposal is still convertible (drives the "Convert all" affordance). */
-  hasConvertibleProposals: boolean;
-  /** The artifact open in the detail panel, or `null`. */
-  selectedArtifact: ProposedArtifactVM | null;
-  openArtifact: (artifact: ProposedArtifactVM) => void;
-  closeArtifact: () => void;
-  /** True while a finding/artifact action (dismiss/restore) is in flight. */
-  pending: boolean;
-  /** The artifact awaiting apply confirmation, or `null` (drives the dialog). */
-  applyTarget: ProposedArtifactVM | null;
-  /** True while the apply write is in flight. */
-  applying: boolean;
-  /** The error returned by the apply write, or `null`. */
-  applyError: string | null;
-  /** Launch a scan from the lifted CONFIGURE config. */
-  onScan: () => void;
-  onCancel: () => void;
-  onConvertFinding: (findingId: string) => void;
-  onDismissFinding: (findingId: string) => void;
-  onRestoreFinding: (findingId: string) => void;
-  /** Task-shaped proposal lifecycle actions. */
-  onConvertProposal: (proposalId: string) => void;
-  /** Open the bundle-apply confirmation for an `apply-artifacts` proposal. */
-  onApplyProposal: (proposalId: string) => void;
-  onDismissProposal: (proposalId: string) => void;
-  onRestoreProposal: (proposalId: string) => void;
-  /** Convert every still-convertible proposal in one action. */
-  onConvertAllProposals: () => void;
-  /** The proposal awaiting bundle-apply confirmation, or `null` (drives the dialog). */
-  applyProposalTarget: HarnessProposalVM | null;
-  /** The repo-relative paths the bundle-apply would write (shown in the dialog). */
-  applyProposalPaths: string[];
-  /** Confirm the bundle apply (writes every referenced artifact to disk). */
-  confirmApplyProposal: () => void;
-  /** Dismiss the bundle-apply confirmation. */
-  cancelApplyProposal: () => void;
-  /** Navigate to the board (after convert-to-task / for a converted finding). */
-  onGotoBoard?: () => void;
-  onDismissArtifact: (artifactId: string) => void;
-  onRestoreArtifact: (artifactId: string) => void;
-  /** Open the apply confirmation for an artifact. */
-  requestApply: (artifactId: string) => void;
-  /** Confirm the apply (writes to disk). */
-  confirmApply: () => void;
-  /** Dismiss the apply confirmation. */
-  cancelApply: () => void;
-  /** The applied artifact awaiting arm confirmation, or `null` (drives the arm dialog). */
-  armTarget: ProposedArtifactVM | null;
-  /** The command that arming will write to the manifest (shown verbatim — the gate). */
-  armCommand: string;
-  /** Open the arm confirmation for an applied artifact. */
-  requestArm: (artifactId: string) => void;
-  /** Confirm arming (writes the check into `.nightcore/harness.json`). */
-  confirmArm: () => void;
-  /** Dismiss the arm confirmation. */
-  cancelArm: () => void;
-}
+export type { HarnessSection, HarnessViewModel } from './HarnessView.types';
 
 /** Resolve the entire Harness surface into a single view model: the live/persisted
  *  stream (via `useHarness`), the section/tab + selected finding/artifact UI state,
- *  the apply-confirm flow, and every derived list. The component shell renders
- *  purely from this. */
+ *  the apply-confirm flow, and every derived list. */
 export function useHarnessView({
   projectPath,
   projectName,
@@ -497,25 +56,21 @@ export function useHarnessView({
   const toast = useToast();
   // The shared results-view cluster: tab / finding selection / pending+runAction /
   // reconfigure / peek. Harness's extra selections (proposal / artifact) and the
-  // apply/arm confirm flows stay family-side below.
+  // apply/arm confirm flows live in their own family-side hooks below.
   const view = useScanResultsView<ConventionCategory>({
     notifyError: (title, err) => toast.error(title, err),
   });
   const { activeTab, resetTransient, runAction, startReconfigure } = view;
   const [section, setSection] = useState<HarnessSection>('conventions');
-  const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
-  const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
-  const [applyTargetId, setApplyTargetId] = useState<string | null>(null);
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [armTargetId, setArmTargetId] = useState<string | null>(null);
-  const [applyProposalTargetId, setApplyProposalTargetId] = useState<string | null>(null);
 
   // Lifted CONFIGURE run config (the shared shape Insight uses too). It lives here
   // (not in RunControls) so the config survives the CONFIGURE → RUNNING → RESULTS
   // phase swaps and pre-fills on a new run. `view.reconfiguring` is the explicit
   // "New run" override that returns RESULTS to CONFIGURE without discarding the run.
   const config = useRunConfig(!hasProject);
+
+  const proposals = useHarnessProposals({ stream, harness, runAction, toast });
+  const apply = useHarnessApply({ stream, harness, runAction, toast });
 
   // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
   // a run + item to open. Consume the target FIRST, land on that run's RESULTS in
@@ -529,7 +84,7 @@ export function useHarnessView({
     onOpenItem: ({ itemId, kind }) => {
       if (kind === 'proposal') {
         setSection('proposals');
-        setSelectedProposalId(itemId);
+        proposals.openProposalById(itemId);
       } else {
         setSection('conventions');
         view.setActiveTab('all');
@@ -624,34 +179,17 @@ export function useHarnessView({
     () => stream.findings.find((f) => f.id === view.selectedId) ?? null,
     [stream.findings, view.selectedId],
   );
-  const selectedProposal = useMemo(
-    () => stream.proposals.find((p) => p.id === selectedProposalId) ?? null,
-    [stream.proposals, selectedProposalId],
-  );
-  const selectedArtifact = useMemo(
-    () => stream.artifacts.find((a) => a.id === selectedArtifactId) ?? null,
-    [stream.artifacts, selectedArtifactId],
-  );
-  const applyTarget = useMemo(
-    () => stream.artifacts.find((a) => a.id === applyTargetId) ?? null,
-    [stream.artifacts, applyTargetId],
-  );
-  const armTarget = useMemo(
-    () => stream.artifacts.find((a) => a.id === armTargetId) ?? null,
-    [stream.artifacts, armTargetId],
-  );
-  const applyProposalTarget = useMemo(
-    () => stream.proposals.find((p) => p.id === applyProposalTargetId) ?? null,
-    [stream.proposals, applyProposalTargetId],
-  );
-  // The repo-relative paths the bundle would write (resolved from the referenced
-  // artifacts), shown verbatim in the confirm dialog so the user sees exactly what lands.
-  const applyProposalPaths = useMemo(() => {
-    if (applyProposalTarget === null) return [];
-    return applyProposalTarget.artifactIds
-      .map((id) => stream.artifacts.find((a) => a.id === id)?.targetPath)
-      .filter((p): p is string => typeof p === 'string');
-  }, [applyProposalTarget, stream.artifacts]);
+
+  const emptyMessage = useMemo(() => {
+    if (stream.status === 'idle') {
+      return 'Run a scan to surface the conventions across your codebase.';
+    }
+    if (stream.status === 'running') return 'Scanning…';
+    if (stream.status === 'failed') {
+      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
+    }
+    return 'No conventions in this lens.';
+  }, [stream.status, stream.error]);
 
   const runHistory: MenuItem[] = useMemo(
     () =>
@@ -665,120 +203,6 @@ export function useHarnessView({
       })),
     [harness, resetTransient],
   );
-
-  const emptyMessage = useMemo(() => {
-    if (stream.status === 'idle') {
-      return 'Run a scan to surface the conventions across your codebase.';
-    }
-    if (stream.status === 'running') return 'Scanning…';
-    if (stream.status === 'failed') {
-      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
-    }
-    return 'No conventions in this lens.';
-  }, [stream.status, stream.error]);
-
-  const proposalsEmptyMessage = useMemo(() => {
-    if (stream.status === 'idle') {
-      return 'Run a scan to synthesize task-shaped proposals from your conventions.';
-    }
-    if (stream.status === 'failed') {
-      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
-    }
-    return 'No proposals synthesized for this scan.';
-  }, [stream.status, stream.error]);
-
-  const artifactsEmptyMessage = useMemo(() => {
-    if (stream.status === 'idle') {
-      return 'Run a scan to synthesize a proposed harness from your conventions.';
-    }
-    if (stream.status === 'failed') {
-      return `Scan failed${stream.error !== null ? `: ${stream.error}` : ''}.`;
-    }
-    return 'No harness artifacts proposed for this scan.';
-  }, [stream.status, stream.error]);
-
-  const confirmApply = useCallback(() => {
-    if (applyTargetId === null) return;
-    const id = applyTargetId;
-    setApplying(true);
-    setApplyError(null);
-    void (async () => {
-      try {
-        await harness.applyArtifact(id);
-        setApplyTargetId(null);
-      } catch (err) {
-        setApplyError(err instanceof Error ? err.message : String(err));
-      } finally {
-        setApplying(false);
-      }
-    })();
-  }, [applyTargetId, harness]);
-
-  const cancelApply = useCallback(() => {
-    if (applying) return;
-    setApplyTargetId(null);
-    setApplyError(null);
-  }, [applying]);
-
-  const confirmArm = useCallback(() => {
-    const target = stream.artifacts.find((a) => a.id === armTargetId) ?? null;
-    if (target === null) return;
-    const name = target.groupTitle ?? target.title;
-    setArmTargetId(null);
-    void runAction('arm gauntlet check', async () => {
-      await harness.armCheck(name, ARM_SUGGESTION.kind, ARM_SUGGESTION.command);
-      toast.push({
-        tone: 'success',
-        title: 'Structure-Lock check armed',
-        description: `${name} now runs before every task in this project.`,
-      });
-    });
-  }, [stream.artifacts, armTargetId, runAction, harness, toast]);
-
-  const cancelArm = useCallback(() => setArmTargetId(null), []);
-
-  // Bundle-apply confirmation: writing every referenced artifact to disk is a
-  // consequential action, so it goes through a confirm dialog (like arm-check). On
-  // confirm, `runAction` surfaces any partial-failure/agent-task error as a toast.
-  const confirmApplyProposal = useCallback(() => {
-    if (applyProposalTargetId === null) return;
-    const id = applyProposalTargetId;
-    const count = applyProposalPaths.length;
-    setApplyProposalTargetId(null);
-    void runAction('apply proposal bundle', async () => {
-      await harness.applyProposal(id);
-      toast.push({
-        tone: 'success',
-        title: 'Proposal applied',
-        description: `${count} ${count === 1 ? 'artifact' : 'artifacts'} written to disk.`,
-      });
-    });
-  }, [applyProposalTargetId, applyProposalPaths.length, runAction, harness, toast]);
-
-  const cancelApplyProposal = useCallback(() => setApplyProposalTargetId(null), []);
-
-  // Convert every still-convertible proposal (status `proposed`) in one action, mirroring
-  // Insight's convert-all. Sequential so a mid-flight failure surfaces without racing the
-  // store; the `proposal-converted` notice keeps the stream in sync as each lands.
-  const convertibleProposals = useMemo(
-    () => stream.proposals.filter((p) => p.status === 'proposed'),
-    [stream.proposals],
-  );
-  const onConvertAllProposals = useCallback(() => {
-    if (convertibleProposals.length === 0) return;
-    void runAction('convert all proposals', async () => {
-      for (const p of convertibleProposals) {
-        await harness.convertProposal(p.id);
-      }
-      toast.push({
-        tone: 'success',
-        title: 'Proposals converted',
-        description: `${convertibleProposals.length} ${
-          convertibleProposals.length === 1 ? 'proposal' : 'proposals'
-        } converted to board tasks.`,
-      });
-    });
-  }, [convertibleProposals, runAction, harness, toast]);
 
   return {
     hasProject,
@@ -805,61 +229,58 @@ export function useHarnessView({
     section,
     setSection,
     conventionCount: countOpenItems(stream.findings),
-    proposalCount: stream.proposals.filter((p) => p.status === 'proposed').length,
-    artifactCount: stream.artifacts.filter((a) => a.status === 'proposed').length,
+    proposalCount: proposals.proposalCount,
+    artifactCount: apply.artifactCount,
     tabs,
     activeTab,
     setActiveTab: view.setActiveTab,
     gridFindings,
     skeletonCount,
     emptyMessage,
-    proposals: stream.proposals,
-    proposalsLoading: stream.status === 'running' && stream.proposals.length === 0,
-    proposalsEmptyMessage,
-    artifacts: stream.artifacts,
-    artifactsLoading: stream.status === 'running' && stream.artifacts.length === 0,
-    artifactsEmptyMessage,
+    proposals: proposals.proposals,
+    proposalsLoading: proposals.proposalsLoading,
+    proposalsEmptyMessage: proposals.proposalsEmptyMessage,
+    artifacts: apply.artifacts,
+    artifactsLoading: apply.artifactsLoading,
+    artifactsEmptyMessage: apply.artifactsEmptyMessage,
     selectedFinding,
     openFinding: (finding: ConventionFindingVM) => view.setSelectedId(finding.id),
     closeFinding: () => view.setSelectedId(null),
-    selectedProposal,
-    openProposal: (proposal: HarnessProposalVM) => setSelectedProposalId(proposal.id),
-    closeProposal: () => setSelectedProposalId(null),
-    hasConvertibleProposals: convertibleProposals.length > 0,
-    selectedArtifact,
-    openArtifact: (artifact: ProposedArtifactVM) => setSelectedArtifactId(artifact.id),
-    closeArtifact: () => setSelectedArtifactId(null),
+    selectedProposal: proposals.selectedProposal,
+    openProposal: proposals.openProposal,
+    closeProposal: proposals.closeProposal,
+    hasConvertibleProposals: proposals.hasConvertibleProposals,
+    selectedArtifact: apply.selectedArtifact,
+    openArtifact: apply.openArtifact,
+    closeArtifact: apply.closeArtifact,
     pending: view.pending,
-    applyTarget,
-    applying,
-    applyError,
+    applyTarget: apply.applyTarget,
+    applying: apply.applying,
+    applyError: apply.applyError,
     onScan,
     onCancel: () => void harness.cancel(),
     onConvertFinding: (id) => void runAction('convert convention', () => harness.convertFinding(id)),
     onDismissFinding: (id) => void runAction('dismiss convention', () => harness.dismissFinding(id)),
     onRestoreFinding: (id) => void runAction('restore convention', () => harness.restoreFinding(id)),
-    onConvertProposal: (id) => void runAction('convert proposal', () => harness.convertProposal(id)),
-    onApplyProposal: (id) => setApplyProposalTargetId(id),
-    onDismissProposal: (id) => void runAction('dismiss proposal', () => harness.dismissProposal(id)),
-    onRestoreProposal: (id) => void runAction('restore proposal', () => harness.restoreProposal(id)),
-    onConvertAllProposals,
-    applyProposalTarget,
-    applyProposalPaths,
-    confirmApplyProposal,
-    cancelApplyProposal,
+    onConvertProposal: proposals.onConvertProposal,
+    onApplyProposal: proposals.onApplyProposal,
+    onDismissProposal: proposals.onDismissProposal,
+    onRestoreProposal: proposals.onRestoreProposal,
+    onConvertAllProposals: proposals.onConvertAllProposals,
+    applyProposalTarget: proposals.applyProposalTarget,
+    applyProposalPaths: proposals.applyProposalPaths,
+    confirmApplyProposal: proposals.confirmApplyProposal,
+    cancelApplyProposal: proposals.cancelApplyProposal,
     onGotoBoard,
-    onDismissArtifact: (id) => void runAction('dismiss artifact', () => harness.dismissArtifact(id)),
-    onRestoreArtifact: (id) => void runAction('restore artifact', () => harness.restoreArtifact(id)),
-    requestApply: (id) => {
-      setApplyError(null);
-      setApplyTargetId(id);
-    },
-    confirmApply,
-    cancelApply,
-    armTarget,
-    armCommand: ARM_SUGGESTION.command,
-    requestArm: (id) => setArmTargetId(id),
-    confirmArm,
-    cancelArm,
+    onDismissArtifact: apply.onDismissArtifact,
+    onRestoreArtifact: apply.onRestoreArtifact,
+    requestApply: apply.requestApply,
+    confirmApply: apply.confirmApply,
+    cancelApply: apply.cancelApply,
+    armTarget: apply.armTarget,
+    armCommand: apply.armCommand,
+    requestArm: apply.requestArm,
+    confirmArm: apply.confirmArm,
+    cancelArm: apply.cancelArm,
   };
 }
