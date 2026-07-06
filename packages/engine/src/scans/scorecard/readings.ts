@@ -12,6 +12,7 @@ import {
   type ScorecardDimension,
   type ScorecardEvidence,
   type ScorecardGrade,
+  ScorecardGradeSchema,
   type ScorecardReading,
   ScorecardReadingSchema,
 } from '@nightcore/contracts';
@@ -27,8 +28,9 @@ import {
   normalizeFile,
 } from '../shared/findings.js';
 
-/** The valid grade letters. */
-const GRADES: readonly ScorecardGrade[] = ['A', 'B', 'C', 'D', 'E', 'F'];
+/** The valid grade letters, DERIVED from the contract enum (never re-listed as
+ *  literals) so a scale change is picked up automatically. */
+const GRADES: readonly ScorecardGrade[] = ScorecardGradeSchema.options;
 
 /** Validate a raw grade to a canonical letter, or `undefined` when the model returns
  *  something off-scale (`"B+"`, `"PASS"`, `"N/A"`, `"great"`). We deliberately do NOT

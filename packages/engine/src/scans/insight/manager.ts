@@ -27,10 +27,7 @@ import {
 import {
   ANALYSIS_ALLOWED_TOOLS,
   ANALYSIS_DISALLOWED_TOOLS,
-  type AnalysisPreset,
-  analysisPreset,
   ANALYZER_PERSONA,
-  outputContract,
 } from '../shared/presets.js';
 import {
   DEFAULT_MAX_TURNS,
@@ -47,6 +44,11 @@ import {
   type ScanSessionRunner,
   type SessionConfigParts,
 } from '../shared/scan-manager.js';
+import {
+  type AnalysisPreset,
+  analysisPreset,
+  outputContract,
+} from './presets.js';
 
 /** The `start-analysis` command variant (the zod schema is exported as a value, so
  *  the engine narrows the union for the type). */

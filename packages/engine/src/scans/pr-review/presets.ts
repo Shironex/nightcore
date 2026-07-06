@@ -13,29 +13,16 @@
  */
 import type { ReviewLens } from '@nightcore/contracts';
 
-/** Read-only toolset every lens pass (and the validator pass) is allowed. No
- *  Write/Edit/Bash/Web — the reviewer inspects, never mutates, and never runs shell
- *  or network. Identical value-set to the Insight analyzer's toolset. */
-export const PR_REVIEW_ALLOWED_TOOLS: readonly string[] = [
-  'Read',
-  'Glob',
-  'Grep',
-  'LS',
-  'TodoWrite',
-] as const;
-
-/** Tools explicitly denied even if some preset/setting would allow them. There is no
- *  execution surface in a PR review — the diff is data, never something we run. */
-export const PR_REVIEW_DISALLOWED_TOOLS: readonly string[] = [
-  'Edit',
-  'Write',
-  'NotebookEdit',
-  'MultiEdit',
-  'ApplyPatch',
-  'Bash',
-  'WebFetch',
-  'WebSearch',
-] as const;
+/** Read-only toolset every lens pass (and the validator/verdict passes) is allowed,
+ *  reused VERBATIM from the shared analyzer presets (no Write/Edit/Bash/Web — the
+ *  reviewer inspects, never mutates, and never runs shell or network; there is no
+ *  execution surface in a PR review — the diff is data, never something we run), so
+ *  PR-review shares one read-only discipline with the other scans. Mirrors the
+ *  scorecard/issue-triage aliases. */
+export {
+  ANALYSIS_ALLOWED_TOOLS as PR_REVIEW_ALLOWED_TOOLS,
+  ANALYSIS_DISALLOWED_TOOLS as PR_REVIEW_DISALLOWED_TOOLS,
+} from '../shared/presets.js';
 
 export interface PrReviewPreset {
   lens: ReviewLens;

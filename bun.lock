@@ -125,9 +125,6 @@
     "packages/session-fold": {
       "name": "@nightcore/session-fold",
       "version": "0.0.0",
-      "dependencies": {
-        "@nightcore/contracts": "workspace:*",
-      },
     },
     "packages/shared": {
       "name": "@nightcore/shared",
