@@ -3,8 +3,8 @@
  *  board-appearance / background-panel hooks live in `Board.appearance.hooks.ts`. */
 import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'react';
 
-import type { Task } from '@/lib/bridge';
-import { useWorktreesContext } from '@/lib/worktrees-context';
+import type { Task, WorktreeInfo } from '@/lib/bridge';
+import { type ActiveWorktree, useWorktreesContext } from '@/lib/worktrees-context';
 
 import type { BreakerInfo } from '../chrome';
 import { type ColumnDef,COLUMNS } from '../status';
@@ -52,6 +52,25 @@ export function matchesQuery(task: Task, query: string): boolean {
   return `${task.title} ${task.description}`.toLowerCase().includes(q);
 }
 
+/** Whether the active worktree selection is a "ghost" — its branch no longer
+ *  exists on any live worktree directory OR any task. A merge (or a discard) removes
+ *  the worktree AND clears the owning task's branch (`t.branch = None`), so the tab
+ *  vanishes but the shared selection lingers, and `filterTasksByWorktree` then scopes
+ *  the board to a dead branch → every column renders empty until the user switches
+ *  projects. Main (`null`) is never a ghost. Mirrors the union `useWorktreeTabs`
+ *  builds tabs from (live worktrees ∪ task branches), so "no tab exists for `active`"
+ *  ⇔ ghost — meaning a still-live worktree, or a task whose worktree dir hasn't
+ *  materialized yet, is correctly NOT treated as stale. */
+export function isGhostWorktree(
+  active: ActiveWorktree,
+  tasks: Task[],
+  worktrees: WorktreeInfo[],
+): boolean {
+  if (active === null) return false;
+  if (worktrees.some((worktree) => worktree.branch === active)) return false;
+  return !tasks.some((task) => task.branch === active);
+}
+
 /** The Board view hook's result: the search query, its setter, the
  *  worktree-scoped, keyword-filtered, grouped columns, and one stable clear-handler
  *  per column key. */
@@ -75,8 +94,17 @@ export function useBoardView(
   tasks: Task[],
   onClearColumn: (statuses: Task['status'][]) => void,
 ): BoardViewState {
-  const { activeWorktree } = useWorktreesContext();
+  const { activeWorktree, worktrees, setActiveWorktree } = useWorktreesContext();
   const [search, setSearch] = useState('');
+
+  // Self-heal a ghost selection back to Main. Merge (and discard) remove the active
+  // worktree and clear its task's branch, but — unlike the switcher's own remove and
+  // the project-switch path — nothing resets the scope, so the board stays pinned to
+  // the dead branch and shows empty columns. Reset once the branch is gone from BOTH
+  // the live worktrees and every task; the effect no-ops (and can't loop) once null.
+  useEffect(() => {
+    if (isGhostWorktree(activeWorktree, tasks, worktrees)) setActiveWorktree(null);
+  }, [activeWorktree, tasks, worktrees, setActiveWorktree]);
   // Decouple the O(n log n) filter/group/sort from each keystroke. The input stays
   // controlled on `search` (updated urgently, so typing never lags), while the
   // columns memo reads a DEFERRED copy: React commits the input immediately and
