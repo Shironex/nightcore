@@ -215,8 +215,86 @@ export default tseslint.config(
       'nightcore/component-folder-structure': 'error',
       'nightcore/no-state-in-component-body': 'error',
       // ui = shadcn primitives (the cross-feature escape hatch, skipped dir).
-      'nightcore/no-cross-feature-imports': ['error', { sharedFeatures: ['ui'] }],
+      // Type-only cross-feature imports are banned too (issue #55): type-level
+      // coupling ripples exactly like runtime coupling, and the tree is clean.
+      'nightcore/no-cross-feature-imports': [
+        'error',
+        { sharedFeatures: ['ui'], allowTypeImports: false },
+      ],
       'nightcore/max-hooks-per-file': 'error',
+      'nightcore/max-hook-return-surface': 'error',
+      'nightcore/max-props-per-component': 'error',
+      'nightcore/no-prop-drilling': 'error',
+    },
+  },
+  // Freeze-at-worst carve-out for `nightcore/max-props-per-component` (issue
+  // #51): the 6 pre-existing wide props contracts (Board 39, Column 22,
+  // TaskDetailChrome 19, TaskCard 16, Sidebar 16, TaskDetail 14) may not grow
+  // past 40. The board refactor deletes entries from this list — it only
+  // shrinks; severity stays `error` (`no-warn-severity` is ciCritical).
+  {
+    files: [
+      'apps/web/src/components/app/Sidebar/Sidebar.types.ts',
+      'apps/web/src/components/board/Board/Board.types.ts',
+      'apps/web/src/components/board/Column/Column.types.ts',
+      'apps/web/src/components/board/TaskCard/TaskCard.types.ts',
+      'apps/web/src/components/board/TaskDetail/TaskDetail.types.ts',
+    ],
+    rules: {
+      'nightcore/max-props-per-component': ['error', { max: 40 }],
+    },
+  },
+  // Feature-root data/util modules (`components/<feature>/*.ts` — streams,
+  // status folds, fixtures, barrels) are NOT component shells, so the
+  // structural rules (folder structure, state-in-body) don't apply — but they
+  // ARE feature code (issue #55): they may not import another feature's
+  // internals (type-only included) and their hook exports are budgeted.
+  {
+    files: [FEATURE_ROOT_FILES],
+    rules: {
+      'nightcore/no-cross-feature-imports': [
+        'error',
+        { sharedFeatures: ['ui'], allowTypeImports: false },
+      ],
+      'nightcore/max-hooks-per-file': 'error',
+    },
+  },
+  // Freeze-at-worst carve-out for `nightcore/max-hook-return-surface` (issue
+  // #53): the 7 pre-existing god-controller returns (HarnessView 77, AppShell
+  // 54, PrReviewView 54, IssueTriageView 44, InsightView 40, NewTaskForm 33,
+  // ScorecardView 23) may not grow past 80. The board-state + web-struct
+  // refactors dismantle these controllers and delete entries — the list only
+  // shrinks; severity stays `error` (`no-warn-severity` is ciCritical).
+  {
+    files: [
+      'apps/web/src/components/app/AppShell/AppShell.hooks.ts',
+      'apps/web/src/components/board/NewTaskForm/NewTaskForm.hooks.ts',
+      'apps/web/src/components/harness/HarnessView/HarnessView.hooks.ts',
+      'apps/web/src/components/insight/InsightView/InsightView.hooks.ts',
+      'apps/web/src/components/issues/IssueTriageView/IssueTriageView.hooks.ts',
+      'apps/web/src/components/prreview/PrReviewView/PrReviewView.hooks.ts',
+      'apps/web/src/components/scorecard/ScorecardView/ScorecardView.hooks.ts',
+    ],
+    rules: {
+      'nightcore/max-hook-return-surface': ['error', { max: 80 }],
+    },
+  },
+  // Carve-out for `nightcore/no-prop-drilling` (issue #52): the pre-existing
+  // forwarded-bundle chains (Board→Column 14, Column→TaskCard 9,
+  // TaskDetail→TaskDetailChrome 9, ValidateControls→ModelEffortPicker 4,
+  // WorktreeManager→WorktreeRow 4). The board refactor dismantles these chains
+  // and deletes entries from this list — it only shrinks. `off` is the only
+  // legal suppression (`no-warn-severity` is ciCritical).
+  {
+    files: [
+      'apps/web/src/components/board/Board/Board.tsx',
+      'apps/web/src/components/board/Column/Column.tsx',
+      'apps/web/src/components/board/TaskDetail/TaskDetail.tsx',
+      'apps/web/src/components/issues/ValidateControls/ValidateControls.tsx',
+      'apps/web/src/components/worktree/WorktreeManager/WorktreeManager.tsx',
+    ],
+    rules: {
+      'nightcore/no-prop-drilling': 'off',
     },
   },
   // Composition roots (the app shell) wire features together by design, so the
@@ -228,6 +306,53 @@ export default tseslint.config(
     ignores: [`${COMPONENTS_GLOB}/*.{stories,test}.{ts,tsx}`, FEATURE_ROOT_FILES],
     rules: {
       'nightcore/no-cross-feature-imports': 'off',
+    },
+  },
+  // File-size governance (issue #50) — the in-editor half of a two-cap split:
+  //   * ESLint core `max-lines` at 500 (HERE) = blunt feedback while typing;
+  //   * lint-meta `web-file-size-ratchet` at 400 (ciCritical, baselined) = the
+  //     tightening story for ALL web sources.
+  // The two caps move together — never "fix" one without the other. Phase-in is
+  // a freeze-at-worst carve-out block (below) + the committed ratchet baseline,
+  // NEVER 'warn' (`no-warn-severity` is ciCritical).
+  {
+    files: ['apps/web/src/components/**/*.tsx'],
+    ignores: ['apps/web/src/components/**/*.{stories,test}.tsx'],
+    rules: {
+      'max-lines': [
+        'error',
+        { max: 500, skipBlankLines: false, skipComments: false },
+      ],
+    },
+  },
+  {
+    files: ['apps/web/src/**/*.hooks.ts'],
+    rules: {
+      'max-lines': [
+        'error',
+        { max: 500, skipBlankLines: false, skipComments: false },
+      ],
+    },
+  },
+  // Freeze-at-worst carve-out: the 7 pre-existing offenders may not grow past
+  // 1400 lines (worst today: PrReviewView.hooks.ts at ~1300). Each refactor
+  // that lands deletes its file from this list AND its
+  // baselines/web-file-size-ratchet.json entry — the list only shrinks.
+  {
+    files: [
+      'apps/web/src/components/app/AppShell/AppShell.hooks.ts',
+      'apps/web/src/components/board/TaskDetail/TaskDetail.tsx',
+      'apps/web/src/components/harness/HarnessView/HarnessView.hooks.ts',
+      'apps/web/src/components/insight/InsightView/InsightView.hooks.ts',
+      'apps/web/src/components/issues/IssueTriageView/IssueTriageView.hooks.ts',
+      'apps/web/src/components/prreview/PrReviewView/PrReviewView.hooks.ts',
+      'apps/web/src/components/settings/SettingsView/SettingsView.tsx',
+    ],
+    rules: {
+      'max-lines': [
+        'error',
+        { max: 1400, skipBlankLines: false, skipComments: false },
+      ],
     },
   },
   // Accessibility gate (a11y). Enforces accessible-name, keyboard-handler, and
