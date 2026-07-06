@@ -17,7 +17,9 @@ use tokio::process::ChildStdin;
 use tokio::sync::oneshot;
 use tokio::sync::Mutex as AsyncMutex;
 
-use crate::contracts::{AnswerQuestionAnswerUnion, SurfaceQuery, WireImage};
+use crate::contracts::{
+    AnswerQuestionAnswerUnion, AutonomyLevel, ProviderCapabilities, SurfaceQuery, WireImage,
+};
 
 /// A driveable agent backend. Today: the Bun Claude sidecar. Later: a Codex
 /// sidecar speaking the same protocol — selected by config, not by branching in
@@ -37,9 +39,11 @@ pub trait Provider: Send + Sync {
     /// it. The session id arrives asynchronously via an event, not this return.
     ///
     /// The parameters mirror the `start-session` wire fields 1:1 (prompt, model,
-    /// effort, cwd, permissionMode, kind, plus the SDK-guardrail fields maxTurns/
+    /// effort, cwd, autonomy, kind, plus the SDK-guardrail fields maxTurns/
     /// maxBudgetUsd/resumeSessionId); a struct would just re-pack the protocol
-    /// payload, so the flat list is the clearer seam here.
+    /// payload, so the flat list is the clearer seam here. `autonomy` is the neutral
+    /// provider vocabulary ([`AutonomyLevel`]); the provider lowers it to its own
+    /// primitive at the wire boundary (for Claude, an SDK permission mode).
     #[allow(clippy::too_many_arguments)]
     async fn start_session(
         &self,
@@ -48,7 +52,7 @@ pub trait Provider: Send + Sync {
         model: Option<String>,
         effort: Option<String>,
         cwd: Option<PathBuf>,
-        permission_mode: Option<String>,
+        autonomy: Option<AutonomyLevel>,
         kind: &str,
         images: Vec<WireImage>,
         guardrails: Guardrails,
@@ -57,10 +61,12 @@ pub trait Provider: Send + Sync {
     /// Best-effort interrupt of a run by session id.
     async fn interrupt(&self, session_id: u64) -> Result<(), String>;
 
-    /// Change a live run's permission mode (SDK `setPermissionMode`). Used by the
-    /// plan-approval gate to switch the SAME session to `acceptEdits` so it builds
-    /// the approved plan without re-prompting.
-    async fn set_permission_mode(&self, session_id: u64, mode: &str) -> Result<(), String>;
+    /// Change a live run's autonomy ceiling. Carries the neutral [`AutonomyLevel`];
+    /// the provider bridges it to its own primitive (for Claude, an SDK
+    /// `setPermissionMode` control request). Used by the plan-approval gate to switch
+    /// the SAME session to `auto-accept` so it builds the approved plan without
+    /// re-prompting.
+    async fn set_autonomy(&self, session_id: u64, autonomy: AutonomyLevel) -> Result<(), String>;
 
     /// Decide a pending permission request for a run by sending an
     /// `approve-permission` SurfaceCommand. An `allow` echoes `updated_input` back
@@ -116,6 +122,30 @@ pub trait Provider: Send + Sync {
             dir,
         };
         self.query(query).await
+    }
+
+    /// Read the provider's static [`ProviderCapabilities`] descriptor — the
+    /// capability matrix the UI/orchestration degrade from (issue #18). Default-
+    /// implemented over [`Provider::query`] with a `get-capabilities` `SurfaceQuery`,
+    /// so the Bun sidecar inherits it unchanged: the engine answers straight from the
+    /// active provider's own `capabilities()`, so the Rust core SINGLE-SOURCES the
+    /// truthful descriptor from the engine rather than duplicating the matrix here. A
+    /// future provider that can't self-report overrides this method — WITHOUT a
+    /// `match provider` branch in the core. Returns the codegen'd descriptor.
+    // Deliberate provider-seam API (the capability-degradation override point); no
+    // Rust consumer wires it yet, mirroring `provider_config` above.
+    #[allow(dead_code)]
+    async fn capabilities(&self) -> Result<ProviderCapabilities, String> {
+        let reply = self
+            .query(SurfaceQuery::GetCapabilities {
+                // `requestId` is overwritten by `query` with a fresh uuid.
+                request_id: String::new(),
+            })
+            .await?;
+        let caps = reply
+            .get("capabilities")
+            .ok_or("capabilities reply missing its descriptor")?;
+        serde_json::from_value(caps.clone()).map_err(|e| e.to_string())
     }
 
     /// Fulfill a pending query reply. Called by the reader on a `query-result`

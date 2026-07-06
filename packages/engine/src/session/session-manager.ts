@@ -147,11 +147,11 @@ export class SessionManager {
       case 'set-model':
         await session.runner.setModel(command.model);
         break;
-      case 'set-permission-mode':
-        // The wire command still carries a permission mode; the neutral session
-        // control bridges it to the provider's autonomy primitive (Phase 3 renames
-        // the wire command to autonomy).
-        await session.runner.setAutonomy(command.mode);
+      case 'set-autonomy':
+        // The wire command carries the neutral autonomy vocabulary; the session
+        // control bridges it to the provider's own primitive (for Claude, an SDK
+        // permission-mode control request) inside the provider.
+        await session.runner.setAutonomy(command.autonomy);
         break;
       case 'approve-permission':
         if (!session.runner.approvePermission(command.requestId, command.decision))
@@ -282,6 +282,18 @@ export class SessionManager {
           providerConfig,
         };
       }
+      case 'get-capabilities': {
+        // Provider-static: answer straight from the provider's descriptor (no probe,
+        // no project dir), so the Rust core single-sources the truthful capability
+        // matrix from the engine instead of duplicating it (issue #18).
+        return {
+          type: 'query-result',
+          requestId,
+          ok: true,
+          kind: 'capabilities',
+          capabilities: this.provider.capabilities(),
+        };
+      }
     }
   }
 
@@ -348,8 +360,8 @@ export class SessionManager {
       maxTurns,
       ...(command.images !== undefined ? { images: command.images } : {}),
       ...(effort !== undefined ? { effort } : {}),
-      ...(command.permissionMode !== undefined
-        ? { permissionModeOverride: command.permissionMode }
+      ...(command.autonomy !== undefined
+        ? { autonomyOverride: command.autonomy }
         : {}),
       ...(command.kind !== undefined ? { kind: command.kind } : {}),
       ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),

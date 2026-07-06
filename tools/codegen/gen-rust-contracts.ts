@@ -42,6 +42,7 @@ import { z } from 'zod';
 // specifiers to their `.ts` sources, so the relative source entry works as-is.
 import {
   CHANNELS,
+  KnownModelSchema,
   NightcoreEventSchema,
   SurfaceCommandSchema,
   SurfaceQuerySchema,
@@ -312,6 +313,10 @@ const STRUCT_NAMES: Record<string, string> = {
   'error|mcpServers|skills|status|subagents': 'ProviderConfigSection',
   'extrasStatus|mcp|model|outputStyle|permissionMode|projectPath|providerId|providerLabel|skills|subagents':
     'ProviderConfigSnapshot',
+  // The provider capability descriptor (issue #18) — carried on the `capabilities`
+  // slot of a `query-result`, so the Rust core single-sources it from the engine.
+  'autonomyLevels|costTelemetry|id|label|supportsAskUserQuestion|supportsEffort|supportsFileCheckpointing|supportsHooks|supportsMcp|supportsPlanMode|supportsSessionResume|supportsSessionStore|supportsSettingSources|supportsStructuredOutput':
+    'ProviderCapabilities',
   // Insight (codebase analysis) shapes.
   'endLine|file|startLine|symbol': 'FindingLocation',
   'affectedFiles|category|codeAfter|codeBefore|confidence|description|effort|fingerprint|id|location|rationale|severity|suggestion|tags|title':
@@ -424,6 +429,12 @@ const ENUM_NAMES: Record<string, string> = {
   // (distinct value-set from the SDK `PermissionMode` above, so no collision).
   'bypass|auto-accept|ask|plan': 'AutonomyLevel',
   'full|tokens-only|none': 'CostTelemetry',
+  // The curated known-model family list (issue #18, item 4). `model` rides the wire
+  // as a free `z.string()` (the SDK accepts any id), so this enum is NOT wire-
+  // reachable — it is force-emitted below so the Rust settings layer consumes the
+  // codegen'd `KnownModel` (the canonical long ids + the default) instead of
+  // re-listing the family strings, single-sourcing the catalog to the contract.
+  'claude-opus-4-8|claude-sonnet-4-6|claude-haiku-4-5|claude-fable-5': 'KnownModel',
 };
 
 /** Guard the {@link ENUM_NAMES} registry: it must be an INJECTION — each canonical
@@ -807,6 +818,13 @@ function emitRust(): string {
   const query = emitTaggedUnion(SurfaceQuerySchema, 'SurfaceQuery', ctx);
   const event = emitTaggedUnion(NightcoreEventSchema, 'NightcoreEvent', ctx);
 
+  // Force-emit `KnownModel` (issue #18, item 4): the curated model family list is
+  // NOT wire-reachable (`model` is a free `z.string()` so custom ids pass through),
+  // but the Rust settings layer consumes the codegen'd enum to single-source the
+  // catalog + default from the contract. Registered here as a standalone enum so it
+  // lands in `ctx.decls` alongside the wire-derived supporting types.
+  registerInlineEnum(KnownModelSchema, 'KnownModel', ctx);
+
   // Supporting types (enums + nested structs) declared in a stable order so the
   // output is deterministic regardless of discovery order.
   const supporting = [...ctx.decls.entries()]
@@ -870,7 +888,7 @@ const COMMAND_INPUTS: Record<string, unknown> = {
     prompt: 'do the thing',
     model: 'claude-opus-4-8',
     effort: 'high',
-    permissionMode: 'acceptEdits',
+    autonomy: 'auto-accept',
     cwd: '/tmp/work',
     kind: 'build',
     maxTurns: 200,
@@ -915,10 +933,10 @@ const COMMAND_INPUTS: Record<string, unknown> = {
   'send-input': { type: 'send-input', sessionId: 1, text: 'more input' },
   interrupt: { type: 'interrupt', sessionId: 2 },
   'set-model': { type: 'set-model', sessionId: 3, model: 'claude-sonnet-4-6' },
-  'set-permission-mode': {
-    type: 'set-permission-mode',
+  'set-autonomy': {
+    type: 'set-autonomy',
     sessionId: 4,
-    mode: 'plan',
+    autonomy: 'plan',
   },
   'approve-permission': {
     type: 'approve-permission',
@@ -1066,6 +1084,10 @@ const QUERY_INPUTS: Record<string, unknown> = {
     type: 'get-provider-config',
     requestId: 'q-6',
     dir: '/proj',
+  },
+  'get-capabilities': {
+    type: 'get-capabilities',
+    requestId: 'q-7',
   },
 };
 

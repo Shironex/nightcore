@@ -25,7 +25,7 @@ pub enum SurfaceCommand {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         effort: Option<EffortLevel>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        permission_mode: Option<PermissionMode>,
+        autonomy: Option<AutonomyLevel>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         cwd: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -56,9 +56,9 @@ pub enum SurfaceCommand {
     #[serde(rename_all = "camelCase")]
     SetModel { session_id: u64, model: String },
     #[serde(rename_all = "camelCase")]
-    SetPermissionMode {
+    SetAutonomy {
         session_id: u64,
-        mode: PermissionMode,
+        autonomy: AutonomyLevel,
     },
     #[serde(rename_all = "camelCase")]
     ApprovePermission {
@@ -234,6 +234,8 @@ pub enum SurfaceQuery {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         dir: Option<String>,
     },
+    #[serde(rename_all = "camelCase")]
+    GetCapabilities { request_id: String },
 }
 
 // === Engine → surface events (Rust DESERIALIZES / forwards these) ===
@@ -352,6 +354,8 @@ pub enum NightcoreEvent {
         messages: Option<Vec<SessionMessage>>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         provider_config: Option<ProviderConfigSnapshot>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        capabilities: Option<ProviderCapabilities>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
     },
@@ -613,6 +617,15 @@ pub enum ArtifactWriteMode {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AutonomyLevel {
+    Bypass,
+    AutoAccept,
+    Ask,
+    Plan,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ConfigSectionStatus {
     Supported,
@@ -660,6 +673,14 @@ pub struct ConventionFinding {
 pub enum ConventionKind {
     Convention,
     Gap,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum CostTelemetry {
+    Full,
+    TokensOnly,
+    None,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -933,6 +954,18 @@ pub enum IssueVerdict {
     NeedsClarification,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KnownModel {
+    #[serde(rename = "claude-opus-4-8")]
+    ClaudeOpus48,
+    #[serde(rename = "claude-sonnet-4-6")]
+    ClaudeSonnet46,
+    #[serde(rename = "claude-haiku-4-5")]
+    ClaudeHaiku45,
+    #[serde(rename = "claude-fable-5")]
+    ClaudeFable5,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerEntry {
@@ -1054,6 +1087,25 @@ pub enum ProposedArtifactKindEnum {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProviderCapabilities {
+    pub id: String,
+    pub label: String,
+    pub autonomy_levels: Vec<AutonomyLevel>,
+    pub supports_hooks: bool,
+    pub supports_mcp: bool,
+    pub supports_plan_mode: bool,
+    pub supports_structured_output: bool,
+    pub supports_session_resume: bool,
+    pub supports_file_checkpointing: bool,
+    pub supports_ask_user_question: bool,
+    pub supports_setting_sources: bool,
+    pub supports_session_store: bool,
+    pub supports_effort: bool,
+    pub cost_telemetry: CostTelemetry,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct ProviderConfigSection {
     pub status: ConfigSectionStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1092,6 +1144,7 @@ pub enum QueryResultKindEnum {
     Messages,
     Ack,
     ProviderConfig,
+    Capabilities,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

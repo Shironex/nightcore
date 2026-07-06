@@ -14,11 +14,23 @@ export type Settings = { defaultModel: string, defaultEffort: string,
  */
 maxConcurrency: number, 
 /**
- * "bypass" | "auto-accept" | "ask" | "plan" (M4.7 §A1). Maps to the engine's
- * SDK `permissionMode` via [`sdk_permission_mode`]. Default is `bypass` (an
- * autonomous studio runs without prompts; a per-task override re-enables them).
+ * "bypass" | "auto-accept" | "ask" | "plan" — the neutral autonomy vocabulary
+ * (issue #18). Parsed to the wire [`AutonomyLevel`](crate::contracts::AutonomyLevel)
+ * via [`parse_autonomy`]; the Claude provider lowers THAT to an SDK permission
+ * mode engine-side. Default is `bypass` (an autonomous studio runs without
+ * prompts; a per-task override re-enables them).
  */
 permissionMode: string, 
+/**
+ * The agent provider that backs runs (issue #18). A lowercase provider id
+ * (`claude` today); the orchestrator's provider factory maps it to an
+ * implementation at construction. Global-only — a provider swap is a whole-
+ * studio choice, not per-project. Serde-additive: a settings file written before
+ * this field loads as `"claude"`, and an unknown id falls back to `claude` with
+ * a loud warning (the factory's explicit-error arm is for a future second
+ * provider, never a silent wrong backend).
+ */
+provider: string, 
 /**
  * M2 toggle: remove a task's worktree after it merges. Read at
  * `merge.rs`/`coordinator.rs`; editable from the Worktrees settings page.

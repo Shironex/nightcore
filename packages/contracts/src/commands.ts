@@ -3,7 +3,6 @@ import { z } from 'zod';
 import {
   EffortLevelSchema,
   McpServerEntrySchema,
-  PermissionModeSchema,
   TaskKindSchema,
 } from './config.js';
 import { ConventionCategorySchema, HarnessPolicySchema } from './harness.js';
@@ -18,6 +17,7 @@ import {
   IssueLinkedPrContextSchema,
 } from './issue-triage.js';
 import { ReviewLensSchema } from './pr-review.js';
+import { AutonomyLevelSchema } from './provider.js';
 import { ScorecardDimensionSchema } from './scorecard.js';
 import { PermissionDecisionSchema, QuestionAnswerSchema } from './tools.js';
 
@@ -64,8 +64,11 @@ export const StartSessionCommand = z.object({
    *  it is fixed at session start (a surface's `/model` effort choice applies to
    *  the next session). */
   effort: EffortLevelSchema.optional(),
-  /** Override the default permission mode for this session. */
-  permissionMode: PermissionModeSchema.optional(),
+  /** Override the default autonomy ceiling for this session. The neutral
+   *  provider-vocabulary (`bypass | auto-accept | ask | plan`); the Claude
+   *  provider maps it to its own SDK permission mode at its boundary. Absent ⇒
+   *  the kind preset's default, then the provider's configured default. */
+  autonomy: AutonomyLevelSchema.optional(),
   /** Working directory; defaults to the process cwd. */
   cwd: z.string().optional(),
   /** The task kind driving this session. Resolves to an agent preset
@@ -157,11 +160,13 @@ export const SetModelCommand = z.object({
   model: z.string(),
 });
 
-/** Change the permission mode mid-session (SDK `setPermissionMode()`). */
-export const SetPermissionModeCommand = z.object({
+/** Change the autonomy ceiling mid-session. Carries the neutral provider
+ *  vocabulary (`bypass | auto-accept | ask | plan`); the Claude provider bridges
+ *  it to the SDK `setPermissionMode()` control request at its boundary. */
+export const SetAutonomyCommand = z.object({
   ...sessionTarget,
-  type: z.literal('set-permission-mode'),
-  mode: PermissionModeSchema,
+  type: z.literal('set-autonomy'),
+  autonomy: AutonomyLevelSchema,
 });
 
 /** Respond to a `permission-required` event. */
@@ -382,7 +387,7 @@ export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   SendInputCommand,
   InterruptCommand,
   SetModelCommand,
-  SetPermissionModeCommand,
+  SetAutonomyCommand,
   ApprovePermissionCommand,
   AnswerQuestionCommand,
   StartAnalysisCommand,
@@ -474,6 +479,16 @@ export const GetProviderConfigQuery = z.object({
   dir: z.string().optional(),
 });
 
+/** Read the active provider's static {@link ProviderCapabilities} descriptor — the
+ *  capability matrix the UI/orchestration degrade from (issue #18). Unlike
+ *  `get-provider-config` this is provider-static (no project dir, no probe): the
+ *  engine answers straight from the provider's `capabilities()`, so the Rust core
+ *  single-sources the truthful descriptor from the engine instead of duplicating it. */
+export const GetCapabilitiesQuery = z.object({
+  ...requestTarget,
+  type: z.literal('get-capabilities'),
+});
+
 /** The discriminated union of every request/reply surface → engine query, keyed by `type`. */
 export const SurfaceQuerySchema = z.discriminatedUnion('type', [
   ListSessionsQuery,
@@ -482,5 +497,6 @@ export const SurfaceQuerySchema = z.discriminatedUnion('type', [
   RenameSessionQuery,
   TagSessionQuery,
   GetProviderConfigQuery,
+  GetCapabilitiesQuery,
 ]);
 export type SurfaceQuery = z.infer<typeof SurfaceQuerySchema>;

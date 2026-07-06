@@ -133,8 +133,8 @@ mod tests {
             .expect("fixtures.queries is an object");
         assert_eq!(
             queries.len(),
-            6,
-            "all 6 SurfaceQuery variants must have a fixture"
+            7,
+            "all 7 SurfaceQuery variants must have a fixture"
         );
         for (tag, wire) in queries {
             let query: SurfaceQuery = serde_json::from_value(wire.clone())
@@ -188,7 +188,7 @@ mod tests {
             prompt: "p".into(),
             model: None,
             effort: None,
-            permission_mode: None,
+            autonomy: None,
             cwd: None,
             kind: None,
             max_turns: None,
@@ -211,7 +211,7 @@ mod tests {
         for absent in [
             "model",
             "effort",
-            "permissionMode",
+            "autonomy",
             "cwd",
             "kind",
             "maxTurns",

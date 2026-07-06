@@ -73,6 +73,8 @@ mod tests {
         assert_eq!(s.max_concurrency, 3);
         // M4.7 §A1: bypass is the studio default.
         assert_eq!(s.permission_mode, "bypass");
+        // Issue #18: Claude is the only shipped provider / the default.
+        assert_eq!(s.provider, "claude");
         assert!(s.cleanup_worktrees);
         assert!(!s.notify_on_complete);
         assert!(s.project_overrides.is_empty());
@@ -92,6 +94,28 @@ mod tests {
         );
         // An unknown custom id is the user's choice — passed through verbatim.
         assert_eq!(canonical_model_id("my-custom-model"), "my-custom-model");
+    }
+
+    #[test]
+    fn known_model_ids_come_from_the_codegen_enum() {
+        use crate::contracts::KnownModel;
+        // Issue #18, item 4: the catalog is single-sourced from the contract
+        // `KnownModelSchema`. These assertions pin the codegen'd serde renames (a
+        // contract rename reds this drift guard) and prove `canonical_model_id` /
+        // `Settings::default` derive their long ids from the enum, not literals.
+        assert_eq!(known_model_id(KnownModel::ClaudeOpus48), "claude-opus-4-8");
+        assert_eq!(
+            known_model_id(KnownModel::ClaudeSonnet46),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            known_model_id(KnownModel::ClaudeHaiku45),
+            "claude-haiku-4-5"
+        );
+        assert_eq!(known_model_id(KnownModel::ClaudeFable5), "claude-fable-5");
+        // The default is the first known model, single-sourced (not a duplicated literal).
+        assert_eq!(default_model_id(), "claude-opus-4-8");
+        assert_eq!(Settings::default().default_model, default_model_id());
     }
 
     #[test]
@@ -189,34 +213,44 @@ mod tests {
     }
 
     #[test]
-    fn maps_permission_modes_to_sdk() {
-        // M4.7 §A1: the four UI modes map to their SDK equivalents.
-        assert_eq!(sdk_permission_mode("bypass"), "bypassPermissions");
-        assert_eq!(sdk_permission_mode("auto-accept"), "acceptEdits");
-        assert_eq!(sdk_permission_mode("plan"), "plan");
-        assert_eq!(sdk_permission_mode("ask"), "default");
+    fn parses_the_neutral_autonomy_vocabulary() {
+        use crate::contracts::AutonomyLevel;
+        // Issue #18: the settings vocabulary IS the neutral wire vocabulary — a
+        // fail-safe parse, no SDK mapping (that lowering is now engine-side).
+        assert_eq!(parse_autonomy("bypass"), AutonomyLevel::Bypass);
+        assert_eq!(parse_autonomy("auto-accept"), AutonomyLevel::AutoAccept);
+        assert_eq!(parse_autonomy("plan"), AutonomyLevel::Plan);
+        assert_eq!(parse_autonomy("ask"), AutonomyLevel::Ask);
         // An unrecognized value resolves to the studio default (bypass), never a
         // silent prompt-everything — the autonomous-studio choice.
-        assert_eq!(sdk_permission_mode("garbage"), "bypassPermissions");
+        assert_eq!(parse_autonomy("garbage"), AutonomyLevel::Bypass);
+        // `autonomy_wire_str` is the exact inverse for every level (matches the
+        // codegen'd kebab-case serde), so the round-trip can't drift.
+        for level in [
+            AutonomyLevel::Bypass,
+            AutonomyLevel::AutoAccept,
+            AutonomyLevel::Ask,
+            AutonomyLevel::Plan,
+        ] {
+            assert_eq!(parse_autonomy(autonomy_wire_str(level)), level);
+        }
     }
 
     #[test]
-    fn sdk_permission_mode_prefers_project_override() {
+    fn autonomy_prefers_project_override() {
+        use crate::contracts::AutonomyLevel;
         let (store, _tmp) = temp_store();
-        // Global default is bypass → bypassPermissions (M4.7 §A1).
-        assert_eq!(store.sdk_permission_mode(None), "bypassPermissions");
+        // Global default is bypass (issue #18: the neutral value travels the wire).
+        assert_eq!(store.autonomy(None), AutonomyLevel::Bypass);
 
         // A per-project override to `ask` wins for that project only — this is how
         // a single project opts OUT of global bypass back into prompting.
         let patch: SettingsPatch =
             serde_json::from_str(r#"{"projectId":"p1","permissionMode":"ask"}"#).unwrap();
         store.update(patch).expect("update");
-        assert_eq!(store.sdk_permission_mode(Some("p1")), "default");
-        assert_eq!(
-            store.sdk_permission_mode(Some("other")),
-            "bypassPermissions"
-        );
-        assert_eq!(store.sdk_permission_mode(None), "bypassPermissions");
+        assert_eq!(store.autonomy(Some("p1")), AutonomyLevel::Ask);
+        assert_eq!(store.autonomy(Some("other")), AutonomyLevel::Bypass);
+        assert_eq!(store.autonomy(None), AutonomyLevel::Bypass);
     }
 
     #[test]
@@ -266,6 +300,9 @@ mod tests {
         let store = SettingsStore::load_from(dir);
         assert_eq!(store.get().default_run_mode, "main");
         assert_eq!(store.default_run_mode(None), crate::task::RunMode::Main);
+        // Issue #18: the same legacy file (no `provider` key) loads the serde-additive
+        // default `claude` — an existing settings file is never broken by the field.
+        assert_eq!(store.get().provider, "claude");
     }
 
     #[test]
