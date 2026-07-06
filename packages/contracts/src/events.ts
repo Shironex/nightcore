@@ -88,8 +88,11 @@ export const SessionReadyEvent = z.object({
 });
 
 /** Status of an SDK task/subagent step, mirroring the SDK's `task_updated`
- *  patch status superset. */
-export const TaskStatusSchema = z.enum([
+ *  patch status superset. Named `SubagentStepStatus` (not `TaskStatus`) so it
+ *  never collides with the board's task status (`store::task::TaskStatus`,
+ *  exported to the web as `generated/TaskStatus.ts`) — two different vocabularies
+ *  that used to share a name and trap import sites. */
+export const SubagentStepStatusSchema = z.enum([
   'pending',
   'running',
   'completed',
@@ -97,7 +100,7 @@ export const TaskStatusSchema = z.enum([
   'killed',
   'paused',
 ]);
-export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export type SubagentStepStatus = z.infer<typeof SubagentStepStatusSchema>;
 
 /** A task/subagent step started or changed. The surface merges these by
  *  `taskId` into a live task panel. Folded from the SDK's `task_started` /
@@ -106,7 +109,7 @@ export const TaskUpdatedEvent = z.object({
   ...base,
   type: z.literal('task-updated'),
   taskId: z.string(),
-  status: TaskStatusSchema.optional(),
+  status: SubagentStepStatusSchema.optional(),
   /** Human description of what the task is doing. */
   description: z.string().optional(),
   /** Short progress/result summary, when the SDK provides one. */

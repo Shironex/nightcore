@@ -366,7 +366,7 @@ const ENUM_NAMES: Record<string, string> = {
   'safe|mutating|dangerous': 'ToolRisk',
   'starting|running|awaiting-permission|completed|failed|interrupted':
     'SessionStatus',
-  'pending|running|completed|failed|killed|paused': 'TaskStatus',
+  'pending|running|completed|failed|killed|paused': 'SubagentStepStatus',
   'authentication|rate-limit|aborted|runner-crash|max-turns|max-budget|unknown|structured-output-failed':
     'SessionFailedReason',
   // The structured, branch-on-able error taxonomy (an `ErrorDetail.category`).

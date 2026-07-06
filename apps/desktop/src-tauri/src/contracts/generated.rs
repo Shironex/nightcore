@@ -303,7 +303,7 @@ pub enum NightcoreEvent {
         session_id: u64,
         task_id: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        status: Option<TaskStatus>,
+        status: Option<SubagentStepStatus>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         description: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -1334,6 +1334,17 @@ pub struct SkillSummary {
     pub description: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SubagentStepStatus {
+    Pending,
+    Running,
+    Completed,
+    Failed,
+    Killed,
+    Paused,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SubagentSummary {
@@ -1352,17 +1363,6 @@ pub enum TaskKind {
     Review,
     Decompose,
     Tdd,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum TaskStatus {
-    Pending,
-    Running,
-    Completed,
-    Failed,
-    Killed,
-    Paused,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
