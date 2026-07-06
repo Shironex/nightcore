@@ -1,7 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fireEvent, fn, userEvent, within } from 'storybook/test';
 
-import type { Task } from '@/lib/bridge';
+import type { Task, WorktreeInfo } from '@/lib/bridge';
+import {
+  type ActiveWorktree,
+  type RemovableWorktreeTab,
+  WorktreesProvider,
+} from '@/lib/worktrees-context';
 
 import { BLOCKED_TASK, makeTaskActions, TASKS_BY_STATUS, WORKTREES } from '../_fixtures';
 import { TaskActionsProvider } from '../actions';
@@ -12,11 +17,37 @@ import type { BoardProps } from './Board.types';
  *  their handlers from `TaskActionsContext` now, not Board props. */
 const STORY_ACTIONS = makeTaskActions();
 
-/** The story fixture: the board wrapped in the provider its cards require. */
-function BoardFixture(props: BoardProps) {
+/** The story fixture: the board wrapped in the two providers it now requires —
+ *  task actions for the cards, and the worktrees slice for the switcher + the
+ *  board's worktree filter. The worktree cluster stays story ARGS so plays and
+ *  tests keep overriding it per render. */
+function BoardFixture({
+  worktrees,
+  activeWorktree,
+  onSelectWorktree,
+  onRemoveWorktree,
+  onRefreshWorktrees,
+  ...props
+}: BoardProps & {
+  worktrees: WorktreeInfo[];
+  activeWorktree: ActiveWorktree;
+  onSelectWorktree?: (active: ActiveWorktree) => void;
+  onRemoveWorktree?: (tab: RemovableWorktreeTab) => void;
+  onRefreshWorktrees?: () => void;
+}) {
   return (
     <TaskActionsProvider actions={STORY_ACTIONS}>
-      <Board {...props} />
+      <WorktreesProvider
+        value={{
+          worktrees,
+          activeWorktree,
+          setActiveWorktree: onSelectWorktree ?? (() => {}),
+          removeWorktree: onRemoveWorktree ?? (() => {}),
+          refreshWorktrees: onRefreshWorktrees ?? (() => {}),
+        }}
+      >
+        <Board {...props} />
+      </WorktreesProvider>
     </TaskActionsProvider>
   );
 }

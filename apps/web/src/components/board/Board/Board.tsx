@@ -16,6 +16,7 @@ import {
   SlidersIcon,
   Toolbar,
 } from '@/components/ui';
+import { useWorktreesContext } from '@/lib/worktrees-context';
 
 import { AutoModeOptions } from '../AutoModeOptions';
 import { BoardBackgroundPanel } from '../BoardBackgroundPanel';
@@ -58,11 +59,6 @@ function BoardImpl({
   onChangeAppearance,
   onPickBackground,
   onClearBackground,
-  worktrees,
-  activeWorktree,
-  onSelectWorktree,
-  onRemoveWorktree,
-  onRefreshWorktrees,
   concurrency,
   autoMode,
   autoCommitOnVerified,
@@ -79,11 +75,10 @@ function BoardImpl({
   onConcurrencyChange,
   onResume,
 }: BoardProps) {
-  const { search, setSearch, columns, clearHandlers } = useBoardView(
-    tasks,
-    activeWorktree,
-    onClearColumn,
-  );
+  // The worktree cluster (list/selection/handlers) comes from WorktreesContext;
+  // the header Refresh reads the same shared handler the Worktrees view uses.
+  const { refreshWorktrees } = useWorktreesContext();
+  const { search, setSearch, columns, clearHandlers } = useBoardView(tasks, onClearColumn);
   const banner = useBreakerBanner(breaker);
   const inspector = useInspector();
   const bgPanel = useBoardBackgroundPanel();
@@ -175,7 +170,7 @@ function BoardImpl({
             />
             <IconButton
               label="Refresh board & worktrees"
-              onClick={onRefreshWorktrees}
+              onClick={refreshWorktrees}
               className="border border-border bg-white/[0.02] p-2 hover:border-white/20"
             >
               <RefreshIcon size={15} className="text-muted-foreground" />
@@ -219,13 +214,7 @@ function BoardImpl({
         </div>
       </div>
 
-      <WorktreeSwitcher
-        tasks={tasks}
-        worktrees={worktrees}
-        active={activeWorktree}
-        onSelect={onSelectWorktree}
-        onRemoveWorktree={onRemoveWorktree}
-      />
+      <WorktreeSwitcher tasks={tasks} />
 
       {banner.visible && breaker !== null && (
         <div className="flex items-center gap-3 border-b border-destructive/40 bg-destructive/[0.12] px-[22px] py-2.5">

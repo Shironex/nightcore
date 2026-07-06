@@ -1,8 +1,7 @@
 /** Prop and supporting types for the Board component. */
-import type { BoardAppearance, Task, WorktreeInfo } from '@/lib/bridge';
+import type { BoardAppearance, Task } from '@/lib/bridge';
 
 import type { PickedBackgroundImage } from '../BoardBackgroundPanel';
-import type { ActiveWorktree, WorktreeTab } from '../WorktreeSwitcher';
 
 /** A tripped circuit breaker: the autonomous loop paused after consecutive
  *  failures. Drives the board's dismissable Resume banner. */
@@ -11,9 +10,11 @@ export interface BreakerInfo {
   failureThreshold: number;
 }
 
-/** Props for the Board: the tasks, project/worktree context, loop state, and the
- *  header action handlers (owned by the shell). The per-card action handlers come
- *  from `TaskActionsContext` — consumed by `TaskCard` itself, not drilled. */
+/** Props for the Board: the tasks, project identity, loop state, and the header
+ *  action handlers (owned by the shell). The per-card action handlers come from
+ *  `TaskActionsContext` (consumed by `TaskCard` itself) and the worktree cluster
+ *  from `WorktreesContext` (consumed by the switcher + the board filter) — not
+ *  drilled. */
 export interface BoardProps {
   tasks: Task[];
   /** Active project id — scopes the per-project board background/appearance. */
@@ -34,16 +35,6 @@ export interface BoardProps {
   onPickBackground: (image: PickedBackgroundImage) => Promise<void> | void;
   /** Clear the current background image. */
   onClearBackground: () => Promise<void> | void;
-  /** Live worktrees for the switcher; empty falls back to task branches. */
-  worktrees: WorktreeInfo[];
-  /** The selected worktree tab (`null` = Main); filters the board. */
-  activeWorktree: ActiveWorktree;
-  /** Select a worktree tab (sets the active worktree + filters the board). */
-  onSelectWorktree: (active: ActiveWorktree) => void;
-  /** Remove a worktree tab (discard its checkout + branch from the switcher). */
-  onRemoveWorktree: (tab: WorktreeTab) => void;
-  /** Reconcile + re-read board/worktree state on demand (header Refresh control). */
-  onRefreshWorktrees: () => void;
   /** Live max-concurrency (from `nc:loop`, falling back to persisted settings). */
   concurrency: number;
   /** Whether the autonomous loop is running (reflects `nc:loop`, not local state). */

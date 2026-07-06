@@ -20,6 +20,7 @@ import {
   VerifiedIcon,
 } from '@/components/ui';
 import type { PermissionPrompt, QuestionPrompt } from '@/lib/bridge';
+import { WorktreesProvider } from '@/lib/worktrees-context';
 
 import { Sidebar } from '../Sidebar';
 import { Splash } from '../Splash';
@@ -112,6 +113,7 @@ export function AppShell() {
     newProject,
     appearance,
     board,
+    worktrees,
     confirm,
     showSplash,
     isTauri,
@@ -169,11 +171,12 @@ export function AppShell() {
   );
 
   return (
-    // The shell's grouped task actions travel by context (not props) to the
-    // TaskDetail subtree. `board.detailActions` is referentially stable across
-    // `nc:session` stream flushes (see the `detailActions` memo in
-    // `AppShell.hooks.ts`), so this provider never churns its consumers per-frame.
+    // The shell's grouped task actions and the shared worktrees slice travel by
+    // context (not props). Both provider values are referentially stable across
+    // `nc:session` stream flushes (see the `detailActions` / `worktreesContext`
+    // memos in `AppShell.hooks.ts`), so neither churns its consumers per-frame.
     <TaskActionsProvider actions={board.detailActions}>
+    <WorktreesProvider value={worktrees}>
       {showProjects ? (
         <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
           {browserPreviewBanner}
@@ -259,11 +262,6 @@ export function AppShell() {
                   onChangeAppearance={appearance.onChangeAppearance}
                   onPickBackground={appearance.onPickBackground}
                   onClearBackground={appearance.onClearBackground}
-                  worktrees={board.worktrees}
-                  activeWorktree={board.activeWorktree}
-                  onSelectWorktree={board.setActiveWorktree}
-                  onRemoveWorktree={board.handleRemoveWorktree}
-                  onRefreshWorktrees={board.handleRefreshWorktrees}
                   concurrency={autoLoop.concurrency}
                   autoMode={autoLoop.autoMode}
                   autoCommitOnVerified={settings.settings?.autoCommitOnVerified ?? false}
@@ -315,11 +313,7 @@ export function AppShell() {
 
         {view === 'worktrees' && (
           <Suspense fallback={<RouteFallback />}>
-            <WorktreeView
-              worktrees={board.worktrees}
-              tasks={tasks}
-              onRefresh={board.handleRefreshWorktrees}
-            />
+            <WorktreeView tasks={tasks} />
           </Suspense>
         )}
 
@@ -464,6 +458,7 @@ export function AppShell() {
         onConfirm={confirm.confirm}
         onCancel={confirm.cancel}
       />
+    </WorktreesProvider>
     </TaskActionsProvider>
   );
 }

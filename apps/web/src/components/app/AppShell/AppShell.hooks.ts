@@ -1,13 +1,11 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
-  type ActiveWorktree,
   EMPTY_TRANSCRIPT,
   isActive,
   type PickedBackgroundImage,
   type TaskDetailActions,
   type TaskTranscript,
-  type WorktreeTab,
 } from '@/components/board';
 import { useToast } from '@/components/ui';
 import {
@@ -45,8 +43,11 @@ import {
   type TaskPatch,
   type TaskStatus,
   updateTask,
-  type WorktreeInfo,
 } from '@/lib/bridge';
+import type {
+  RemovableWorktreeTab,
+  WorktreesContextValue,
+} from '@/lib/worktrees-context';
 
 import { useActionGuard } from './hooks/useActionGuard.hooks';
 import { useAutoLoop } from './hooks/useAutoLoop.hooks';
@@ -88,20 +89,6 @@ export type BoardController = ReturnType<typeof useBoard> & {
   gauntletResults: Record<string, GauntletResult>;
   /** Task ids with a gauntlet run in flight. */
   gauntletRunning: Set<string>;
-  /** The active project's live worktrees for the switcher. */
-  worktrees: WorktreeInfo[];
-  /** The selected worktree tab (`null` = Main); filters the board. */
-  activeWorktree: ActiveWorktree;
-  /** Select a worktree tab (sets the active worktree + filters the board). */
-  setActiveWorktree: (active: ActiveWorktree) => void;
-  /** Remove a worktree tab from the board: discard its task's checkout + branch
-   *  (running-guarded backend), reset the selection to Main if it was active, and
-   *  let the `nc:task` echo drop the tab. Tolerant of an already-gone dir. */
-  handleRemoveWorktree: (tab: WorktreeTab) => void;
-  /** Explicit "Refresh": reconcile worktrees server-side (prune orphans, clear
-   *  ghost pointers, reclaim merged) AND re-pull tasks, recovering from stale
-   *  board/worktree state without an app restart. */
-  handleRefreshWorktrees: () => void;
   handleCreate: (
     title: string,
     description: string,
@@ -211,6 +198,10 @@ export interface AppShellState {
   autoLoop: ReturnType<typeof useAutoLoop>;
   newProject: ReturnType<typeof useNewProjectFlow>;
   board: BoardController;
+  /** The shared worktrees slice (list + selection + select/remove/refresh),
+   *  memoized here and provided to the board switcher, the board's worktree
+   *  filter, and the standalone WorktreeView via `WorktreesProvider`. */
+  worktrees: WorktreesContextValue;
   /** The Board header's project-scoped appearance + auto-commit handlers,
    *  memoized so the four wirings stay referentially stable across stream flushes. */
   appearance: BoardChromeActions;
@@ -553,7 +544,7 @@ export function useAppShell(): AppShellState {
   // running task and clears `task.branch` on success, so the `nc:task` echo drops
   // the tab; we only need to bounce the selection off a tab that's about to vanish.
   const handleRemoveWorktree = useCallback(
-    (tab: WorktreeTab) => {
+    (tab: RemovableWorktreeTab) => {
       if (tab.branch === null) return; // the Main tab is not removable
       if (tab.taskIds.length === 0) {
         toast.error('Could not remove worktree', 'No task is linked to this worktree.');
@@ -590,6 +581,28 @@ export function useAppShell(): AppShellState {
       },
     );
   }, [board.reseed, worktrees.reconcile, toast]);
+
+  // The shared worktrees slice, memoized as one stable value for the
+  // WorktreesProvider: the board switcher, the board's worktree filter, and the
+  // standalone WorktreeView all read this context. It re-identifies only when
+  // the worktree list refetches (debounced `nc:task`), the selection changes, or
+  // a handler re-identifies — never on a per-frame `nc:session` flush.
+  const worktreesContext = useMemo<WorktreesContextValue>(
+    () => ({
+      worktrees: worktrees.worktrees,
+      activeWorktree: worktrees.active,
+      setActiveWorktree: worktrees.setActive,
+      removeWorktree: handleRemoveWorktree,
+      refreshWorktrees: handleRefreshWorktrees,
+    }),
+    [
+      worktrees.worktrees,
+      worktrees.active,
+      worktrees.setActive,
+      handleRemoveWorktree,
+      handleRefreshWorktrees,
+    ],
+  );
 
   // Not-yet-run field edits collapse into one factory: each optimistically
   // patches the field, persists via `update_task`, and ROLLS BACK to the prior
@@ -840,11 +853,6 @@ export function useAppShell(): AppShellState {
       promptIds,
       gauntletResults: gauntlet.results,
       gauntletRunning: gauntlet.running,
-      worktrees: worktrees.worktrees,
-      activeWorktree: worktrees.active,
-      setActiveWorktree: worktrees.setActive,
-      handleRemoveWorktree,
-      handleRefreshWorktrees,
       handleCreate,
       handleRun,
       handleCancel,
@@ -884,6 +892,7 @@ export function useAppShell(): AppShellState {
       requestDelete: confirm.requestDelete,
       requestClear: confirm.requestClear,
     },
+    worktrees: worktreesContext,
     confirm,
     showSplash,
     isTauri: isTauri(),
