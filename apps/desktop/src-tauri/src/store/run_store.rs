@@ -21,7 +21,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Mutex, MutexGuard};
+use std::sync::{Arc, Mutex};
 
 use serde::de::DeserializeOwned;
 use serde::Serialize;
@@ -87,9 +87,25 @@ pub enum Edit<T> {
 /// The in-memory run map plus the directory it persists to (interior-mutable so it can
 /// be retargeted on project switch). The `dir` lives behind its own `Mutex` so
 /// `path_for` can be taken without holding the `runs` lock.
+///
+/// ## Two-tier locking (audit #36 — ported from `TaskStore`)
+/// The `runs` map `Mutex` is only ever held for O(1) reads/inserts — NEVER across
+/// disk I/O. Writers serialize per run id on `write_locks` (so two writers to the
+/// SAME run can't interleave a read-modify-write, while writes to different runs —
+/// and every `list`/`get` — proceed in parallel), and the store-wide check-and-act
+/// paths (`upsert_if_idle_when`'s single-flight scan + insert, and the prune that
+/// follows it) serialize on `upsert_lock`. LOCK ORDER: `upsert_lock` → per-id write
+/// lock → `runs`/`dir` map lock; nothing acquires a coarser lock while holding a
+/// finer one, so the hierarchy is cycle-free.
 pub struct RunStore<R: PersistedRun> {
     runs: Mutex<HashMap<String, R>>,
     dir: Mutex<PathBuf>,
+    /// Per-run write-serialization locks, created on first write to an id.
+    write_locks: Mutex<HashMap<String, Arc<Mutex<()>>>>,
+    /// Serializes the store-wide check-and-act paths (the `upsert_if_idle_when`
+    /// single-flight scan-then-insert, and pruning) against each other, WITHOUT
+    /// holding the `runs` map lock across their disk I/O.
+    upsert_lock: Mutex<()>,
 }
 
 fn read_runs_into_map<R: PersistedRun>(dir: &PathBuf) -> HashMap<String, R> {
@@ -133,6 +149,8 @@ impl<R: PersistedRun> RunStore<R> {
         Self {
             runs: Mutex::new(runs),
             dir: Mutex::new(dir),
+            write_locks: Mutex::new(HashMap::new()),
+            upsert_lock: Mutex::new(()),
         }
     }
 
@@ -142,6 +160,23 @@ impl<R: PersistedRun> RunStore<R> {
         let reloaded = read_runs_into_map::<R>(&dir);
         *crate::sync::lock_or_recover(&self.runs) = reloaded;
         *crate::sync::lock_or_recover(&self.dir) = dir;
+        // Drop the old project's per-run write locks — the new project's runs get
+        // fresh locks on first write. An in-flight writer still holds its own `Arc`,
+        // so clearing the map only drops this store's reference, never a live lock.
+        crate::sync::lock_or_recover(&self.write_locks).clear();
+    }
+
+    /// The write-serialization lock for `id`, created on first use. A caller locks
+    /// the returned `Arc<Mutex<()>>` for the whole read-modify-write-persist so two
+    /// writers to the *same* run can't interleave and clobber each other, while
+    /// writers to *different* runs proceed in parallel. The registry mutex is held
+    /// only long enough to look up / insert the `Arc` — never across the write — so
+    /// obtaining a lock for run A never waits on run B's in-flight fsync.
+    fn write_lock_for(&self, id: &str) -> Arc<Mutex<()>> {
+        crate::sync::lock_or_recover(&self.write_locks)
+            .entry(id.to_string())
+            .or_insert_with(|| Arc::new(Mutex::new(())))
+            .clone()
     }
 
     fn path_for(&self, id: &str) -> Result<PathBuf, String> {
@@ -167,8 +202,9 @@ impl<R: PersistedRun> RunStore<R> {
         crate::sync::lock_or_recover(&self.runs).get(id).cloned()
     }
 
-    /// Serialize + atomically write one run to its file. The caller holds the `runs`
-    /// lock; this only touches the (separate) `dir` lock via `path_for`.
+    /// Serialize + atomically write one run to its file. Callers hold the run's
+    /// per-id write lock (never the `runs` map lock — audit #36); this only touches
+    /// the (separate) `dir` lock via `path_for`.
     fn persist(&self, run: &R) -> Result<(), String> {
         let path = self.path_for(run.id())?;
         // Compact, not pretty: a scan run re-serializes its ENTIRE accumulating set of
@@ -185,10 +221,12 @@ impl<R: PersistedRun> RunStore<R> {
     /// so the single-flight guard can't be bypassed outside tests.
     #[cfg(test)]
     pub fn upsert(&self, run: &R) -> Result<(), String> {
-        let mut guard = crate::sync::lock_or_recover(&self.runs);
+        let _single_flight = crate::sync::lock_or_recover(&self.upsert_lock);
+        let wlock = self.write_lock_for(run.id());
+        let _write = crate::sync::lock_or_recover(&wlock);
         self.persist(run)?;
-        guard.insert(run.id().to_string(), run.clone());
-        self.prune_locked(&mut guard);
+        crate::sync::lock_or_recover(&self.runs).insert(run.id().to_string(), run.clone());
+        self.prune_settled();
         Ok(())
     }
 
@@ -219,22 +257,40 @@ impl<R: PersistedRun> RunStore<R> {
     where
         F: Fn(&R) -> bool,
     {
-        let mut guard = crate::sync::lock_or_recover(&self.runs);
-        if guard
-            .values()
-            .any(|r| r.status() == "running" && conflicts(r))
+        // The store-wide single-flight lock makes the running-scan and the insert
+        // one atomic check-and-act against a RACING upsert — while the `runs` map
+        // lock is held only for the O(1) scan and insert, never across the persist
+        // (audit #36). A concurrent `edit_run` can only settle a run (running →
+        // completed/failed) — nothing outside this lock ever CREATES a `running`
+        // run — so a scan that passed cannot be invalidated before the insert.
+        let _single_flight = crate::sync::lock_or_recover(&self.upsert_lock);
         {
-            return Err(busy_msg.to_string());
+            let guard = crate::sync::lock_or_recover(&self.runs);
+            if guard
+                .values()
+                .any(|r| r.status() == "running" && conflicts(r))
+            {
+                return Err(busy_msg.to_string());
+            }
         }
+        // Disk-first ordering preserved: persist, then insert, then prune. The run id
+        // is freshly minted, so no same-id writer exists yet; the per-id lock is still
+        // taken for uniformity with every other write path.
+        let wlock = self.write_lock_for(run.id());
+        let _write = crate::sync::lock_or_recover(&wlock);
         self.persist(run)?;
-        guard.insert(run.id().to_string(), run.clone());
-        self.prune_locked(&mut guard);
+        crate::sync::lock_or_recover(&self.runs).insert(run.id().to_string(), run.clone());
+        self.prune_settled();
         Ok(())
     }
 
     /// Drop the oldest runs (by `created_at`) beyond [`MAX_RUNS`], deleting their files.
-    /// Called under the `runs` lock from `upsert_if_idle_when`. Best-effort on the file delete
-    /// (a failed unlink is logged, not fatal — the in-memory cap still holds).
+    /// Called with the `upsert_lock` held (from the upsert paths); the `runs` map lock
+    /// is taken only for the O(1) scans/removals, and each victim's per-id write lock
+    /// is taken across its remove + unlink so an in-flight `edit_run` on that run
+    /// can't resurrect it after the prune (the `TaskStore::remove` discipline).
+    /// Best-effort on the file delete (a failed unlink is logged, not fatal — the
+    /// in-memory cap still holds).
     ///
     /// A `running` run is NEVER evicted: kinds whose runs may legitimately overlap
     /// (PR reviews serialize per PR, not per store) can hold several concurrent
@@ -242,19 +298,36 @@ impl<R: PersistedRun> RunStore<R> {
     /// terminal events land on a run the store no longer knows (and its findings
     /// vanish from the UI). Only settled runs age out; in the absurd case where
     /// 50+ runs are all `running`, nothing is pruned (the cap yields to liveness).
-    fn prune_locked(&self, guard: &mut MutexGuard<'_, HashMap<String, R>>) {
-        if guard.len() <= MAX_RUNS {
-            return;
-        }
-        let mut by_age: Vec<(String, u64)> = guard
-            .values()
-            .filter(|r| r.status() != "running")
-            .map(|r| (r.id().to_string(), r.created_at()))
-            .collect();
-        by_age.sort_by_key(|(_, created)| *created);
-        let to_remove = guard.len().saturating_sub(MAX_RUNS);
-        for (id, _) in by_age.into_iter().take(to_remove) {
-            guard.remove(&id);
+    fn prune_settled(&self) {
+        let victims: Vec<String> = {
+            let guard = crate::sync::lock_or_recover(&self.runs);
+            if guard.len() <= MAX_RUNS {
+                return;
+            }
+            let mut by_age: Vec<(String, u64)> = guard
+                .values()
+                .filter(|r| r.status() != "running")
+                .map(|r| (r.id().to_string(), r.created_at()))
+                .collect();
+            by_age.sort_by_key(|(_, created)| *created);
+            let to_remove = guard.len().saturating_sub(MAX_RUNS);
+            by_age.into_iter().take(to_remove).map(|(id, _)| id).collect()
+        };
+        for id in victims {
+            // Serialize with same-id writers, then re-check under the fresh map view:
+            // a writer that slipped in may have re-persisted (or even restarted) the
+            // run between the scan above and this lock.
+            let wlock = self.write_lock_for(&id);
+            let _write = crate::sync::lock_or_recover(&wlock);
+            {
+                let mut guard = crate::sync::lock_or_recover(&self.runs);
+                match guard.get(&id) {
+                    Some(run) if run.status() != "running" => {
+                        guard.remove(&id);
+                    }
+                    _ => continue,
+                }
+            }
             if let Ok(path) = self.path_for(&id) {
                 if let Err(e) = std::fs::remove_file(&path) {
                     if e.kind() != std::io::ErrorKind::NotFound {
@@ -270,20 +343,23 @@ impl<R: PersistedRun> RunStore<R> {
     /// so it can never complete — reaping it stops the UI from spinning forever. Call ONLY
     /// on boot, never on a project switch (a cross-project run may still be live).
     pub fn reap_running(&self) {
-        let mut guard = crate::sync::lock_or_recover(&self.runs);
-        let stale: Vec<String> = guard
-            .values()
-            .filter(|r| r.status() == "running")
-            .map(|r| r.id().to_string())
-            .collect();
+        let stale: Vec<String> = self.read(|runs| {
+            runs.values()
+                .filter(|r| r.status() == "running")
+                .map(|r| r.id().to_string())
+                .collect()
+        });
         for id in stale {
-            if let Some(run) = guard.get_mut(&id) {
+            // Per-id edit (write lock + persist outside the map lock — audit #36).
+            // The status is re-checked under the lock; a vanished run is skipped.
+            let _ = self.edit_run(&id, |run| {
+                if run.status() != "running" {
+                    return Ok(Edit::Skip(()));
+                }
                 run.set_status("failed");
                 run.set_error(Some(R::INTERRUPTED_ERROR.to_string()));
-                run.set_updated_at(crate::task::now_ms());
-                let snapshot = run.clone();
-                let _ = self.persist(&snapshot);
-            }
+                Ok(Edit::Commit(()))
+            });
         }
     }
 
@@ -324,8 +400,16 @@ impl<R: PersistedRun> RunStore<R> {
     where
         F: FnOnce(&mut R) -> Result<Edit<T>, String>,
     {
-        let mut guard = crate::sync::lock_or_recover(&self.runs);
-        let mut run = guard
+        // Two-tier locking (audit #36): the whole read-modify-write-persist holds
+        // this id's write lock — so same-id editors serialize and the check-and-act
+        // closures (`set_item_status` / `link_item_task`) keep their TOCTOU guarantee
+        // — while the `runs` map lock is taken only for the O(1) read-clone and the
+        // O(1) publish, never across the fsync. A `list`/`get` (or another run's
+        // edit) therefore never waits on this run's persist.
+        let wlock = self.write_lock_for(id);
+        let _write = crate::sync::lock_or_recover(&wlock);
+
+        let mut run = crate::sync::lock_or_recover(&self.runs)
             .get(id)
             .cloned()
             .ok_or_else(|| format!("no {} with id {id}", R::RUN_LABEL))?;
@@ -333,8 +417,10 @@ impl<R: PersistedRun> RunStore<R> {
             Edit::Skip(value) => Ok((value, run)),
             Edit::Commit(value) => {
                 run.set_updated_at(crate::task::now_ms());
+                // Persist (fsync) holding only the per-id write lock; publish to
+                // memory after the write succeeds — memory never runs ahead of disk.
                 self.persist(&run)?;
-                guard.insert(run.id().to_string(), run.clone());
+                crate::sync::lock_or_recover(&self.runs).insert(run.id().to_string(), run.clone());
                 Ok((value, run))
             }
         }

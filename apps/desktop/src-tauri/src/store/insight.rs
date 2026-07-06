@@ -651,6 +651,73 @@ mod tests {
     }
 
     #[test]
+    fn upsert_if_idle_is_single_flight_under_a_real_race() {
+        // Two-tier locking (audit #36): with the scan and the insert no longer under
+        // ONE map lock, the store-wide upsert lock must still make them atomic — of
+        // two RACING `running` upserts, exactly one is admitted.
+        let (store, _tmp) = store();
+        let store = std::sync::Arc::new(store);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for i in 0..2 {
+            let store = std::sync::Arc::clone(&store);
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                let mut r = run(&format!("race-{i}"), vec![]);
+                r.status = "running".into();
+                barrier.wait();
+                store.upsert_if_idle(&r, "busy")
+            }));
+        }
+        let results: Vec<Result<(), String>> =
+            handles.into_iter().map(|h| h.join().unwrap()).collect();
+        let admitted = results.iter().filter(|r| r.is_ok()).count();
+        assert_eq!(admitted, 1, "exactly one racing start is admitted: {results:?}");
+        assert_eq!(store.list().len(), 1, "the refused run is not persisted");
+    }
+
+    #[test]
+    fn link_finding_task_stays_atomic_under_a_real_race() {
+        // The convert-to-task TOCTOU closure must survive the two-tier locking
+        // (audit #36): of two RACING links to the same finding, one wins `Linked`,
+        // the other gets `AlreadyLinked(winner)` — never two `Linked`.
+        let (store, _tmp) = store();
+        store
+            .upsert(&run("r1", vec![finding("f1", "fp1")]))
+            .unwrap();
+        let store = std::sync::Arc::new(store);
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+        let mut handles = Vec::new();
+        for i in 0..2 {
+            let store = std::sync::Arc::clone(&store);
+            let barrier = std::sync::Arc::clone(&barrier);
+            handles.push(std::thread::spawn(move || {
+                barrier.wait();
+                store.link_finding_task("r1", "f1", &format!("task-{i}"))
+            }));
+        }
+        let outcomes: Vec<LinkOutcome> = handles
+            .into_iter()
+            .map(|h| h.join().unwrap().expect("link resolves"))
+            .collect();
+        let linked = outcomes
+            .iter()
+            .filter(|o| matches!(o, LinkOutcome::Linked))
+            .count();
+        assert_eq!(linked, 1, "exactly one racing convert mints the link");
+        let winner = store
+            .get_finding("r1", "f1")
+            .unwrap()
+            .linked_task_id
+            .expect("linked");
+        for o in &outcomes {
+            if let LinkOutcome::AlreadyLinked(existing) = o {
+                assert_eq!(existing, &winner, "the loser sees the winner's task id");
+            }
+        }
+    }
+
+    #[test]
     fn reap_running_marks_running_failed() {
         let (store, _tmp) = store();
         let mut r = run("r1", vec![]);
