@@ -11,7 +11,7 @@
 use serde_json::json;
 use tauri::{AppHandle, Emitter, State};
 
-use crate::sidecar::untrusted_block;
+use crate::infra::untrusted::untrusted_block;
 use crate::sidecar::HARNESS_EVENT;
 use crate::store::harness::{HarnessStore, StoredConventionFinding, StoredHarnessProposal};
 use crate::store::TaskStore;

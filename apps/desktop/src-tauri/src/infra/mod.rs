@@ -8,3 +8,4 @@ pub(crate) mod logging;
 pub(crate) mod platform;
 pub(crate) mod proc;
 pub(crate) mod text;
+pub(crate) mod untrusted;

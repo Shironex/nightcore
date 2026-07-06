@@ -1,15 +1,27 @@
-//! The engine's command surface as seen by the sidecar bridge.
+//! The engine's command surface as seen by the sidecar bridge — and the sidecar's
+//! session-dispatch surface as seen by the workflow tier.
 //!
 //! The sidecar reader and command handlers need a handful of run-engine operations
 //! (slot release/abort, the permission registry, the circuit breaker, the worktree
 //! cleanup, the auto-loop kick + state emit, and the shared `submit_run`/`interrupt`
 //! flows). Reaching for `crate::orchestration::coordinator::Orchestrator` directly
-//! made `sidecar` depend on `orchestration`, closing a module cycle. This trait is
-//! the seam that breaks it: it names exactly those operations against an opaque
+//! made `sidecar` depend on `orchestration`, closing a module cycle. [`EngineApi`]
+//! is the seam that breaks it: it names exactly those operations against an opaque
 //! `AppHandle`, with the concrete adapter (`orchestration::EngineHandle`) living on
-//! the engine side. This module depends only on `tauri` + `async_trait` — never on
-//! `crate::orchestration` — so the bridge can call the engine through a managed
-//! `Arc<dyn EngineApi>` without importing it.
+//! the engine side.
+//!
+//! [`SessionDispatch`] is the SAME move in the other direction (issue #33): the
+//! workflow commands (`rerun_verification`, `address_pr_comments`, the pr-fix
+//! starters) need to start sidecar sessions, and reaching for `crate::sidecar::*`
+//! directly re-grew a workflow ⇄ sidecar cycle. The concrete adapter
+//! (`sidecar::SidecarSessions`) lives on the sidecar side; workflow consumes it as
+//! a managed `Arc<dyn SessionDispatch>`.
+//!
+//! This module depends only on `std` + `tauri` + `async_trait` — never on
+//! `crate::orchestration` or `crate::sidecar` — so each tier can call the other
+//! through its managed trait object without importing it.
+
+use std::path::Path;
 
 use tauri::AppHandle;
 
@@ -62,5 +74,44 @@ pub trait EngineApi: Send + Sync {
         app: &AppHandle,
         task_id: &str,
         feed_breaker: bool,
+    ) -> Result<(), String>;
+}
+
+/// The sidecar session operations the workflow tier invokes (issue #33). Each
+/// method takes the `AppHandle` and resolves the live sidecar bridge from managed
+/// state inside the adapter (`sidecar::SidecarSessions`), so workflow holds only
+/// `State<Arc<dyn SessionDispatch>>` and never names `crate::sidecar`.
+#[async_trait::async_trait]
+pub trait SessionDispatch: Send + Sync {
+    /// Ensure the sidecar child is spawned and its stdout reader installed.
+    /// Callers invoke this BEFORE flipping task state so a spawn failure can
+    /// roll back cheaply (the slot is released, nothing was dispatched).
+    async fn ensure_reader(&self, app: &AppHandle) -> Result<(), String>;
+    /// Start the read-only reviewer session over a build's worktree (M4 §B) —
+    /// the `rerun_verification` re-dispatch path.
+    async fn dispatch_reviewer(
+        &self,
+        app: &AppHandle,
+        task_id: &str,
+        worktree_dir: &Path,
+    ) -> Result<(), String>;
+    /// Start a fix-build session for GitHub PR review comments (PR arc, phase 3)
+    /// with a READY-BUILT, fenced prompt used verbatim.
+    async fn dispatch_pr_comment_fix(
+        &self,
+        app: &AppHandle,
+        task_id: &str,
+        prompt: &str,
+        worktree_dir: &Path,
+    ) -> Result<(), String>;
+    /// Start a pr-fix session over a managed PR checkout: correlation id = the
+    /// FIX id (the reader intercept's routing key), `kind=build`, default
+    /// permission mode, project-scoped guardrails (a pr-fix has no task).
+    async fn dispatch_pr_fix_build(
+        &self,
+        app: &AppHandle,
+        fix_id: &str,
+        prompt: String,
+        dir: &Path,
     ) -> Result<(), String>;
 }

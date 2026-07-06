@@ -22,12 +22,12 @@ use std::sync::Arc;
 
 use tauri::{AppHandle, Manager, State};
 
-use crate::engine_api::EngineApi;
+use crate::engine_api::{EngineApi, SessionDispatch};
 use crate::git::gh::GH_BINARY;
 use crate::provider::{Provider, SidecarProvider};
 use crate::store::pr_review::{PrReviewRun, PrReviewStore, StoredReviewFinding};
 use crate::store::TaskStore;
-use crate::task::{now_ms, TaskKind};
+use crate::task::now_ms;
 use crate::workflow::merge::{
     commit_in_flight, lease_held, merge_in_flight, require_project, TaskLease,
 };
@@ -462,50 +462,19 @@ pub async fn resolve_pr_conflicts(app: AppHandle, pr_number: u64) -> Result<Stri
 
 /// Start the fix session: correlation id = the FIX id (the reader intercept's
 /// routing key), `kind=build` over the checkout, default permission mode, and
-/// project-scoped guardrails (no per-task ceilings — a pr-fix has no task).
+/// project-scoped guardrails (no per-task ceilings — a pr-fix has no task). The
+/// dispatch itself lives sidecar-side (`dispatch_pr_fix_build`), reached through
+/// the managed [`SessionDispatch`] seam (issue #33) — workflow never names
+/// `crate::sidecar`.
 async fn dispatch_fix_session(
     app: &AppHandle,
     fix_id: &str,
     prompt: String,
     dir: &Path,
 ) -> Result<(), String> {
-    crate::sidecar::ensure_reader(app).await?;
-    let provider = app.state::<Arc<SidecarProvider>>();
-    let permission_mode = crate::sidecar::resolve_permission_mode(app, None);
-    provider
-        .start_session(
-            fix_id,
-            prompt,
-            // Model/effort: core defaults (no task to inherit from).
-            None,
-            None,
-            Some(dir.to_path_buf()),
-            permission_mode,
-            TaskKind::Build.as_wire(),
-            // No image attachments: the fix works from the findings text.
-            Vec::new(),
-            fix_guardrails(app, fix_id),
-        )
+    app.state::<Arc<dyn SessionDispatch>>()
+        .dispatch_pr_fix_build(app, fix_id, prompt, dir)
         .await
-}
-
-/// The project-scoped [`Guardrails`](crate::provider::Guardrails) for a pr-fix
-/// session: the reviewer/fix sub-run shape (`dispatch_build_fix`) minus the
-/// per-task ceilings — a pr-fix has no task, so `max_turns`/`max_budget_usd`
-/// inherit the `@nightcore/config` defaults and it is never resumed. The
-/// flight-recorder ledger is keyed by the fix id (its own file beside the task
-/// ledgers).
-fn fix_guardrails(app: &AppHandle, fix_id: &str) -> crate::provider::Guardrails {
-    crate::provider::Guardrails {
-        max_turns: None,
-        max_budget_usd: None,
-        resume_session_id: None,
-        mcp_servers: crate::sidecar::resolve_mcp_servers(app),
-        append_context_pack: crate::sidecar::resolve_context_pack(app),
-        harness_policy: crate::sidecar::resolve_harness_policy(app),
-        ledger_path: crate::sidecar::resolve_ledger_path(app, fix_id),
-        sandbox_writes: crate::sidecar::resolve_sandbox_writes(app),
-    }
 }
 
 /// Push an `awaiting_push` fix's branch to origin — the HUMAN GATE. Plain push,

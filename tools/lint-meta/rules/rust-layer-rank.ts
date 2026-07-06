@@ -23,17 +23,23 @@ import type { IMetaRule, IViolation } from '../types';
  *   5  orchestration, sidecar, workflow     (the ENGINE SCC — see below)
  *   6  commands, bindings                   (surfaces)
  *
- * ENGINE SCC — `orchestration`/`sidecar`/`workflow` genuinely import each other
- * (orch→sidecar/workflow, sidecar→workflow, workflow→orch/sidecar): a real cycle
- * the `Arc<dyn EngineApi>` seam only HALF-breaks. So equal-rank imports AMONG the
- * three are TOLERATED — EXCEPT `sidecar → orchestration`, which must go through the
- * `engine_api` trait (phase A.1 removed the last such edge; this keeps it gone, and
- * `rust-engine-seam` guards it independently). NOTE: this rank model follows the
- * issue #17 table + the recorded SCC decision, NOT the phase-B.2 spec's tentative
- * `sidecar/orch=4, workflow=5` split — that split would false-positive on the
- * legitimate `orch→workflow` / `sidecar→workflow` SCC edges (workflow ranks equal,
- * not above). After a future change breaks the workflow⇄sidecar half (audit #33),
- * tighten this by splitting the SCC.
+ * ENGINE SCC — `orchestration`/`sidecar`/`workflow` historically imported each
+ * other: a real cycle the `Arc<dyn EngineApi>` seam only HALF-broke. Equal-rank
+ * imports AMONG the three are TOLERATED — EXCEPT the two seam-guarded edges:
+ *
+ *   - `sidecar → orchestration` must go through the `engine_api::EngineApi` trait
+ *     (phase A.1 removed the last such edge; `rust-engine-seam` guards it
+ *     independently).
+ *   - `workflow → sidecar` must go through the `engine_api::SessionDispatch`
+ *     trait (audit #33 removed the last such edges — the fence moved to
+ *     `infra::untrusted`, session dispatch goes through the managed seam).
+ *
+ * With both bans the remaining REAL edges are acyclic (workflow ← sidecar ←
+ * orchestration); the co-tier tolerance below covers exactly those legitimate
+ * downstream-within-SCC edges. NOTE: this rank model follows the issue #17 table +
+ * the recorded SCC decision, NOT the phase-B.2 spec's tentative `sidecar/orch=4,
+ * workflow=5` split — that split would false-positive on the legitimate
+ * `orch→workflow` / `sidecar→workflow` edges (workflow ranks equal, not above).
  *
  * FACADE RESOLUTION — `lib.rs` (33-35) re-exports crate-root aliases; they are
  * mapped to their real modules before ranking, or upward edges would hide behind
@@ -103,7 +109,8 @@ export const rustLayerRankRule: IMetaRule = {
         if (toRank === undefined) continue; // not a top-level module reference
         if (target === fromMod) continue; // intra-module (post-facade)
 
-        // Engine SCC: sideways among the three is tolerated, except sidecar→orch.
+        // Engine SCC: sideways among the three is tolerated, except the two
+        // seam-guarded edges (sidecar→orch and workflow→sidecar).
         if (ENGINE_SCC.has(fromMod) && ENGINE_SCC.has(target)) {
           if (fromMod === 'sidecar' && target === 'orchestration') {
             if (!reported.has('__seam__')) {
@@ -113,6 +120,17 @@ export const rustLayerRankRule: IMetaRule = {
                 rule: 'rust-layer-rank',
                 message:
                   'sidecar must reach the engine only through `Arc<dyn EngineApi>` — a direct `crate::orchestration::` import re-closes the cycle the engine_api seam breaks. Route it through the trait.',
+              });
+            }
+          }
+          if (fromMod === 'workflow' && target === 'sidecar') {
+            if (!reported.has('__session_seam__')) {
+              reported.add('__session_seam__');
+              violations.push({
+                file,
+                rule: 'rust-layer-rank',
+                message:
+                  'workflow must reach the sidecar only through `Arc<dyn SessionDispatch>` (issue #33) — a direct `crate::sidecar::` import re-closes the workflow ⇄ sidecar cycle. Route it through the trait (text hygiene lives in `infra::untrusted`).',
               });
             }
           }

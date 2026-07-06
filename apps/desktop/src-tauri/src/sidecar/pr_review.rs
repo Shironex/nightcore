@@ -23,12 +23,12 @@ use crate::store::pr_review::{PrReviewRun, PrReviewStore, StoredReviewFinding};
 use crate::store::TaskStore;
 use crate::task::{sanitize_minted_title, Task, TaskKind, TASK_EVENT};
 
-use super::fence::untrusted_block;
 use super::scan::{
     begin_scan_run, dispatch_scan_command, failure_reason, finalize_scan_items,
     reconcile_scan_history, scan_lifecycle_commands, wire_str, ScanRunInit, ScanTelemetry,
 };
 use super::PRREVIEW_EVENT;
+use crate::infra::untrusted::untrusted_block;
 
 // The three store-agnostic lifecycle commands (list / get / delete), stamped from
 // the shared scan macro. Cancel is HAND-WRITTEN below (the macro's cancel-less

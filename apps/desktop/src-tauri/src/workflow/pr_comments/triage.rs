@@ -8,7 +8,7 @@
 //! posture of [`super::command::build_fix_prompt`]: the thread index/path/line and
 //! comment author are GitHub-reported metadata kept outside the fence; every
 //! comment body is UNTRUSTED external text wrapped through
-//! [`crate::sidecar::untrusted_block`], so review text is DATA describing a
+//! [`crate::infra::untrusted::untrusted_block`], so review text is DATA describing a
 //! concern, never an instruction that redirects the classifier.
 //!
 //! **FAIL-OPEN.** Triage is strictly advisory and must never suppress a real fix:
@@ -128,7 +128,7 @@ fn build_triage_payload(comments: &PrReviewComments) -> String {
             // Author is trusted metadata (a GitHub login) OUTSIDE the fence; the
             // body is UNTRUSTED and fenced.
             out.push_str(&format!("From {}:\n", comment.author));
-            out.push_str(&crate::sidecar::untrusted_block(&comment.body));
+            out.push_str(&crate::infra::untrusted::untrusted_block(&comment.body));
         }
         out.push('\n');
     }

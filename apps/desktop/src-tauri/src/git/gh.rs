@@ -87,6 +87,27 @@ pub(crate) fn map_gh_failure(binary: &str, subcmd: &str, out: &GhOutput) -> Stri
 /// `GIT_SSH_COMMAND` / `GIT_EXTERNAL_DIFF` / … RCE vectors + parent GIT_* context).
 /// Verified the keychain-backed gh auth survives the scrub (`gh auth status` +
 /// `gh api rate_limit` both pass under it, 2026-07-05).
+/// Spawn with a bounded retry on ETXTBSY (os error 26). A `fork` on another
+/// thread can briefly inherit the write fd of an executable that was *just*
+/// written, making the exec fail "Text file busy" — only the test suite's
+/// fake-gh script fixtures ever hit this (a real `gh` binary is never being
+/// written while we spawn it), but the race lives at this spawn site, so the
+/// retry belongs here rather than in every fixture-driven test.
+fn spawn_retrying_etxtbsy(
+    command: &mut std::process::Command,
+) -> std::io::Result<std::process::Child> {
+    let mut attempts = 0;
+    loop {
+        match command.spawn() {
+            Err(e) if e.raw_os_error() == Some(26) && attempts < 5 => {
+                attempts += 1;
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            other => return other,
+        }
+    }
+}
+
 pub(crate) fn run_gh_bounded(
     dir: &Path,
     binary: &str,
@@ -108,7 +129,7 @@ pub(crate) fn run_gh_bounded(
         .stderr(Stdio::piped());
     crate::platform::scrub_git_env(&mut command);
 
-    let child = match command.spawn() {
+    let child = match spawn_retrying_etxtbsy(&mut command) {
         Ok(child) => child,
         // The pre-spawn `which` probe is the ONLY ToolAbsent source: it already
         // resolved the binary, so a spawn-time NotFound here is almost always a

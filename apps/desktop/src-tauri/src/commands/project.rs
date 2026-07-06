@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::merge::TaskLease;
 use crate::project::{Project, ProjectStore};
 use crate::store::TaskStore;
 
@@ -117,6 +118,30 @@ fn retarget_tasks(app: &AppHandle, store: &ProjectStore) {
     crate::store::run_store::scan_kinds!(retarget_scan);
 }
 
+// --- Registry single-flight -------------------------------------------------
+
+/// The registry-mutation single-flight set. The registry mutators (activate /
+/// create / delete) each run "mutate registry → retarget 6 stores → reconcile
+/// worktrees" as a multi-step check-and-act; while they ran synchronously the
+/// main thread serialized them implicitly. Moving them to the blocking pool (so
+/// a project switch can't jank the WKWebView) removes that, so this lease
+/// restores single-flight: whichever action leases second refuses instead of
+/// interleaving (the `CommitLease` discipline — try-acquire, never wait).
+fn registry_mutation_in_flight() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static IN_FLIGHT: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::OnceLock::new();
+    IN_FLIGHT.get_or_init(|| std::sync::Mutex::new(std::collections::HashSet::new()))
+}
+
+/// Acquire the registry lease (one shared key: the registry is app-global), or
+/// refuse naming the blocked action (`what` completes "… while another project
+/// action is in progress").
+fn acquire_registry_lease(what: &str) -> Result<TaskLease, String> {
+    TaskLease::acquire(registry_mutation_in_flight(), "project-registry").ok_or_else(|| {
+        format!("cannot {what} while another project action is in progress — try again")
+    })
+}
+
 // --- Commands ---------------------------------------------------------------
 
 /// All known projects (registry order).
@@ -140,6 +165,10 @@ pub fn create_project(
     path: String,
     name: String,
 ) -> Result<Project, String> {
+    // Registry mutators are single-flight (see `registry_mutation_in_flight`):
+    // creating a project activates it, and that retarget must not interleave
+    // with a concurrent switch/delete running on the blocking pool.
+    let _lease = acquire_registry_lease("create a project")?;
     // Validate the renderer-supplied path before any filesystem side effect:
     // absolute, canonical, existing directory, and not under a system root.
     let dir = validate_existing_dir(&path)?;
@@ -171,52 +200,83 @@ pub fn create_project(
 /// Remove a project from the registry. Leaves the repo + its `.nightcore/` on
 /// disk (deleting files is destructive). Emits `nc:project { type: "deleted" }`.
 #[tauri::command]
-pub fn delete_project(
-    app: AppHandle,
-    store: State<'_, ProjectStore>,
-    id: String,
-) -> Result<(), String> {
-    let was_active = store.active().map(|p| p.id) == Some(id.clone());
-    if !store.remove(&id)? {
+pub async fn delete_project(app: AppHandle, id: String) -> Result<(), String> {
+    // Persist + settings write + background-image removal are all filesystem
+    // work; run the body on the blocking pool so the WKWebView stays responsive.
+    tauri::async_runtime::spawn_blocking(move || delete_project_blocking(&app, &id))
+        .await
+        .map_err(|e| format!("delete project failed to run: {e}"))?
+}
+
+/// The blocking body of `delete_project`, run off the UI thread. Managed state is
+/// re-acquired from the owned `AppHandle` (a `State<'_, _>` guard can't cross the
+/// thread boundary); `try_state` so an unmanaged store fails gracefully.
+fn delete_project_blocking(app: &AppHandle, id: &str) -> Result<(), String> {
+    // Single-flight with the other registry mutators (activate / create): a
+    // delete that retargets the board must not interleave with a switch.
+    let _lease = acquire_registry_lease("delete a project")?;
+    let store = app
+        .try_state::<ProjectStore>()
+        .ok_or_else(|| "project store unavailable".to_string())?;
+    let was_active = store.active().map(|p| p.id).as_deref() == Some(id);
+    if !store.remove(id)? {
         return Err(format!("no project with id {id}"));
     }
     // Data-integrity #4: drop the deleted project's settings override so it can't
     // orphan in settings.json (best-effort — a persist failure here must not undo
     // the registry removal, so it's logged, not propagated).
     if let Err(e) = app
-        .state::<crate::settings::SettingsStore>()
-        .drop_project_override(&id)
+        .try_state::<crate::settings::SettingsStore>()
+        .ok_or_else(|| "settings store unavailable".to_string())
+        .and_then(|s| s.drop_project_override(id))
     {
         tracing::warn!(target: "nightcore::project", project_id = %id, error = %e, "failed to drop project settings override on delete");
     }
     // Custom Background: remove the deleted project's on-disk background bytes too
     // (its settings ref went with the override above). Best-effort — a leftover image
     // is harmless and must not undo the delete.
-    if let Err(e) = crate::store::board_background::remove(&app, &id) {
+    if let Err(e) = crate::store::board_background::remove(app, id) {
         tracing::warn!(target: "nightcore::project", project_id = %id, error = %e, "failed to remove project board background on delete");
     }
     // Deleting the active project clears the board.
     if was_active {
-        retarget_tasks(&app, &store);
+        retarget_tasks(app, &store);
     }
-    emit_project_event(&app, &store, "deleted", None);
+    emit_project_event(app, &store, "deleted", None);
     Ok(())
 }
 
 /// Activate `id`: retarget the task store at its tasks dir, reload, and bump
 /// `lastActiveAt`. Emits `nc:project { type: "activated" }`.
 #[tauri::command]
-pub fn set_active_project(
-    app: AppHandle,
-    store: State<'_, ProjectStore>,
-    id: String,
-) -> Result<Project, String> {
-    let project = store.set_active(&id)?;
-    retarget_tasks(&app, &store);
+pub async fn set_active_project(app: AppHandle, id: String) -> Result<Project, String> {
+    // The heaviest registry command: `retarget_tasks` re-reads every JSON in the
+    // task dir PLUS all 5 scan-store dirs, and `reconcile_worktrees` runs git
+    // subprocess work (worktree list/prune/remove). Synchronous, that all ran on
+    // the main thread and janked the UI on every project switch — run the body
+    // on the blocking pool and merely await it.
+    tauri::async_runtime::spawn_blocking(move || set_active_project_blocking(&app, &id))
+        .await
+        .map_err(|e| format!("set active project failed to run: {e}"))?
+}
+
+/// The blocking body of `set_active_project`, run off the UI thread. Managed
+/// state is re-acquired from the owned `AppHandle` (a `State<'_, _>` guard can't
+/// cross the thread boundary); `try_state` so an unmanaged store fails gracefully.
+fn set_active_project_blocking(app: &AppHandle, id: &str) -> Result<Project, String> {
+    // Single-flight: activate→retarget→reconcile is a multi-step check-and-act;
+    // a rapid re-invoke (or a concurrent create/delete) must refuse, not
+    // interleave and leave the stores pointed at a stale project.
+    let _lease = acquire_registry_lease("switch projects")?;
+    let store = app
+        .try_state::<ProjectStore>()
+        .ok_or_else(|| "project store unavailable".to_string())?;
+    let project = store.set_active(id)?;
+    retarget_tasks(app, &store);
     // Reconcile the newly-active project's worktrees: prune any whose task no
     // longer exists (the task store has just been retargeted to this project).
-    crate::orchestration::coordinator::reconcile_worktrees(&app);
-    emit_project_event(&app, &store, "activated", Some(&project));
+    crate::orchestration::coordinator::reconcile_worktrees(app);
+    emit_project_event(app, &store, "activated", Some(&project));
     Ok(project)
 }
 
@@ -253,10 +313,19 @@ pub fn is_git_repo(path: String) -> Result<bool, String> {
 
 /// Initialize a git repository at `path` (`git init`).
 #[tauri::command]
-pub fn git_init(path: String) -> Result<(), String> {
+pub async fn git_init(path: String) -> Result<(), String> {
+    // A git subprocess must not run on the main thread (WKWebView jank).
+    tauri::async_runtime::spawn_blocking(move || git_init_blocking(&path))
+        .await
+        .map_err(|e| format!("git init failed to run: {e}"))?
+}
+
+/// The blocking body of `git_init`, run off the UI thread. Validation is
+/// unchanged from the synchronous command; only the thread moved.
+fn git_init_blocking(path: &str) -> Result<(), String> {
     // Validate before spawning: absolute, canonical, existing directory, and not
     // under a system root (this WRITES a `.git` into the target).
-    let dir = validate_existing_dir(&path)?;
+    let dir = validate_existing_dir(path)?;
     reject_sensitive_root(&dir)?;
     let out = crate::platform::git_command(&dir)
         .arg("init")
@@ -324,6 +393,28 @@ mod tests {
             reject_sensitive_root(&canonical).is_ok(),
             "temp/project dir must be allowed: {}",
             canonical.display()
+        );
+    }
+
+    #[test]
+    fn registry_lease_is_single_flight_and_releases_on_drop() {
+        // The registry mutators (activate / create / delete) share ONE lease: a
+        // second acquire while the first is held must refuse (no double-fire
+        // under rapid re-invoke), and dropping the lease must re-open the gate
+        // (RAII — an early `?` return still releases).
+        let first = acquire_registry_lease("switch projects").expect("first acquire succeeds");
+        let err = match acquire_registry_lease("delete a project") {
+            Ok(_) => panic!("second concurrent acquire must refuse"),
+            Err(e) => e,
+        };
+        assert!(
+            err.contains("another project action is in progress"),
+            "refusal names the contention: {err}"
+        );
+        drop(first);
+        assert!(
+            acquire_registry_lease("switch projects").is_ok(),
+            "released lease re-acquires"
         );
     }
 

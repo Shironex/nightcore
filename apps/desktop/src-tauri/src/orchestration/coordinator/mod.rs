@@ -273,16 +273,22 @@ pub fn set_max_concurrency_cmd(app: AppHandle, n: usize) -> Result<(), String> {
 /// List the live Nightcore worktrees for the active project (M4.6 §C): each
 /// `nc/<taskId>` worktree on disk with its `{ branch, path, taskIds, dirty,
 /// aheadOfBase }`, driving the web switcher's monitor indicators. Read-only and
-/// cheap; tolerant of a missing/locked worktree (it degrades to safe defaults).
-/// Returns an empty list when there is no active project.
+/// tolerant of a missing/locked worktree (it degrades to safe defaults). The
+/// status read spawns N× git subprocesses (dirty + ahead-of-base per worktree),
+/// so it runs on the blocking pool like the sibling `refresh_worktrees` —
+/// never on the UI thread. Returns an empty list when there is no active project.
 #[tauri::command]
-pub fn list_worktrees(app: AppHandle) -> Result<Vec<worktree::WorktreeStatus>, String> {
-    let Some(project) = app.state::<ProjectStore>().active() else {
-        return Ok(Vec::new());
-    };
-    Ok(worktree::list_worktree_statuses(&PathBuf::from(
-        &project.path,
-    )))
+pub async fn list_worktrees(app: AppHandle) -> Result<Vec<worktree::WorktreeStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(project) = app.state::<ProjectStore>().active() else {
+            return Ok(Vec::new());
+        };
+        Ok(worktree::list_worktree_statuses(&PathBuf::from(
+            &project.path,
+        )))
+    })
+    .await
+    .map_err(|e| format!("list worktrees failed to run: {e}"))?
 }
 
 /// Explicitly reconcile + re-read the active project's worktrees (M4.6 §C, the

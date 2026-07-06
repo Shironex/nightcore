@@ -4,9 +4,10 @@
 //! `plan_approval.rs`: a verification-parked task has NO live session, so those
 //! permission-resolving commands don't apply here.
 
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
 
 use super::commit::require_project;
+use crate::engine_api::SessionDispatch;
 use crate::store::TaskStore;
 use crate::task::{Task, TaskStatus, TASK_EVENT};
 
@@ -108,7 +109,13 @@ pub async fn rerun_verification(
     if !orch.slots.try_lease(&id) {
         return Err("no free slot (max concurrency reached)".to_string());
     }
-    if let Err(e) = crate::sidecar::ensure_reader(&app).await {
+    // Session dispatch goes through the managed seam (issue #33) — workflow
+    // never names `crate::sidecar`.
+    let sessions = app
+        .state::<std::sync::Arc<dyn SessionDispatch>>()
+        .inner()
+        .clone();
+    if let Err(e) = sessions.ensure_reader(&app).await {
         orch.slots.release(&id);
         return Err(e);
     }
@@ -119,7 +126,7 @@ pub async fn rerun_verification(
     }) {
         let _ = app.emit(TASK_EVENT, &updated);
     }
-    if let Err(e) = crate::sidecar::dispatch_reviewer_for(&app, &id, &worktree_dir).await {
+    if let Err(e) = sessions.dispatch_reviewer(&app, &id, &worktree_dir).await {
         orch.slots.release(&id);
         if let Ok(updated) = store.mutate(&id, |t| {
             t.status = TaskStatus::WaitingApproval;

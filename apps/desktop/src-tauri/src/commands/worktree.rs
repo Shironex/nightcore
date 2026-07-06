@@ -31,14 +31,19 @@ fn task_branch(task: &Task) -> String {
 
 /// The active project's branches (local + remote-tracking) for the branch picker.
 /// Empty when there is no active project (the picker degrades to free-form entry).
+/// The git read runs off the UI thread, matching the sibling queries.
 #[tauri::command]
-pub fn list_branches(app: AppHandle) -> Result<Vec<BranchInfo>, String> {
-    let Some(project) = app.state::<ProjectStore>().active() else {
-        return Ok(Vec::new());
-    };
-    Ok(worktree::list_branches(&std::path::PathBuf::from(
-        &project.path,
-    )))
+pub async fn list_branches(app: AppHandle) -> Result<Vec<BranchInfo>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(project) = app.state::<ProjectStore>().active() else {
+            return Ok(Vec::new());
+        };
+        Ok(worktree::list_branches(&std::path::PathBuf::from(
+            &project.path,
+        )))
+    })
+    .await
+    .map_err(|e| format!("list branches failed to run: {e}"))?
 }
 
 /// Preview merging a task's worktree branch into `base` (defaults to the project's

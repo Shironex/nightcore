@@ -1,0 +1,11 @@
+# Clippy configuration for the desktop core (audit #38).
+#
+# The `rust-checks` CI job ratchets two lints on top of `-D warnings`:
+#   -W clippy::await_holding_lock  (a MutexGuard held across an .await deadlocks
+#                                   the blocking pool — catch it before it ships)
+#   -W clippy::unwrap_used         (no production unwraps in handlers; a panic in
+#                                   a Tauri command aborts across the WKWebView
+#                                   extern-"C" boundary)
+#
+# Tests may unwrap freely — that's the assertion style the suite already uses.
+allow-unwrap-in-tests = true

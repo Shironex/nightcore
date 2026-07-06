@@ -469,7 +469,7 @@ fn validation_description(
         }
         body.push('\n');
     }
-    let mut out = super::untrusted_block(&body);
+    let mut out = crate::infra::untrusted::untrusted_block(&body);
     out.push_str(&format!(
         "\n---\n_Created from an Issue Triage validation of issue #{}._\n",
         run.issue_number

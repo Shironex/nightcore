@@ -1,9 +1,12 @@
-//! The prompt-injection fence for model-derived text (issue #17 phase D).
+//! The prompt-injection fence for model-derived text (issue #17 phase D, moved
+//! to `infra` for issue #33).
 //!
 //! Extracted from `sidecar/scan.rs` into its own module so the untrusted-content
 //! boundary — the delimiter + the defuse pass that keeps a hostile finding from
-//! forging or escaping it — is auditable in one small place. Re-exported as
-//! `crate::sidecar::untrusted_block`.
+//! forging or escaping it — is auditable in one small place. Lives in `infra`
+//! (a leaf tier): it is pure text hygiene needed by BOTH the sidecar bridge and
+//! the workflow tier, and its old home under `sidecar/` forced the
+//! workflow → sidecar import edge that re-closed the engine-module cycle.
 
 /// Wrap model-derived finding/reading text so a converted task's prompt frames it as
 /// DATA, not instructions. Insight/Scorecard analysis output can quote arbitrary —

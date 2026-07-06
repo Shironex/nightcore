@@ -17,10 +17,18 @@ use super::state::{
     STATUS_FAILED, STATUS_RUNNING,
 };
 
+/// The Tauri event carrying one pr-fix state snapshot ([`PrFixState`]). Unlike
+/// the scan channels this carries the FULL state on every change (registered /
+/// committed-awaiting-push / pushed / failed), not a raw engine event — the web
+/// reconciles via `list_pr_fixes` and folds these snapshots. Lives with its one
+/// emitter (moved out of `sidecar/mod.rs` for issue #33 — the constant was the
+/// last `crate::sidecar` name the pr-fix arc reached for).
+pub(crate) const PRFIX_EVENT: &str = "nc:pr-fix";
+
 /// Emit the full state snapshot on the `nc:pr-fix` channel (the web reconciles
 /// via `list_pr_fixes` and folds these). Best-effort, like every UI emit.
 pub(super) fn emit_state(app: &AppHandle, state: &PrFixState) {
-    if let Err(e) = app.emit(crate::sidecar::PRFIX_EVENT, state) {
+    if let Err(e) = app.emit(PRFIX_EVENT, state) {
         tracing::warn!(target: "nightcore::prfix", fix_id = %state.id, error = %e, "failed to emit nc:pr-fix state");
     }
 }
