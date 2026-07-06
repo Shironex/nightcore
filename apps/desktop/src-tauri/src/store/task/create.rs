@@ -78,7 +78,16 @@ pub(crate) fn build_new_task(
     // Settings default (an SDK long id) so changing "Default model" in Settings
     // actually affects new runs. `permission_mode` stays lazily resolved at launch
     // (`resolve_permission_mode`), so `None` here means "inherit".
-    task.model = Some(inputs.model.unwrap_or_else(|| settings.default_model(pid)));
+    //
+    // B2 (issue #79/#80): a provider with no curated static catalog resolves to an
+    // EMPTY default model (see `settings::default_model_id`). Keep the task's model
+    // `None` ("inherit — the provider supplies its own default") in that case rather
+    // than stamping `Some("")` onto the wire. Claude always resolves to a real long
+    // id, so its path is byte-identical to before.
+    task.model = inputs.model.or_else(|| {
+        let resolved = settings.default_model(pid);
+        (!resolved.trim().is_empty()).then_some(resolved)
+    });
     task.effort = Some(
         inputs
             .effort
@@ -269,5 +278,30 @@ mod tests {
         // The P0 model/effort defaults are still stamped concretely.
         assert_eq!(task.model.as_deref(), Some("claude-opus-4-8"));
         assert_eq!(task.effort.as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn build_new_task_leaves_model_none_when_provider_has_no_static_default() {
+        use crate::settings::SettingsStore;
+        // B2 (issue #79/#80): a provider with no curated static catalog (e.g. Codex)
+        // resolves its default model to an empty id (see `settings::default_model_id`).
+        // A new task must keep `model: None` ("inherit — the provider supplies its own
+        // default") rather than stamping `Some("")` onto the wire.
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        settings
+            .update_for_test(serde_json::from_str(r#"{"defaultModel":""}"#).unwrap())
+            .expect("empty default model");
+        let task = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs::default(),
+        );
+        assert!(
+            task.model.is_none(),
+            "an empty resolved default must leave the task model None, not Some(\"\")"
+        );
     }
 }

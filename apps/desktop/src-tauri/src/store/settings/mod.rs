@@ -113,9 +113,41 @@ mod tests {
             "claude-haiku-4-5"
         );
         assert_eq!(known_model_id(KnownModel::ClaudeFable5), "claude-fable-5");
-        // The default is the first known model, single-sourced (not a duplicated literal).
-        assert_eq!(default_model_id(), "claude-opus-4-8");
-        assert_eq!(Settings::default().default_model, default_model_id());
+        // The Claude default is the first known model, single-sourced (not a
+        // duplicated literal). `Settings::default` (a `claude`-provider install)
+        // derives its `default_model` from the SAME provider-aware resolver.
+        assert_eq!(default_model_id("claude"), "claude-opus-4-8");
+        assert_eq!(
+            Settings::default().default_model,
+            default_model_id("claude")
+        );
+    }
+
+    #[test]
+    fn default_model_id_is_provider_aware() {
+        // B2 (issue #79/#80): a non-Claude provider must NOT fall through to a Claude
+        // model. Claude (and any unrecognized id, which the factory runs on the Claude
+        // backend) → the contract default; Codex → an empty id ("inherit — the
+        // provider supplies its own default"), never a Claude model.
+        assert_eq!(default_model_id("claude"), "claude-opus-4-8");
+        assert_eq!(
+            default_model_id("codex"),
+            "",
+            "Codex has no curated static catalog — it must not default to a Claude model"
+        );
+        // An unknown provider is treated as Claude by the factory (fallback), so a
+        // Claude default is correct for it.
+        assert_eq!(default_model_id("gemini"), "claude-opus-4-8");
+    }
+
+    #[test]
+    fn canonical_model_id_passes_foreign_provider_ids_through() {
+        // B2: `canonical_model_id` must NOT rewrite a non-Claude id into a Claude enum
+        // value — a Codex model id matches no Claude family token and is returned
+        // verbatim, and the empty id a non-Claude provider defaults to stays empty.
+        assert_eq!(canonical_model_id("gpt-5-codex"), "gpt-5-codex");
+        assert_eq!(canonical_model_id("o3"), "o3");
+        assert_eq!(canonical_model_id(""), "");
     }
 
     #[test]

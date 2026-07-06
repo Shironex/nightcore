@@ -56,12 +56,38 @@ pub fn known_model_id(model: KnownModel) -> String {
     }
 }
 
-/// The default model id — the first [`KnownModel`], single-sourced from the contract
-/// (issue #18, item 4). Used by both [`Settings::default`] and, indirectly, the
-/// legacy short-id canonicalizer below, so the default `claude-opus-4-8` is no
-/// longer hard-coded twice.
-pub fn default_model_id() -> String {
-    known_model_id(KnownModel::ClaudeOpus48)
+/// The default model id for the agent `provider` (issue #79/#80, B2). Provider-aware
+/// so a non-Claude provider never silently falls through to a Claude model:
+///
+///  - `claude` → the first [`KnownModel`], single-sourced from the contract
+///    (`claude-opus-4-8`). This is also the arm any UNKNOWN id lands in, because the
+///    provider factory treats an unrecognized id as Claude (it falls back to the
+///    Claude backend with a loud warning — see `provider::factory`), so a Claude
+///    model is the correct default for it.
+///  - `codex` → NO static default (an empty id). Codex has no curated `KnownModel`
+///    catalog — its list is fetched dynamically and is auth-filtered (see
+///    [`crate::store::model_cache`]) — and the Codex provider itself declares "no
+///    configured default", so pinning any concrete id here would be Nightcore
+///    asserting a catalog it does not own. An empty id means "inherit — the provider
+///    supplies its own default"; a live `list_models` catalog and any explicit user
+///    selection both supersede it. `create_task` keeps a task's model `None` when the
+///    resolved default is empty, so nothing stamps `Some("")` onto the wire.
+///
+/// A new non-Claude provider that ships a static default adds an arm here; until then
+/// it inherits the Claude arm's default (harmless — an unwired provider runs on the
+/// Claude backend). Takes a `&str` rather than the `provider::CLAUDE_PROVIDER_ID`
+/// const because `store` may not import the `provider` layer sideways (the layer-rank
+/// rule) — the same reason [`super::model`]'s `default_provider` keeps a `"claude"`
+/// literal.
+pub fn default_model_id(provider: &str) -> String {
+    match provider {
+        // Non-Claude providers with no curated static catalog: no default id. Empty
+        // ⇒ inherit the provider's own default (never a Claude model).
+        "codex" => String::new(),
+        // `claude` and any unrecognized id (the factory falls back to the Claude
+        // backend) → the contract's first `KnownModel`.
+        _ => known_model_id(KnownModel::ClaudeOpus48),
+    }
 }
 
 /// Canonicalize a stored model id to a known long id (the value the engine sends on
@@ -75,6 +101,12 @@ pub fn default_model_id() -> String {
 /// Only the FAMILY tokens are matched here; the long ids come from the contract via
 /// [`known_model_id`], so the catalog itself is single-sourced (this only fires for
 /// pre-P0 persisted settings).
+///
+/// Deliberately a PASS-THROUGH for foreign-provider ids (issue #79/#80, B2): a Codex
+/// model id (`gpt-5-codex`, `o3`, …) matches none of the Claude family tokens and is
+/// returned verbatim — a non-Claude id is never rewritten into a Claude enum value.
+/// The empty id a non-Claude provider defaults to (see [`default_model_id`]) likewise
+/// passes straight through.
 pub fn canonical_model_id(raw: &str) -> String {
     let lower = raw.to_ascii_lowercase();
     if lower.starts_with("claude-") {

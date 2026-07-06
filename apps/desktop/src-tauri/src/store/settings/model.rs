@@ -316,19 +316,25 @@ impl From<McpServerEntry> for crate::contracts::McpServerEntry {
 
 impl Default for Settings {
     fn default() -> Self {
+        // Derive the default model from the SAME provider the defaults ship with, so
+        // the two fields can never diverge for a fresh install (issue #79/#80, B2): a
+        // non-Claude provider gets its own default (never a Claude model), and today's
+        // `claude` default keeps the first contract `KnownModel`.
+        let provider = default_provider();
         Self {
             // The default model, single-sourced from the contract `KnownModel`
-            // (issue #18, item 4) — no longer a literal duplicated with
-            // `canonical_model_id`. See that fn for the legacy short-id fallback so
-            // old settings files still resolve.
-            default_model: super::helpers::default_model_id(),
+            // (issue #18, item 4) and now provider-aware — no longer a literal
+            // duplicated with `canonical_model_id`. See `default_model_id` for the
+            // per-provider policy and `canonical_model_id` for the legacy short-id
+            // fallback so old settings files still resolve.
+            default_model: super::helpers::default_model_id(&provider),
             default_effort: "medium".to_string(),
             max_concurrency: 3,
             // M4.7 §A1: bypass by default — new tasks run unattended with no
             // approval prompts. A per-task override re-enables prompting.
             permission_mode: "bypass".to_string(),
-            // Issue #18: the Claude Agent is the only shipped provider.
-            provider: default_provider(),
+            // Issue #18: the Claude Agent is the default shipped provider.
+            provider,
             cleanup_worktrees: true,
             notify_on_complete: false,
             default_run_mode: default_run_mode_value(),
