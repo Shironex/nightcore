@@ -30,7 +30,7 @@ pub(crate) fn merge_in_flight() -> &'static Mutex<HashSet<String>> {
 /// creation holds the task and vice versa), since the per-action `TaskLease`
 /// only serializes an action with itself.
 pub(crate) fn lease_held(set: &'static Mutex<HashSet<String>>, id: &str) -> bool {
-    set.lock().unwrap_or_else(|e| e.into_inner()).contains(id)
+    crate::sync::lock_or_recover(set).contains(id)
 }
 
 /// RAII membership in one of the in-flight sets: inserts on acquire, removes on drop —
@@ -44,7 +44,7 @@ pub(crate) struct TaskLease {
 
 impl TaskLease {
     pub(crate) fn acquire(set: &'static Mutex<HashSet<String>>, id: &str) -> Option<Self> {
-        let mut guard = set.lock().unwrap_or_else(|e| e.into_inner());
+        let mut guard = crate::sync::lock_or_recover(set);
         guard.insert(id.to_string()).then(|| Self {
             id: id.to_string(),
             set,
@@ -54,10 +54,7 @@ impl TaskLease {
 
 impl Drop for TaskLease {
     fn drop(&mut self) {
-        self.set
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&self.id);
+        crate::sync::lock_or_recover(self.set).remove(&self.id);
     }
 }
 

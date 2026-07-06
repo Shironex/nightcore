@@ -13,6 +13,10 @@
 //! the board and transitioning to `done`/`failed` on completion.
 
 mod analysis;
+// Crate-wide architecture guard tests (audit #38): layer-boundary scans + the
+// sync-command allowlist ratchet. Test-only; compiled out of every real build.
+#[cfg(test)]
+mod arch_guards;
 mod bindings;
 mod commands;
 mod contracts;

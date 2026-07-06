@@ -213,8 +213,12 @@ jobs:
       # externalBin exists (the Tauri build script requires it) and the cargo
       # cache is warm. Lives here, NOT in lint-meta: the Bun lint job has no
       # Tauri system deps and would red the gate.
+      # Two opt-in ratchets on top of -D warnings (audit #38): a MutexGuard held
+      # across an .await (deadlocks the pool) and production unwraps (a panic in a
+      # handler aborts across the WKWebView extern-"C" boundary). Tests may unwrap
+      # (clippy.toml: allow-unwrap-in-tests).
       - name: cargo clippy -D warnings
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --all-targets -- -D warnings -W clippy::await_holding_lock -W clippy::unwrap_used
         working-directory: apps/desktop/src-tauri
       # ts-rs regenerate-and-diff guard. cargo test rewrote the bindings above; if
       # they differ from what is committed, a Rust struct changed without the
