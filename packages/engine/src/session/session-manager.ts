@@ -12,8 +12,6 @@ import type {
   ModelDescriptor,
   NightcoreEvent,
   NightcoreEventOf,
-  SessionInfo,
-  SessionMessage as WireSessionMessage,
   SessionRecord,
   SessionStatus,
   SurfaceCommand,
@@ -23,63 +21,15 @@ import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionStore } from '@nightcore/storage';
 
 import { resolveKindPreset } from '../providers/claude/kind-presets.js';
+import {
+  toModelDescriptor,
+  toWireSessionInfo,
+  toWireSessionMessage,
+} from '../providers/claude/mappers.js';
 import { ProviderConfigReader } from '../providers/claude/provider-config.js';
-import type { ModelInfo } from '../providers/claude/sdk-adapter.js';
-import { type SDKSessionInfo, SessionApi, type SessionMessage } from '../providers/claude/session-api.js';
+import { SessionApi } from '../providers/claude/session-api.js';
 import { SessionRunner } from '../providers/claude/session-runner.js';
 import { ScanRouter } from '../scans/scan-router.js';
-
-/**
- * Map an SDK `ModelInfo` to a contract `ModelDescriptor`. Pure so it can be
- * unit-tested without spinning a live query. The SDK marks `supportsEffort` /
- * `supportedEffortLevels` optional; default to the most-conservative values.
- */
-export function toModelDescriptor(info: ModelInfo): ModelDescriptor {
-  return {
-    value: info.value,
-    displayName: info.displayName,
-    description: info.description,
-    supportsEffort: info.supportsEffort ?? false,
-    supportedEffortLevels: info.supportedEffortLevels ?? [],
-  };
-}
-
-/** Map the SDK's `SDKSessionInfo` onto the contract `SessionInfo`, renaming
- *  `sessionId` → `sdkSessionId` (the wire vocabulary) and forwarding the rest
- *  field-for-field. Pure, so it is unit-testable without a live SDK. Optional
- *  fields are omitted when absent to match the `.optional()` wire shape. */
-export function toWireSessionInfo(info: SDKSessionInfo): SessionInfo {
-  return {
-    sdkSessionId: info.sessionId,
-    summary: info.summary,
-    lastModified: info.lastModified,
-    ...(info.fileSize !== undefined ? { fileSize: info.fileSize } : {}),
-    ...(info.customTitle !== undefined ? { customTitle: info.customTitle } : {}),
-    ...(info.firstPrompt !== undefined ? { firstPrompt: info.firstPrompt } : {}),
-    ...(info.gitBranch !== undefined ? { gitBranch: info.gitBranch } : {}),
-    ...(info.cwd !== undefined ? { cwd: info.cwd } : {}),
-    ...(info.tag !== undefined ? { tag: info.tag } : {}),
-    ...(info.createdAt !== undefined ? { createdAt: info.createdAt } : {}),
-  };
-}
-
-/** Map the SDK's `SessionMessage` (snake_case, `message: unknown`) onto the
- *  contract `SessionMessage` (camelCase wire keys, `message` as an object record).
- *  A non-object `message` is coerced to an empty record so a malformed transcript
- *  line can't violate the contract. `parent_tool_use_id` is `string | null`. */
-export function toWireSessionMessage(msg: SessionMessage): WireSessionMessage {
-  const message =
-    typeof msg.message === 'object' && msg.message !== null
-      ? (msg.message as Record<string, unknown>)
-      : {};
-  return {
-    type: msg.type,
-    uuid: msg.uuid,
-    sessionId: msg.session_id,
-    message,
-    parentToolUseId: msg.parent_tool_use_id,
-  };
-}
 
 interface ManagedSession {
   id: number;
