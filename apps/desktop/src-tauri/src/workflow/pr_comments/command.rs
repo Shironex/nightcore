@@ -359,7 +359,10 @@ pub async fn address_pr_comments(
     }
     // Session dispatch goes through the managed seam (issue #33) — workflow
     // never names `crate::sidecar`.
-    let sessions = app.state::<std::sync::Arc<dyn SessionDispatch>>().inner().clone();
+    let sessions = app
+        .state::<std::sync::Arc<dyn SessionDispatch>>()
+        .inner()
+        .clone();
     if let Err(e) = sessions.ensure_reader(&app).await {
         orch.slots.release(&id);
         return Err(e);
@@ -371,7 +374,9 @@ pub async fn address_pr_comments(
     }) {
         let _ = app.emit(TASK_EVENT, &updated);
     }
-    if let Err(e) = sessions.dispatch_pr_comment_fix(&app, &id, &prompt, &worktree_dir).await
+    if let Err(e) = sessions
+        .dispatch_pr_comment_fix(&app, &id, &prompt, &worktree_dir)
+        .await
     {
         orch.slots.release(&id);
         // Restore the pre-flip state — a transient dispatch failure must not strand

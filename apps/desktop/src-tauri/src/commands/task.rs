@@ -245,8 +245,7 @@ fn add_task_attachments_blocking(
     let existing = store
         .get(id)
         .ok_or_else(|| format!("no task with id {id}"))?;
-    let new_refs =
-        crate::store::attachments::persist(app, id, &existing.attachments, attachments)?;
+    let new_refs = crate::store::attachments::persist(app, id, &existing.attachments, attachments)?;
     // Commit the refs; if the task vanished between the read and the write, delete the
     // files we just persisted so a failed add leaves no orphans (mirrors create_task).
     let to_commit = new_refs.clone();

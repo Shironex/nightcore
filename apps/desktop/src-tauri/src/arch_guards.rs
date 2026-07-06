@@ -27,7 +27,9 @@ mod tests {
     fn sources(subtree: &str) -> Vec<PathBuf> {
         let mut out = Vec::new();
         collect(
-            &Path::new(env!("CARGO_MANIFEST_DIR")).join("src").join(subtree),
+            &Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("src")
+                .join(subtree),
             &mut out,
         );
         out
@@ -87,12 +89,26 @@ mod tests {
     /// crate-root facade aliases (`lib.rs`) that would otherwise hide an upward
     /// edge behind `crate::task` / `crate::merge` / `crate::gauntlet`.
     const ABOVE_GIT: &[&str] = &[
-        "store", "worktree", "provider", "analysis", "orchestration", "sidecar", "workflow",
-        "commands", "bindings",
+        "store",
+        "worktree",
+        "provider",
+        "analysis",
+        "orchestration",
+        "sidecar",
+        "workflow",
+        "commands",
+        "bindings",
         // store facades
-        "project", "settings", "task", "transcript",
+        "project",
+        "settings",
+        "task",
+        "transcript",
         // workflow facades
-        "gauntlet", "gauntlet_project", "kind", "merge", "plan_approval",
+        "gauntlet",
+        "gauntlet_project",
+        "kind",
+        "merge",
+        "plan_approval",
     ];
 
     #[test]
@@ -305,6 +321,9 @@ mod tests {
             1,
             "exactly the real import line is flagged: {found:?}"
         );
-        assert!(found[0].starts_with("1:"), "the offence is line 1: {found:?}");
+        assert!(
+            found[0].starts_with("1:"),
+            "the offence is line 1: {found:?}"
+        );
     }
 }

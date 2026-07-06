@@ -111,7 +111,10 @@ pub async fn rerun_verification(
     }
     // Session dispatch goes through the managed seam (issue #33) — workflow
     // never names `crate::sidecar`.
-    let sessions = app.state::<std::sync::Arc<dyn SessionDispatch>>().inner().clone();
+    let sessions = app
+        .state::<std::sync::Arc<dyn SessionDispatch>>()
+        .inner()
+        .clone();
     if let Err(e) = sessions.ensure_reader(&app).await {
         orch.slots.release(&id);
         return Err(e);

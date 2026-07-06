@@ -66,7 +66,13 @@ pub trait PersistedRun: Clone + Serialize + DeserializeOwned {
     /// the authoritative `*-completed` event. Status/error stamping stays with the
     /// caller ([`set_status`](Self::set_status) / [`set_error`](Self::set_error));
     /// this only maps the shared telemetry onto the run's own usage struct.
-    fn set_telemetry(&mut self, cost_usd: f64, duration_ms: u64, input_tokens: u64, output_tokens: u64);
+    fn set_telemetry(
+        &mut self,
+        cost_usd: f64,
+        duration_ms: u64,
+        input_tokens: u64,
+        output_tokens: u64,
+    );
 
     /// ADD one intermediate pass's spend onto the run's totals (the mid-run
     /// accumulate path, so a cancelled run still shows what it spent). The terminal
@@ -311,7 +317,11 @@ impl<R: PersistedRun> RunStore<R> {
                 .collect();
             by_age.sort_by_key(|(_, created)| *created);
             let to_remove = guard.len().saturating_sub(MAX_RUNS);
-            by_age.into_iter().take(to_remove).map(|(id, _)| id).collect()
+            by_age
+                .into_iter()
+                .take(to_remove)
+                .map(|(id, _)| id)
+                .collect()
         };
         for id in victims {
             // Serialize with same-id writers, then re-check under the fresh map view:
@@ -544,7 +554,10 @@ impl<R: PersistedRun> RunStore<R> {
                 .map(|i| {
                     (
                         i.fingerprint().to_string(),
-                        (i.status().to_string(), i.linked_task_id().map(str::to_string)),
+                        (
+                            i.status().to_string(),
+                            i.linked_task_id().map(str::to_string),
+                        ),
                     )
                 })
                 .collect();

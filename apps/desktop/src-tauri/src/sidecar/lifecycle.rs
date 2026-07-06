@@ -205,4 +205,5 @@ mod tests {
             window.contains("tauri::async_runtime::spawn(async move {"),
             "finish_run must launch interrupt_all via the guarded tauri::async_runtime::spawn"
         );
-    }}
+    }
+}

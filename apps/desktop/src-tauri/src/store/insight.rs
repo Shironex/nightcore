@@ -672,7 +672,10 @@ mod tests {
         let results: Vec<Result<(), String>> =
             handles.into_iter().map(|h| h.join().unwrap()).collect();
         let admitted = results.iter().filter(|r| r.is_ok()).count();
-        assert_eq!(admitted, 1, "exactly one racing start is admitted: {results:?}");
+        assert_eq!(
+            admitted, 1,
+            "exactly one racing start is admitted: {results:?}"
+        );
         assert_eq!(store.list().len(), 1, "the refused run is not persisted");
     }
 

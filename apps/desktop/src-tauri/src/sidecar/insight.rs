@@ -21,12 +21,12 @@ use crate::store::insight::{InsightRun, InsightStore, InsightUsage, StoredFindin
 use crate::store::TaskStore;
 use crate::task::{sanitize_minted_title, Task, TaskKind, TASK_EVENT};
 
-use crate::infra::untrusted::untrusted_block;
 use super::scan::{
     begin_scan_run, dispatch_scan_command, failure_reason, finalize_scan_items,
     reconcile_scan_history, scan_lifecycle_commands, wire_str, ScanRunInit, ScanTelemetry,
 };
 use super::INSIGHT_EVENT;
+use crate::infra::untrusted::untrusted_block;
 
 // The four store-agnostic lifecycle commands (list / get / delete / cancel), stamped
 // from the shared scan macro instead of hand-copied per feature.
