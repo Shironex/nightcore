@@ -57,6 +57,22 @@ export * from './motion';
 export type { NumberFieldProps } from './NumberField';
 export { NumberField } from './NumberField';
 export { Pill } from './Pill';
+export type {
+  KnownProviderId,
+  ProviderGlyph,
+  ProviderGlyphProps,
+  ProviderIconProps,
+} from './ProviderIcon';
+export {
+  getProviderIconForModel,
+  inferProviderFromModel,
+  knownProviderFrom,
+  PROVIDER_GLYPHS,
+  providerGlyphFor,
+  ProviderIcon,
+  providerLabel,
+  resolveProviderForModel,
+} from './ProviderIcon';
 export { RepoLink } from './RepoLink';
 export type { RunLifecycleShellProps, RunPhase } from './RunLifecycleShell';
 export { RunLifecycleShell } from './RunLifecycleShell';
