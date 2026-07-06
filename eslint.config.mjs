@@ -217,6 +217,7 @@ export default tseslint.config(
       // ui = shadcn primitives (the cross-feature escape hatch, skipped dir).
       'nightcore/no-cross-feature-imports': ['error', { sharedFeatures: ['ui'] }],
       'nightcore/max-hooks-per-file': 'error',
+      'nightcore/max-hook-return-surface': 'error',
       'nightcore/max-props-per-component': 'error',
       'nightcore/no-prop-drilling': 'error',
     },
@@ -236,6 +237,26 @@ export default tseslint.config(
     ],
     rules: {
       'nightcore/max-props-per-component': ['error', { max: 40 }],
+    },
+  },
+  // Freeze-at-worst carve-out for `nightcore/max-hook-return-surface` (issue
+  // #53): the 7 pre-existing god-controller returns (HarnessView 77, AppShell
+  // 54, PrReviewView 54, IssueTriageView 44, InsightView 40, NewTaskForm 33,
+  // ScorecardView 23) may not grow past 80. The board-state + web-struct
+  // refactors dismantle these controllers and delete entries — the list only
+  // shrinks; severity stays `error` (`no-warn-severity` is ciCritical).
+  {
+    files: [
+      'apps/web/src/components/app/AppShell/AppShell.hooks.ts',
+      'apps/web/src/components/board/NewTaskForm/NewTaskForm.hooks.ts',
+      'apps/web/src/components/harness/HarnessView/HarnessView.hooks.ts',
+      'apps/web/src/components/insight/InsightView/InsightView.hooks.ts',
+      'apps/web/src/components/issues/IssueTriageView/IssueTriageView.hooks.ts',
+      'apps/web/src/components/prreview/PrReviewView/PrReviewView.hooks.ts',
+      'apps/web/src/components/scorecard/ScorecardView/ScorecardView.hooks.ts',
+    ],
+    rules: {
+      'nightcore/max-hook-return-surface': ['error', { max: 80 }],
     },
   },
   // Carve-out for `nightcore/no-prop-drilling` (issue #52): the pre-existing
