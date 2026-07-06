@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use super::fetch::{fetch_review_comments_with, GH_COMMENTS_TIMEOUT};
 use super::triage::triage_threads;
 use super::{PrCommentTriage, PrCommentTriageClass, PrReviewComments};
+use crate::engine_api::SessionDispatch;
 use crate::git::gh::GH_BINARY;
 use crate::store::TaskStore;
 use crate::task::{Task, TaskStatus, TASK_EVENT};
@@ -157,7 +158,7 @@ pub(super) fn build_fix_prompt(
             // Author is trusted metadata (a GitHub login) OUTSIDE the fence; the
             // body is UNTRUSTED and fenced.
             out.push_str(&format!("From {}:\n", comment.author));
-            out.push_str(&crate::sidecar::untrusted_block(&comment.body));
+            out.push_str(&crate::infra::untrusted::untrusted_block(&comment.body));
         }
         out.push('\n');
     }
@@ -167,7 +168,7 @@ pub(super) fn build_fix_prompt(
             "--- Review by {} ({}) ---\n",
             review.author, review.state
         ));
-        out.push_str(&crate::sidecar::untrusted_block(&review.body));
+        out.push_str(&crate::infra::untrusted::untrusted_block(&review.body));
         out.push('\n');
     }
 
@@ -356,7 +357,10 @@ pub async fn address_pr_comments(
     if !orch.slots.try_lease(&id) {
         return Err("no free slot (max concurrency reached)".to_string());
     }
-    if let Err(e) = crate::sidecar::ensure_reader(&app).await {
+    // Session dispatch goes through the managed seam (issue #33) — workflow
+    // never names `crate::sidecar`.
+    let sessions = app.state::<std::sync::Arc<dyn SessionDispatch>>().inner().clone();
+    if let Err(e) = sessions.ensure_reader(&app).await {
         orch.slots.release(&id);
         return Err(e);
     }
@@ -367,7 +371,7 @@ pub async fn address_pr_comments(
     }) {
         let _ = app.emit(TASK_EVENT, &updated);
     }
-    if let Err(e) = crate::sidecar::dispatch_pr_comment_fix(&app, &id, &prompt, &worktree_dir).await
+    if let Err(e) = sessions.dispatch_pr_comment_fix(&app, &id, &prompt, &worktree_dir).await
     {
         orch.slots.release(&id);
         // Restore the pre-flip state — a transient dispatch failure must not strand

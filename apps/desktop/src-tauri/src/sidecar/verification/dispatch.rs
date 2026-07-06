@@ -130,6 +130,57 @@ pub(crate) async fn dispatch_pr_comment_fix(
     dispatch_build_fix(app, task_id, prompt.to_string(), worktree_dir).await
 }
 
+/// Start a pr-fix session over a managed PR checkout (moved here from
+/// `workflow::pr_fix::command` for issue #33 — session dispatch is sidecar-side,
+/// reached through the `SessionDispatch` seam): correlation id = the FIX id (the
+/// reader intercept's routing key), `kind=build` over the checkout, default
+/// permission mode, and project-scoped guardrails (no per-task ceilings — a
+/// pr-fix has no task).
+pub(crate) async fn dispatch_pr_fix_build(
+    app: &AppHandle,
+    fix_id: &str,
+    prompt: String,
+    dir: &Path,
+) -> Result<(), String> {
+    crate::sidecar::ensure_reader(app).await?;
+    let provider = app.state::<std::sync::Arc<SidecarProvider>>();
+    let permission_mode = resolve_permission_mode(app, None);
+    provider
+        .start_session(
+            fix_id,
+            prompt,
+            // Model/effort: core defaults (no task to inherit from).
+            None,
+            None,
+            Some(dir.to_path_buf()),
+            permission_mode,
+            TaskKind::Build.as_wire(),
+            // No image attachments: the fix works from the findings text.
+            Vec::new(),
+            fix_guardrails(app, fix_id),
+        )
+        .await
+}
+
+/// The project-scoped [`Guardrails`](crate::provider::Guardrails) for a pr-fix
+/// session: the reviewer/fix sub-run shape (`dispatch_build_fix`) minus the
+/// per-task ceilings — a pr-fix has no task, so `max_turns`/`max_budget_usd`
+/// inherit the `@nightcore/config` defaults and it is never resumed. The
+/// flight-recorder ledger is keyed by the fix id (its own file beside the task
+/// ledgers).
+fn fix_guardrails(app: &AppHandle, fix_id: &str) -> crate::provider::Guardrails {
+    crate::provider::Guardrails {
+        max_turns: None,
+        max_budget_usd: None,
+        resume_session_id: None,
+        mcp_servers: resolve_mcp_servers(app),
+        append_context_pack: resolve_context_pack(app),
+        harness_policy: resolve_harness_policy(app),
+        ledger_path: resolve_ledger_path(app, fix_id),
+        sandbox_writes: resolve_sandbox_writes(app),
+    }
+}
+
 /// The shared body of the two fix-build dispatchers: start a `kind=build` session
 /// over `worktree_dir` with the given ready-built `prompt` and the task's
 /// ceilings/policy. [`dispatch_fix`] (a reviewer verdict) and

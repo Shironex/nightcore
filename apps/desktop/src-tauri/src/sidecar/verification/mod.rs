@@ -13,8 +13,9 @@ mod verdict;
 
 // Module facade: preserve the historical `verification::*` paths after the split so
 // call sites elsewhere keep resolving unchanged — `reader.rs` imports
-// `verification::{handle_build_completed, handle_review_completed}`, and
-// `sidecar/mod.rs` re-exports `verification::{dispatch_reviewer_for, MAX_FIX_ATTEMPTS}`.
+// `verification::{handle_build_completed, handle_review_completed}`, `seam.rs`
+// (the `SessionDispatch` adapter, issue #33) reaches the dispatchers as
+// `verification::*`, and `sidecar/mod.rs` re-exports `verification::MAX_FIX_ATTEMPTS`.
 // Each glob carries its submodule's original visibility.
 //
 // `verdict`'s pure helpers are reached in-crate via `super::verdict` (handlers) and

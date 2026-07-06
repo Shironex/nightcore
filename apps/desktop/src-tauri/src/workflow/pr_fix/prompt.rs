@@ -3,7 +3,7 @@
 //! trusted framing (PR/branch header, per-finding lens/severity/line metadata,
 //! the closing instruction) sits OUTSIDE the fence; every model-derived finding
 //! field — file, title, body, suggested fix — is wrapped by
-//! [`crate::sidecar::untrusted_block`], which also defuses a forged closing
+//! [`crate::infra::untrusted::untrusted_block`], which also defuses a forged closing
 //! delimiter — so review text is a DESCRIPTION of a problem to fix, never an
 //! instruction that redirects the agent.
 
@@ -50,7 +50,7 @@ pub(super) fn build_fix_prompt(
             body.push_str("\n\nSuggested fix: ");
             body.push_str(fix);
         }
-        out.push_str(&crate::sidecar::untrusted_block(&body));
+        out.push_str(&crate::infra::untrusted::untrusted_block(&body));
         out.push('\n');
     }
 
@@ -98,7 +98,7 @@ pub(super) fn build_ci_prompt(
             body.push_str("\n\n");
             body.push_str(&check.description);
         }
-        out.push_str(&crate::sidecar::untrusted_block(&body));
+        out.push_str(&crate::infra::untrusted::untrusted_block(&body));
         out.push('\n');
     }
     out.push_str(CLOSING_INSTRUCTION);
@@ -128,7 +128,7 @@ pub(super) fn build_conflicts_prompt(
          and leave the in-progress merge in place — committing the resolution is handled \
          automatically when you finish.\n\n"
     ));
-    out.push_str(&crate::sidecar::untrusted_block(&files.join("\n")));
+    out.push_str(&crate::infra::untrusted::untrusted_block(&files.join("\n")));
     out.push('\n');
     out.push_str(CLOSING_INSTRUCTION);
     out

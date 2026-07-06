@@ -126,6 +126,11 @@ pub fn run() {
             app.manage(workflow::pr_fix::PrFixRegistry::default());
             app.manage(std::sync::Arc::new(orchestration::EngineHandle)
                 as std::sync::Arc<dyn engine_api::EngineApi>);
+            // The mirror seam for the other direction (issue #33): workflow's
+            // session-dispatching commands reach the sidecar bridge through
+            // `SessionDispatch`, never as `crate::sidecar::*`.
+            app.manage(std::sync::Arc::new(sidecar::SidecarSessions)
+                as std::sync::Arc<dyn engine_api::SessionDispatch>);
             app.manage(log_guard);
 
             // Startup reconciliation: prune orphaned worktrees from the active

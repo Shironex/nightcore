@@ -19,7 +19,6 @@
 
 mod commands;
 mod convert;
-mod fence;
 mod harness;
 mod insight;
 mod issue_triage;
@@ -28,6 +27,7 @@ mod pr_review;
 mod provider_config;
 mod reader;
 mod scan;
+mod seam;
 mod scorecard;
 mod sessions;
 mod verification;
@@ -58,14 +58,10 @@ pub(crate) use pr_review::*;
 // The Issue Triage commands + the reader-side `issue-validation-*` handler (glob so the
 // `#[tauri::command]` macro siblings resolve through `sidecar::*` for `generate_handler!`).
 pub(crate) use issue_triage::*;
-pub(crate) use verification::dispatch_reviewer_for;
-// The PR-comment fix-build dispatcher (PR arc, phase 3): `workflow::pr_comments`
-// reaches it as `crate::sidecar::dispatch_pr_comment_fix`, a peer of the reviewer.
-pub(crate) use verification::dispatch_pr_comment_fix;
-// The untrusted-content fence (`fence` is a private module): re-exported so the PR
-// review-comment prompt in `workflow::pr_comments` can wrap UNTRUSTED GitHub
-// comment bodies as `crate::sidecar::untrusted_block`.
-pub(crate) use fence::untrusted_block;
+// The workflow-facing session dispatchers are no longer re-exported here: the
+// workflow tier reaches them through the managed `Arc<dyn SessionDispatch>` seam
+// (`seam::SidecarSessions` — issue #33), never as `crate::sidecar::*`.
+pub(crate) use seam::SidecarSessions;
 // Re-exported only to keep the `crate::sidecar::MAX_FIX_ATTEMPTS` intra-doc link
 // in `task.rs` resolving; no code outside `verification` reads it through here.
 #[allow(unused_imports)]
@@ -134,13 +130,6 @@ pub(crate) const PRREVIEW_EVENT: &str = "nc:pr-review";
 /// completion. `convert_issue_validation_to_task` also emits an
 /// `issue-validation-converted` notice on this channel.
 pub(crate) const ISSUE_TRIAGE_EVENT: &str = "nc:issue-triage";
-
-/// The Tauri event carrying one pr-fix state snapshot (`PrFixState`, the
-/// address-review-findings runner in [`crate::workflow::pr_fix`]). Unlike the
-/// scan channels this carries the FULL state on every change (registered /
-/// committed-awaiting-push / pushed / failed), not a raw engine event — the web
-/// reconciles via `list_pr_fixes` and folds these snapshots.
-pub(crate) const PRFIX_EVENT: &str = "nc:pr-fix";
 
 /// The maximum byte length of a single NDJSON line accepted from the sidecar's
 /// stdout. Legitimate events (lifecycle, deltas, even large tool-result content)
