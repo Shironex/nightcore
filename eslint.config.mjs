@@ -218,6 +218,7 @@ export default tseslint.config(
       'nightcore/no-cross-feature-imports': ['error', { sharedFeatures: ['ui'] }],
       'nightcore/max-hooks-per-file': 'error',
       'nightcore/max-props-per-component': 'error',
+      'nightcore/no-prop-drilling': 'error',
     },
   },
   // Freeze-at-worst carve-out for `nightcore/max-props-per-component` (issue
@@ -235,6 +236,24 @@ export default tseslint.config(
     ],
     rules: {
       'nightcore/max-props-per-component': ['error', { max: 40 }],
+    },
+  },
+  // Carve-out for `nightcore/no-prop-drilling` (issue #52): the pre-existing
+  // forwarded-bundle chains (Board→Column 14, Column→TaskCard 9,
+  // TaskDetail→TaskDetailChrome 9, ValidateControls→ModelEffortPicker 4,
+  // WorktreeManager→WorktreeRow 4). The board refactor dismantles these chains
+  // and deletes entries from this list — it only shrinks. `off` is the only
+  // legal suppression (`no-warn-severity` is ciCritical).
+  {
+    files: [
+      'apps/web/src/components/board/Board/Board.tsx',
+      'apps/web/src/components/board/Column/Column.tsx',
+      'apps/web/src/components/board/TaskDetail/TaskDetail.tsx',
+      'apps/web/src/components/issues/ValidateControls/ValidateControls.tsx',
+      'apps/web/src/components/worktree/WorktreeManager/WorktreeManager.tsx',
+    ],
+    rules: {
+      'nightcore/no-prop-drilling': 'off',
     },
   },
   // Composition roots (the app shell) wire features together by design, so the

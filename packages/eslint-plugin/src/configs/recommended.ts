@@ -12,6 +12,7 @@ export const recommendedRules: TSESLint.FlatConfig.Rules = {
   'nightcore/no-cross-feature-imports': 'off',
   'nightcore/max-hooks-per-file': 'off',
   'nightcore/max-props-per-component': 'off',
+  'nightcore/no-prop-drilling': 'off',
   'nightcore/no-deep-package-imports': 'off',
   'nightcore/zod-schema-naming': 'off',
   'nightcore/wire-message-naming': 'off',
