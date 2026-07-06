@@ -11,7 +11,7 @@ import {
 import { summarizeInput } from '@/lib/summarize';
 
 import type { SessionGroup, SessionPhase, TimelineEntry } from '../session-stream';
-import { formatCost, modelDisplayName } from '../status';
+import { formatCostUsd, modelDisplayName } from '../status';
 import { useCappedEntries, useCollapse, useStickToBottom } from './ActivityLog.hooks';
 import type { ActivityLogProps } from './ActivityLog.types';
 
@@ -113,7 +113,7 @@ const SessionLog = memo(function SessionLog({
   const meta = [
     session.model !== null ? modelDisplayName(session.model) : null,
     toolCount > 0 ? `${toolCount} ${toolCount === 1 ? 'tool' : 'tools'}` : null,
-    costUsd !== null ? formatCost(costUsd) : null,
+    costUsd !== null ? formatCostUsd(costUsd) : null,
   ].filter((x): x is string => x !== null);
 
   return (

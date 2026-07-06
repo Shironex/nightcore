@@ -1,11 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fn } from 'storybook/test';
 
-import { QuestionPrompt } from './QuestionPrompt';
+import { QuestionPromptCard } from './QuestionPromptCard';
 
 const meta = {
-  title: 'Board/QuestionPrompt',
-  component: QuestionPrompt,
+  title: 'Board/QuestionPromptCard',
+  component: QuestionPromptCard,
   parameters: { layout: 'centered' },
   args: { onAnswer: fn() },
   decorators: [
@@ -15,7 +15,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof QuestionPrompt>;
+} satisfies Meta<typeof QuestionPromptCard>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;

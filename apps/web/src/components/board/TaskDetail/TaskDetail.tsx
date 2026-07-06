@@ -25,7 +25,7 @@ import { PrReviewComments, usePrReviewComments } from '../PrReviewComments';
 import { PrStatusCard, usePrStatus } from '../PrStatusCard';
 import { ReviewPanel } from '../ReviewPanel';
 import { GroupLabel, HistoryCard, SessionCard } from '../SessionCard';
-import { formatCost, STATUS_LABEL, STATUS_TEXT } from '../status';
+import { formatCostUsd, STATUS_LABEL, STATUS_TEXT } from '../status';
 import { TaskAttachments } from '../TaskAttachments';
 import { TaskStatusDot } from '../TaskStatusDot';
 import {
@@ -208,7 +208,7 @@ const TaskDetailChrome = memo(function TaskDetailChrome({
             </span>
             {cost !== null && (
               <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
-                · {formatCost(cost)}
+                · {formatCostUsd(cost)}
               </span>
             )}
           </div>

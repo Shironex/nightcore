@@ -21,7 +21,7 @@ import {
 } from '@/components/ui';
 
 import { useTaskActions } from '../actions';
-import { formatCost, modelDisplayName, modelDotColor } from '../status';
+import { formatCostUsd, modelDisplayName, modelDotColor } from '../status';
 import {
   ACTION_BASE,
   ACTION_DANGER,
@@ -147,7 +147,7 @@ function TaskCardImpl({
             )}
             {!running && !verifying && task.costUsd !== null && (
               <span className="font-mono text-[10.5px] tabular-nums text-muted-foreground">
-                {formatCost(task.costUsd)}
+                {formatCostUsd(task.costUsd)}
               </span>
             )}
           </span>

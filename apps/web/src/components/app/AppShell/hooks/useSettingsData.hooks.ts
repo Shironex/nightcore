@@ -10,8 +10,7 @@ import {
   type SettingsPatch,
   updateSettings,
 } from '@/lib/bridge';
-
-import { useAsyncData } from './useAsyncData.hooks';
+import { useAsyncData } from '@/lib/useAsyncData';
 
 /** Live settings, kept in memory and patched through `update_settings`. */
 export function useSettingsData(toast: ToastApi) {

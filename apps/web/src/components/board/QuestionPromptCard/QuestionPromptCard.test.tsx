@@ -2,7 +2,7 @@ import { composeStories } from '@storybook/react-vite';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
-import * as stories from './QuestionPrompt.stories';
+import * as stories from './QuestionPromptCard.stories';
 
 const { SingleQuestion, MultiSelect } = composeStories(stories);
 

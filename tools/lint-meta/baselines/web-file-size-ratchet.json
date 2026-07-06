@@ -9,6 +9,5 @@
   "apps/web/src/components/prreview/ReviewFindings/ReviewFindings.tsx": 413,
   "apps/web/src/components/prreview/prreview-lifecycle.ts": 468,
   "apps/web/src/components/settings/McpServersCard/McpServersCard.tsx": 402,
-  "apps/web/src/components/settings/SettingsView/SettingsView.tsx": 596,
   "apps/web/src/lib/bridge/events.ts": 697
 }

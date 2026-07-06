@@ -2,8 +2,8 @@ import { composeStories } from '@storybook/react-vite';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
-import { summarizeInput, truncate } from './PermissionPrompt.hooks';
-import * as stories from './PermissionPrompt.stories';
+import { summarizeInput, truncate } from './PermissionPromptCard.hooks';
+import * as stories from './PermissionPromptCard.stories';
 
 const { ShellCommand } = composeStories(stories);
 

@@ -1,8 +1,8 @@
 import { Badge, BellIcon } from '@/components/ui';
 
 import { useTaskActions } from '../actions';
-import { PermissionPrompt } from '../PermissionPrompt';
-import { QuestionPrompt } from '../QuestionPrompt';
+import { PermissionPromptCard } from '../PermissionPromptCard';
+import { QuestionPromptCard } from '../QuestionPromptCard';
 import { interactionCount } from './InteractionDock.hooks';
 import type { InteractionDockProps } from './InteractionDock.types';
 
@@ -39,14 +39,14 @@ export function InteractionDock({
       <div className="max-h-[50vh] space-y-2 overflow-auto px-4 pb-4">
         {/* Questions first: they block the model's reasoning, not just a tool call. */}
         {questionPrompts.map((prompt) => (
-          <QuestionPrompt
+          <QuestionPromptCard
             key={prompt.requestId}
             prompt={prompt}
             onAnswer={(requestId, answer) => onAnswerQuestion?.(taskId, requestId, answer)}
           />
         ))}
         {permissionPrompts.map((prompt) => (
-          <PermissionPrompt
+          <PermissionPromptCard
             key={prompt.requestId}
             prompt={prompt}
             onRespond={(requestId, decision) =>
