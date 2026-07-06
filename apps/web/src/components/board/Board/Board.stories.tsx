@@ -10,6 +10,7 @@ import {
 
 import { BLOCKED_TASK, makeTaskActions, TASKS_BY_STATUS, WORKTREES } from '../_fixtures';
 import { TaskActionsProvider } from '../actions';
+import { BoardChromeProvider, type BoardChromeValue } from '../chrome';
 import { Board } from './Board';
 import type { BoardProps } from './Board.types';
 
@@ -17,16 +18,35 @@ import type { BoardProps } from './Board.types';
  *  their handlers from `TaskActionsContext` now, not Board props. */
 const STORY_ACTIONS = makeTaskActions();
 
-/** The story fixture: the board wrapped in the two providers it now requires —
- *  task actions for the cards, and the worktrees slice for the switcher + the
- *  board's worktree filter. The worktree cluster stays story ARGS so plays and
- *  tests keep overriding it per render. */
+/** The board-chrome cluster (appearance + auto-loop) the board + its BoardHeader
+ *  consume from `BoardChromeContext` — surfaced as story ARGS so plays and tests
+ *  keep overriding individual fields (`autoMode`, `breaker`, the handlers) per
+ *  render, exactly as they did when these were Board props. */
+type ChromeArgs = Partial<BoardChromeValue>;
+
+/** The story fixture: the board wrapped in the three providers it now requires —
+ *  task actions for the cards, the board-chrome cluster for the header/banner, and
+ *  the worktrees slice for the switcher + the board's worktree filter. The chrome +
+ *  worktree clusters stay story ARGS so plays and tests keep overriding them. */
 function BoardFixture({
   worktrees,
   activeWorktree,
   onSelectWorktree,
   onRemoveWorktree,
   onRefreshWorktrees,
+  appearanceOverride = null,
+  backgroundVersion = null,
+  onChangeAppearance,
+  onPickBackground,
+  onClearBackground,
+  concurrency = 3,
+  autoMode = false,
+  autoCommitOnVerified = false,
+  breaker = null,
+  onToggleAutoMode,
+  onAutoCommitChange,
+  onConcurrencyChange,
+  onResume,
   ...props
 }: BoardProps & {
   worktrees: WorktreeInfo[];
@@ -34,20 +54,38 @@ function BoardFixture({
   onSelectWorktree?: (active: ActiveWorktree) => void;
   onRemoveWorktree?: (tab: RemovableWorktreeTab) => void;
   onRefreshWorktrees?: () => void;
-}) {
+} & ChromeArgs) {
   return (
     <TaskActionsProvider actions={STORY_ACTIONS}>
-      <WorktreesProvider
+      <BoardChromeProvider
         value={{
-          worktrees,
-          activeWorktree,
-          setActiveWorktree: onSelectWorktree ?? (() => {}),
-          removeWorktree: onRemoveWorktree ?? (() => {}),
-          refreshWorktrees: onRefreshWorktrees ?? (() => {}),
+          appearanceOverride,
+          backgroundVersion,
+          onChangeAppearance: onChangeAppearance ?? (() => {}),
+          onPickBackground: onPickBackground ?? (() => {}),
+          onClearBackground: onClearBackground ?? (() => {}),
+          concurrency,
+          autoMode,
+          autoCommitOnVerified,
+          breaker,
+          onToggleAutoMode: onToggleAutoMode ?? (() => {}),
+          onAutoCommitChange: onAutoCommitChange ?? (() => {}),
+          onConcurrencyChange: onConcurrencyChange ?? (() => {}),
+          onResume: onResume ?? (() => {}),
         }}
       >
-        <Board {...props} />
-      </WorktreesProvider>
+        <WorktreesProvider
+          value={{
+            worktrees,
+            activeWorktree,
+            setActiveWorktree: onSelectWorktree ?? (() => {}),
+            removeWorktree: onRemoveWorktree ?? (() => {}),
+            refreshWorktrees: onRefreshWorktrees ?? (() => {}),
+          }}
+        >
+          <Board {...props} />
+        </WorktreesProvider>
+      </BoardChromeProvider>
     </TaskActionsProvider>
   );
 }

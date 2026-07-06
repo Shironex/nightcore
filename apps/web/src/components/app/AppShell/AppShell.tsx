@@ -1,6 +1,12 @@
 import { lazy, Suspense } from 'react';
 
-import { Board, EMPTY_TRANSCRIPT, NewTaskForm, TaskActionsProvider } from '@/components/board';
+import {
+  Board,
+  BoardChromeProvider,
+  EMPTY_TRANSCRIPT,
+  NewTaskForm,
+  TaskActionsProvider,
+} from '@/components/board';
 import { NewProjectDialog } from '@/components/new-project';
 import {
   AnimatePresence,
@@ -109,9 +115,8 @@ export function AppShell() {
     routing,
     registry,
     settings,
-    autoLoop,
     newProject,
-    appearance,
+    chrome,
     board,
     worktrees,
     confirm,
@@ -177,6 +182,7 @@ export function AppShell() {
     // memos in `AppShell.hooks.ts`), so neither churns its consumers per-frame.
     <TaskActionsProvider actions={board.detailActions}>
     <WorktreesProvider value={worktrees}>
+    <BoardChromeProvider value={chrome}>
       {showProjects ? (
         <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
           {browserPreviewBanner}
@@ -253,19 +259,6 @@ export function AppShell() {
                   projectName={active.name}
                   projectPath={active.path}
                   projectBranch={active.branch}
-                  appearanceOverride={
-                    settings.settings?.projectOverrides[active.id]?.boardAppearance ?? null
-                  }
-                  backgroundVersion={
-                    settings.settings?.projectOverrides[active.id]?.boardBackground?.version ?? null
-                  }
-                  onChangeAppearance={appearance.onChangeAppearance}
-                  onPickBackground={appearance.onPickBackground}
-                  onClearBackground={appearance.onClearBackground}
-                  concurrency={autoLoop.concurrency}
-                  autoMode={autoLoop.autoMode}
-                  autoCommitOnVerified={settings.settings?.autoCommitOnVerified ?? false}
-                  breaker={autoLoop.breaker}
                   selectedId={selectedId}
                   logCounts={board.logCounts}
                   blockedIds={board.blockedIds}
@@ -273,10 +266,6 @@ export function AppShell() {
                   onNewTask={routing.openNewTask}
                   onMoveTask={board.handleMoveTask}
                   onClearColumn={board.requestClear}
-                  onToggleAutoMode={autoLoop.toggleAutoMode}
-                  onAutoCommitChange={appearance.onAutoCommitChange}
-                  onConcurrencyChange={autoLoop.changeConcurrency}
-                  onResume={autoLoop.resume}
                 />
               )}
             </div>
@@ -458,6 +447,7 @@ export function AppShell() {
         onConfirm={confirm.confirm}
         onCancel={confirm.cancel}
       />
+    </BoardChromeProvider>
     </WorktreesProvider>
     </TaskActionsProvider>
   );

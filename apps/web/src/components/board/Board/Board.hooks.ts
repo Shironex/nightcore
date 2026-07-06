@@ -6,9 +6,9 @@ import { useCallback, useDeferredValue, useEffect, useMemo, useState } from 'rea
 import type { Task } from '@/lib/bridge';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
+import type { BreakerInfo } from '../chrome';
 import { type ColumnDef,COLUMNS } from '../status';
 import { filterTasksByWorktree } from '../WorktreeSwitcher';
-import type { BreakerInfo } from './Board.types';
 
 /** A board column paired with the tasks currently grouped into it. */
 export interface BoardColumn {
@@ -120,12 +120,6 @@ export function useDisclosure(): { open: boolean; show: () => void; hide: () => 
     show: useCallback(() => setOpen(true), []),
     hide: useCallback(() => setOpen(false), []),
   };
-}
-
-/** Open/close state for the read-only provider-config inspector (the header
- *  entry point owns its own toggle; the panel is a self-contained sheet). */
-export function useInspector(): { open: boolean; show: () => void; hide: () => void } {
-  return useDisclosure();
 }
 
 /** Whether to show the circuit-breaker banner: visible while a breaker is set

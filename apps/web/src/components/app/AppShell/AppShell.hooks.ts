@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import {
+  type BoardChromeValue,
   EMPTY_TRANSCRIPT,
   isActive,
   type PickedBackgroundImage,
@@ -202,9 +203,12 @@ export interface AppShellState {
    *  memoized here and provided to the board switcher, the board's worktree
    *  filter, and the standalone WorktreeView via `WorktreesProvider`. */
   worktrees: WorktreesContextValue;
-  /** The Board header's project-scoped appearance + auto-commit handlers,
-   *  memoized so the four wirings stay referentially stable across stream flushes. */
-  appearance: BoardChromeActions;
+  /** The board-chrome cluster (appearance override/version + auto-loop) delivered
+   *  to the Board and its `BoardHeader` via `BoardChromeProvider`. One shell-memoized
+   *  low-churn value: it re-identifies only on a loop event (`nc:loop`), a settings
+   *  write, or a project switch — never on a per-frame `nc:session` stream flush — so
+   *  providing it through context can't defeat the board's memo economy. */
+  chrome: BoardChromeValue;
   /** The shared destructive-delete confirmation (card trash + column Clear),
    *  rendered by AppShell as a single `ConfirmDialog`. */
   confirm: ReturnType<typeof useDestructiveConfirm>;
@@ -834,13 +838,58 @@ export function useAppShell(): AppShellState {
     [activeProjectId, applySettings, applyBackground, applyClearBackground],
   );
 
+  // The active project's persisted board-appearance override + background version
+  // (or null when unset / no active project) — read from settings, previously
+  // computed inline in AppShell.tsx's Board props, now folded into the chrome value.
+  const projectOverride =
+    activeProjectId === null ? undefined : settings.settings?.projectOverrides[activeProjectId];
+  const appearanceOverride = projectOverride?.boardAppearance ?? null;
+  const backgroundVersion = projectOverride?.boardBackground?.version ?? null;
+  const autoCommitOnVerified = settings.settings?.autoCommitOnVerified ?? false;
+
+  // The full board-chrome cluster (the four project-scoped appearance handlers +
+  // the derived override/version + the auto-loop cluster), assembled as one stable
+  // value for the `BoardChromeProvider`. Every source is low-churn — the `appearance`
+  // memo (project switch / settings-callback change), the `nc:loop`-driven auto-loop
+  // fields, and settings-write values — so this re-identifies only on a loop event,
+  // a settings write, or a project switch, never on a per-frame `nc:session` flush.
+  const chrome = useMemo<BoardChromeValue>(
+    () => ({
+      appearanceOverride,
+      backgroundVersion,
+      onChangeAppearance: appearance.onChangeAppearance,
+      onPickBackground: appearance.onPickBackground,
+      onClearBackground: appearance.onClearBackground,
+      concurrency: autoLoop.concurrency,
+      autoMode: autoLoop.autoMode,
+      autoCommitOnVerified,
+      breaker: autoLoop.breaker,
+      onToggleAutoMode: autoLoop.toggleAutoMode,
+      onAutoCommitChange: appearance.onAutoCommitChange,
+      onConcurrencyChange: autoLoop.changeConcurrency,
+      onResume: autoLoop.resume,
+    }),
+    [
+      appearanceOverride,
+      backgroundVersion,
+      appearance,
+      autoLoop.concurrency,
+      autoLoop.autoMode,
+      autoCommitOnVerified,
+      autoLoop.breaker,
+      autoLoop.toggleAutoMode,
+      autoLoop.changeConcurrency,
+      autoLoop.resume,
+    ],
+  );
+
   return {
     routing,
     registry,
     settings,
     autoLoop,
     newProject,
-    appearance,
+    chrome,
     board: {
       ...board,
       anyRunning,
