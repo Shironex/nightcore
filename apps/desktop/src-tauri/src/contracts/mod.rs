@@ -22,6 +22,13 @@
 mod generated;
 pub use generated::*;
 
+// The hand-written ts-rs `TaskKind` (the Rust→TS source for `TaskKind.ts` + the
+// type on `Task.kind`). Homed here — a wire/contract enum — but NOT glob-exported
+// at the module root: `pub use generated::*` already binds `contracts::TaskKind`
+// to the zod→Rust wire enum. Reached via `crate::contracts::task_kind::TaskKind`
+// and back-compat re-exported at `crate::task::TaskKind` (issue #17 phase A.3b).
+pub(crate) mod task_kind;
+
 /// Whether a failure of this structured [`ErrorCategory`] should trip the breaker
 /// IMMEDIATELY rather than accumulate toward the sliding-window threshold. A
 /// fatal-setup cause won't fix itself by running more tasks — auth is broken for
@@ -40,11 +47,10 @@ pub(crate) fn trips_breaker_immediately(category: ErrorCategory) -> bool {
     matches!(category, ErrorCategory::Auth | ErrorCategory::DiskFull)
 }
 
-// The inverse direction: Rust serde structs → the web's TS bindings (`ts-rs`).
-// Test-only — the `#[ts(export)]` codegen + its drift guard run under `cargo test`,
-// never in the shipped binary.
-#[cfg(test)]
-mod ts_bindings;
+// The inverse direction — Rust serde structs → the web's TS bindings (`ts-rs`) —
+// lives in the top-rank `crate::bindings` module (issue #17 phase A.4): the ts-rs
+// aggregator references types across every tier, so it can't live in this rank-1
+// leaf. Keeping it out is what lets `contracts` be an exemption-free leaf.
 
 #[cfg(test)]
 mod tests {
@@ -410,10 +416,10 @@ mod tests {
     /// the two Rust copies: the zod schema, the codegen'd
     /// [`generated::TaskKind`](super::generated) (zod→Rust, its stable name matched
     /// by value-set in `tools/codegen/gen-rust-contracts.ts`'s `ENUM_NAMES`), and
-    /// the hand-written `store::task::TaskKind` (Rust→ts-rs→web). The
-    /// `codegen:contracts --check` guard covers zod↔generated; this test covers
-    /// generated↔store, so the whole chain is guarded and a kind added on only one
-    /// side reds the gate. Each enum's wire vocabulary is built from an EXHAUSTIVE
+    /// the hand-written [`task_kind::TaskKind`](super::task_kind) (Rust→ts-rs→web).
+    /// The `codegen:contracts --check` guard covers zod↔generated; this test covers
+    /// generated↔hand-written, so the whole chain is guarded and a kind added on
+    /// only one side reds the gate. Each enum's wire vocabulary is built from an EXHAUSTIVE
     /// match, so a newly-added variant also fails to COMPILE here until its arm is
     /// added — the array beside it must gain the same variant in the same edit.
     #[test]
@@ -440,9 +446,9 @@ mod tests {
                 .collect()
         }
 
-        // Rust→ts-rs side: wire string via the store enum's own `as_wire()`.
+        // Rust→ts-rs side: wire string via the hand-written enum's own `as_wire()`.
         fn store_wire() -> BTreeSet<String> {
-            use crate::task::TaskKind as K;
+            use super::task_kind::TaskKind as K;
             [K::Build, K::Research, K::Review, K::Decompose, K::Tdd]
                 .into_iter()
                 .map(|k| {
@@ -457,9 +463,9 @@ mod tests {
         assert_eq!(
             generated_wire(),
             store_wire(),
-            "generated::TaskKind and store::task::TaskKind carry different \
+            "generated::TaskKind and contracts::task_kind::TaskKind carry different \
              variant/wire sets — adding a task kind touches zod + ENUM_NAMES + the \
-             store enum + as_wire(); one site was missed."
+             contracts task_kind enum + as_wire(); one site was missed."
         );
     }
 }

@@ -13,6 +13,7 @@
 //! the board and transitioning to `done`/`failed` on completion.
 
 mod analysis;
+mod bindings;
 mod commands;
 mod contracts;
 mod engine_api;

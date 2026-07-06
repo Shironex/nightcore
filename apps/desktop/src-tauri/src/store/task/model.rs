@@ -42,41 +42,11 @@ pub enum TaskStatus {
     Failed,
 }
 
-/// The kind of work a task represents (M4 §A). The shared contract between the
-/// Rust core (which owns each kind's ORCHESTRATION policy in `kind.rs`) and the
-/// engine (which owns its AGENT DEFINITION). `build` is the default and reproduces
-/// pre-M4 behavior; `tdd` is a build-like test-first variant; `decompose` proposes
-/// sub-tasks; `research` investigates read-only; `review` is the internal
-/// verification reviewer's identity (not user-selectable in the picker).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
-#[cfg_attr(test, derive(TS))]
-#[serde(rename_all = "snake_case")]
-#[cfg_attr(test, ts(export, export_to = "TaskKind.ts"))]
-pub enum TaskKind {
-    #[default]
-    Build,
-    Research,
-    Review,
-    Decompose,
-    /// Test-first build: the agent writes a failing test, then implements until
-    /// green. Orchestrated identically to `Build` (own worktree + verification);
-    /// only the engine's AGENT DEFINITION (the test-first persona) differs.
-    Tdd,
-}
-
-impl TaskKind {
-    /// The snake_case wire string the provider sends in `start-session` and the
-    /// engine resolves to an agent preset.
-    pub fn as_wire(&self) -> &'static str {
-        match self {
-            TaskKind::Build => "build",
-            TaskKind::Research => "research",
-            TaskKind::Review => "review",
-            TaskKind::Decompose => "decompose",
-            TaskKind::Tdd => "tdd",
-        }
-    }
-}
+// `TaskKind` (the ts-rs source for `TaskKind.ts` + the type on `Task.kind`) is a
+// wire/contract enum, so it is homed in `contracts` (issue #17 phase A.3b). It is
+// re-exported here so `crate::task::TaskKind` and `super::model::TaskKind` resolve
+// unchanged for the `Task` struct and every referrer.
+pub use crate::contracts::task_kind::TaskKind;
 
 /// Lifecycle of one [`ProposedSubtask`] (Decompose §B). `open` until the user
 /// converts it into a board task, then `converted` (with `linked_task_id` set).

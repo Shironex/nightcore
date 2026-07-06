@@ -1,15 +1,7 @@
-//! Rust→TS contract codegen + its drift guard (the INVERSE of `generated.rs`).
+//! The ts-rs export aggregator + its regenerate-and-diff drift guard.
 //!
-//! The web's IPC layer (`apps/web/src/lib/bridge.ts`) used to hand-mirror the Rust
-//! serde structs (`Task`, `Settings`, `Project`, `WorktreeInfo`, `GauntletResult`,
-//! the `nc:loop` payload, …) as TypeScript interfaces — so a Rust field rename
-//! silently broke the board at runtime. Those interfaces are now GENERATED from the
-//! Rust types via `ts-rs`: each `#[derive(TS)] #[ts(export, export_to = "…")]` type
-//! writes its `.ts` binding into `apps/web/src/lib/generated/` when `cargo test`
-//! runs, and the bridge imports them.
-//!
-//! Two layers keep the two sides from drifting (mirroring the zod→Rust guard in
-//! `mod.rs`):
+//! Two layers keep the Rust and TS sides from drifting (mirroring the zod→Rust
+//! guard in `contracts::mod`):
 //!
 //!  1. **Export-on-test**: ts-rs emits a hidden test per `#[ts(export)]` type that
 //!     writes its binding to disk during `cargo test`. [`export_all_bindings`]
@@ -22,7 +14,6 @@
 //!     uncommitted binding change and fails the guard LOUDLY — exactly like
 //!     `bun run codegen:contracts --check` does for the zod→Rust direction.
 
-#[cfg(test)]
 use ts_rs::TS;
 
 /// Export every Rust→TS boundary binding to `TS_RS_EXPORT_DIR`
@@ -30,7 +21,6 @@ use ts_rs::TS;
 /// via its own ts-rs-generated test; this is the single documented umbrella so the
 /// full boundary set is visible in one place. Panics on an export error so a broken
 /// codegen fails the test rather than silently skipping a type.
-#[cfg(test)]
 fn export_all_bindings() {
     use crate::analysis::injection_scan::InjectionFlag;
     use crate::commands::policy::{HarnessPolicyFile, HarnessPolicyPatch, PolicyDiffBudget};
