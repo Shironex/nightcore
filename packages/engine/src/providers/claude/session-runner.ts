@@ -6,17 +6,23 @@
  * crashes into `session-failed` events rather than throwing.
  */
 import type {
+  ModelDescriptor,
   NightcoreEvent,
   PermissionMode,
+  ProviderConfigSnapshot,
   QuestionAnswer,
   WireImage,
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
-import { HookBus } from '../policy/hook-bus.js';
-import { type ApprovalDecision,PermissionLayer } from '../policy/permission-layer.js';
-import { ASK_USER_QUESTION_DIALOG,QuestionLayer } from '../policy/question-layer.js';
-import { ToolRegistry } from '../policy/tool-registry.js';
+import { ToolRegistry } from '../../policy/tool-registry.js';
+import { SessionLedger } from '../../session/session-ledger.js';
+import type { AgentSession } from '../agent-provider.js';
+import { HookBus } from './hook-bus.js';
+import { toModelDescriptor } from './mappers.js';
+import { type ApprovalDecision,PermissionLayer } from './permission-layer.js';
+import { ProviderConfigReader } from './provider-config.js';
+import { ASK_USER_QUESTION_DIALOG,QuestionLayer } from './question-layer.js';
 import { checkClaudeCliVersion, resolveClaudeBinary } from './resolve-claude-binary.js';
 import { prepareWriteSandbox } from './sandbox.js';
 import {
@@ -34,7 +40,6 @@ import {
   type SlashCommand,
   translateMessage,
 } from './sdk-adapter.js';
-import { SessionLedger } from './session-ledger.js';
 import {
   buildUserMessageContent,
   SessionOptionsBuilder,
@@ -116,7 +121,7 @@ const IDLE_STALLED = Symbol('idle-stalled');
  * the SDK's control requests are available — `interrupt()` / `setModel()` etc.
  * are only supported in streaming mode.
  */
-export class SessionRunner {
+export class SessionRunner implements AgentSession {
   private query?: Query;
   private readonly abort = new AbortController();
   private readonly permissions: PermissionLayer;
@@ -190,6 +195,13 @@ export class SessionRunner {
         }),
       logger,
     );
+  }
+
+  /** The effective autonomy ceiling this session runs under ({@link AgentSession}).
+   *  The provider resolved it (override / kind preset / default); the supervisor
+   *  reads it back for the session record + `session-started` event. */
+  get permissionMode(): PermissionMode {
+    return this.cfg.permissionMode;
   }
 
   /** Drive the query loop to completion. Resolves when the session reaches a
@@ -408,6 +420,16 @@ export class SessionRunner {
   }
 
   /**
+   * The neutral {@link AgentSession} autonomy control. Phase 1 carries the wire
+   * `PermissionMode` vocabulary through unchanged: for Claude this is a thin bridge
+   * onto the SDK `setPermissionMode` control request (the provider owns the mapping
+   * to the neutral `AutonomyLevel`; Phase 3 swaps the parameter). No behavior change.
+   */
+  async setAutonomy(mode: PermissionMode): Promise<void> {
+    await this.setPermissionMode(mode);
+  }
+
+  /**
    * Live context-window usage for this session (`Query.getContextUsage()`).
    * Returns `undefined` when no live query is open. This is the engine-side proxy
    * a future surface gauge can consume.
@@ -448,6 +470,28 @@ export class SessionRunner {
    */
   async supportedModels(): Promise<ModelInfo[]> {
     return this.probeControl((q) => q.supportedModels(), []);
+  }
+
+  /**
+   * The {@link AgentSession} model list: the SDK's dynamic models mapped to wire
+   * `ModelDescriptor`s so the supervisor never touches an SDK `ModelInfo`. Degrades
+   * to `[]` via `supportedModels()`.
+   */
+  async listModels(): Promise<ModelDescriptor[]> {
+    return (await this.supportedModels()).map(toModelDescriptor);
+  }
+
+  /**
+   * The {@link AgentSession} provider-config read: the resolved, scope-aware config
+   * for `projectPath`, probed off this runner's shared subprocess (reused when live,
+   * transient otherwise) and returned as a wire {@link ProviderConfigSnapshot}. The
+   * reader degrades per section, so the snapshot always resolves.
+   */
+  async probeConfig(projectPath: string): Promise<ProviderConfigSnapshot> {
+    return new ProviderConfigReader(this.logger?.child('provider-config')).read(
+      this,
+      projectPath,
+    );
   }
 
   /**

@@ -1,9 +1,14 @@
 /**
- * The session supervisor: owns live `SessionRunner`s keyed by monotonic id,
+ * The session supervisor: owns live agent sessions keyed by monotonic id,
  * dispatches surface commands and queries, persists session records, and forwards
  * the typed engine event stream. Delegates the `runId`-keyed scan command families
- * (analysis / harness / scorecard / pr-review) to a {@link ScanRouter} collaborator,
- * and exposes SDK→wire mappers.
+ * (analysis / harness / scorecard / pr-review) to a {@link ScanRouter} collaborator.
+ *
+ * Provider-neutral (issue #18): it constructs and drives sessions through the
+ * {@link AgentProvider} seam and speaks only `NightcoreEvent` / contract types — no
+ * Claude Agent SDK shape reaches this file. The provider is injectable (defaulting to
+ * {@link ClaudeAgentProvider}) so a config-driven factory (Phase 4) and the
+ * fail-closed gate-battery test can swap the implementation.
  */
 import { EventEmitter } from 'node:events';
 
@@ -12,8 +17,6 @@ import type {
   ModelDescriptor,
   NightcoreEvent,
   NightcoreEventOf,
-  SessionInfo,
-  SessionMessage as WireSessionMessage,
   SessionRecord,
   SessionStatus,
   SurfaceCommand,
@@ -22,68 +25,23 @@ import type {
 import { createMonotonicCounter, type Logger } from '@nightcore/shared';
 import { SessionStore } from '@nightcore/storage';
 
-import { ProviderConfigReader } from '../providers/provider-config.js';
+import type {
+  AgentProvider,
+  AgentSession,
+  StartSessionParams,
+} from '../providers/agent-provider.js';
+import { AutonomyNotPermittedError } from '../providers/agent-provider.js';
+import { ClaudeAgentProvider } from '../providers/claude/claude-agent-provider.js';
+import {
+  toWireSessionInfo,
+  toWireSessionMessage,
+} from '../providers/claude/mappers.js';
+import { SessionApi } from '../providers/claude/session-api.js';
 import { ScanRouter } from '../scans/scan-router.js';
-import { resolveKindPreset } from './kind-presets.js';
-import type { ModelInfo } from './sdk-adapter.js';
-import { type SDKSessionInfo, SessionApi, type SessionMessage } from './session-api.js';
-import { SessionRunner } from './session-runner.js';
-
-/**
- * Map an SDK `ModelInfo` to a contract `ModelDescriptor`. Pure so it can be
- * unit-tested without spinning a live query. The SDK marks `supportsEffort` /
- * `supportedEffortLevels` optional; default to the most-conservative values.
- */
-export function toModelDescriptor(info: ModelInfo): ModelDescriptor {
-  return {
-    value: info.value,
-    displayName: info.displayName,
-    description: info.description,
-    supportsEffort: info.supportsEffort ?? false,
-    supportedEffortLevels: info.supportedEffortLevels ?? [],
-  };
-}
-
-/** Map the SDK's `SDKSessionInfo` onto the contract `SessionInfo`, renaming
- *  `sessionId` → `sdkSessionId` (the wire vocabulary) and forwarding the rest
- *  field-for-field. Pure, so it is unit-testable without a live SDK. Optional
- *  fields are omitted when absent to match the `.optional()` wire shape. */
-export function toWireSessionInfo(info: SDKSessionInfo): SessionInfo {
-  return {
-    sdkSessionId: info.sessionId,
-    summary: info.summary,
-    lastModified: info.lastModified,
-    ...(info.fileSize !== undefined ? { fileSize: info.fileSize } : {}),
-    ...(info.customTitle !== undefined ? { customTitle: info.customTitle } : {}),
-    ...(info.firstPrompt !== undefined ? { firstPrompt: info.firstPrompt } : {}),
-    ...(info.gitBranch !== undefined ? { gitBranch: info.gitBranch } : {}),
-    ...(info.cwd !== undefined ? { cwd: info.cwd } : {}),
-    ...(info.tag !== undefined ? { tag: info.tag } : {}),
-    ...(info.createdAt !== undefined ? { createdAt: info.createdAt } : {}),
-  };
-}
-
-/** Map the SDK's `SessionMessage` (snake_case, `message: unknown`) onto the
- *  contract `SessionMessage` (camelCase wire keys, `message` as an object record).
- *  A non-object `message` is coerced to an empty record so a malformed transcript
- *  line can't violate the contract. `parent_tool_use_id` is `string | null`. */
-export function toWireSessionMessage(msg: SessionMessage): WireSessionMessage {
-  const message =
-    typeof msg.message === 'object' && msg.message !== null
-      ? (msg.message as Record<string, unknown>)
-      : {};
-  return {
-    type: msg.type,
-    uuid: msg.uuid,
-    sessionId: msg.session_id,
-    message,
-    parentToolUseId: msg.parent_tool_use_id,
-  };
-}
 
 interface ManagedSession {
   id: number;
-  runner: SessionRunner;
+  runner: AgentSession;
   record: SessionRecord;
 }
 
@@ -105,19 +63,27 @@ export class SessionManager {
   private readonly store: SessionStore;
   private readonly apiKeyFallback: boolean;
   private readonly sessionApi: SessionApi;
-  private readonly providerConfig: ProviderConfigReader;
+  private readonly provider: AgentProvider;
   private readonly scans: ScanRouter;
 
   constructor(
     private readonly config: Config,
     private readonly logger?: Logger,
+    /** The agent provider that constructs + drives sessions. Injectable so a
+     *  config-driven factory (Phase 4) and the fail-closed gate-battery test can
+     *  swap it; defaults to the Claude implementation. */
+    provider?: AgentProvider,
   ) {
     this.store = new SessionStore(config.paths.sessions, logger);
     this.sessionApi = new SessionApi(logger?.child('session-api'));
-    this.providerConfig = new ProviderConfigReader(
-      logger?.child('provider-config'),
-    );
     this.apiKeyFallback = Boolean(process.env.ANTHROPIC_API_KEY);
+    this.provider =
+      provider ??
+      new ClaudeAgentProvider(
+        config,
+        { apiKeyFallback: this.apiKeyFallback },
+        logger,
+      );
     // Scan orchestration is a separate concern: the router owns the four scan
     // managers and their dispatch, emitting through this supervisor's event sink.
     this.scans = new ScanRouter({
@@ -182,7 +148,10 @@ export class SessionManager {
         await session.runner.setModel(command.model);
         break;
       case 'set-permission-mode':
-        await session.runner.setPermissionMode(command.mode);
+        // The wire command still carries a permission mode; the neutral session
+        // control bridges it to the provider's autonomy primitive (Phase 3 renames
+        // the wire command to autonomy).
+        await session.runner.setAutonomy(command.mode);
         break;
       case 'approve-permission':
         if (!session.runner.approvePermission(command.requestId, command.decision))
@@ -297,17 +266,14 @@ export class SessionManager {
             };
       }
       case 'get-provider-config': {
-        // The inspector reads RESOLVED, scope-aware config off a transient SDK
+        // The inspector reads RESOLVED, scope-aware config off a transient provider
         // probe rooted at the project dir (resolution keys off cwd). Reuse a live
-        // runner when one exists; else spin the input-less probe runner — the
-        // reader shares ONE subprocess and degrades per section, so the snapshot
+        // session when one exists; else spin the input-less probe session — the
+        // provider shares ONE subprocess and degrades per section, so the snapshot
         // always resolves (`ok: true`).
         const projectPath = query.dir ?? process.cwd();
-        const runner = this.firstLiveRunner() ?? this.makeProbeRunner();
-        const providerConfig = await this.providerConfig.read(
-          runner,
-          projectPath,
-        );
+        const session = this.firstLiveRunner() ?? this.makeProbeSession();
+        const providerConfig = await session.probeConfig(projectPath);
         return {
           type: 'query-result',
           requestId,
@@ -335,40 +301,24 @@ export class SessionManager {
    */
   async listModels(): Promise<ModelDescriptor[]> {
     try {
-      const runner = this.firstLiveRunner() ?? this.makeProbeRunner();
-      const models = await runner.supportedModels();
-      return models.map(toModelDescriptor);
+      const session = this.firstLiveRunner() ?? this.makeProbeSession();
+      return await session.listModels();
     } catch (error) {
       this.logger?.debug('listModels() failed; returning empty list', error);
       return [];
     }
   }
 
-  /** Any currently-live runner, to piggyback its already-open query. */
-  private firstLiveRunner(): SessionRunner | undefined {
+  /** Any currently-live session, to piggyback its already-open query. */
+  private firstLiveRunner(): AgentSession | undefined {
     for (const session of this.sessions.values()) return session.runner;
     return undefined;
   }
 
-  /** A runner used only to probe `supportedModels()`. It never runs a session —
-   *  `supportedModels()` spins and tears down its own transient query. */
-  private makeProbeRunner(): SessionRunner {
-    return new SessionRunner(
-      {
-        sessionId: -1,
-        prompt: '',
-        model: this.config.model,
-        effort: this.config.effort,
-        permissionMode: this.config.permissions.mode,
-        permissionPolicy: this.config.permissions,
-        cwd: process.cwd(),
-        apiKeyFallback: this.apiKeyFallback,
-        settingSources: this.config.settingSources,
-        todoFeatureEnabled: this.config.todoFeatureEnabled,
-      },
-      () => {},
-      this.logger?.child('model-probe'),
-    );
+  /** A transient probe session (model list / provider-config inspection). It never
+   *  runs a turn — the provider's probe spins and tears down its own query. */
+  private makeProbeSession(): AgentSession {
+    return this.provider.createProbeSession(this.logger?.child('model-probe'));
   }
 
   private startSession(
@@ -383,21 +333,80 @@ export class SessionManager {
     // uncapped unless the task or config sets it.
     const maxTurns = command.maxTurns ?? this.config.maxTurns;
     const maxBudgetUsd = command.maxBudgetUsd ?? this.config.maxBudgetUsd;
-    // Resume: prefer the explicit command id (the recovery path supplies the
-    // persisted `sdkSessionId`); a cold start omits it entirely.
-    const resumeSessionId = command.resumeSessionId;
 
-    // Resolve the task kind to its agent preset (system prompt + tool
-    // restrictions + a DEFAULT permission mode). Absent kind ⇒ `build` ⇒ an
-    // empty preset, so the session keeps its default behavior.
-    const preset = resolveKindPreset(command.kind);
-    // Permission-mode precedence: an explicit command mode wins, then the kind's
-    // default, then the configured session default.
-    const permissionMode =
-      command.permissionMode ??
-      preset.permissionMode ??
-      this.config.permissions.mode;
+    // Neutral start params. The provider owns the kind preset, the permission-mode
+    // precedence (override → preset default → configured default), and the whole
+    // SDK-facing config assembly; the supervisor only resolves the plain
+    // `?? config default` knobs and forwards the command's runtime inputs verbatim
+    // (MCP servers, context pack, harness policy, ledger path, OS sandbox request,
+    // resume id, images, task kind).
+    const params: StartSessionParams = {
+      sessionId: id,
+      prompt: command.prompt,
+      model,
+      cwd,
+      maxTurns,
+      ...(command.images !== undefined ? { images: command.images } : {}),
+      ...(effort !== undefined ? { effort } : {}),
+      ...(command.permissionMode !== undefined
+        ? { permissionModeOverride: command.permissionMode }
+        : {}),
+      ...(command.kind !== undefined ? { kind: command.kind } : {}),
+      ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
+      ...(command.resumeSessionId !== undefined
+        ? { resumeSessionId: command.resumeSessionId }
+        : {}),
+      ...(command.mcpServers !== undefined
+        ? { mcpServers: command.mcpServers }
+        : {}),
+      ...(command.appendContextPack !== undefined
+        ? { appendContextPack: command.appendContextPack }
+        : {}),
+      ...(command.harnessPolicy !== undefined
+        ? { harnessPolicy: command.harnessPolicy }
+        : {}),
+      ...(command.ledgerPath !== undefined
+        ? { ledgerPath: command.ledgerPath }
+        : {}),
+      ...(command.sandboxWrites !== undefined
+        ? { sandboxWrites: command.sandboxWrites }
+        : {}),
+    };
 
+    // Construct the run through the provider seam. The fail-closed hooks invariant
+    // runs inside `startSession`: a provider that can't enforce PreToolUse
+    // confinement at the requested autonomy REFUSES here rather than silently
+    // dropping confinement. Surface the refusal as a terminal `session-failed` so the
+    // board shows it like any other failure and the concurrency slot is never taken.
+    let runner: AgentSession;
+    try {
+      runner = this.provider.startSession(
+        params,
+        (event) => this.handleEvent(id, event),
+        this.logger?.child(`session-${id}`),
+      );
+    } catch (error) {
+      if (error instanceof AutonomyNotPermittedError) {
+        this.logger?.warn('session refused: autonomy not permitted', {
+          id,
+          providerId: error.providerId,
+          autonomy: error.autonomy,
+        });
+        this.emit({
+          type: 'session-failed',
+          sessionId: id,
+          reason: 'runner-crash',
+          message: error.message,
+        });
+        return id;
+      }
+      throw error;
+    }
+
+    // The provider resolved the effective autonomy (override / kind preset /
+    // configured default); read it back for the persisted record + the
+    // `session-started` event.
+    const permissionMode = runner.permissionMode;
     const record: SessionRecord = {
       id,
       prompt: command.prompt,
@@ -407,82 +416,6 @@ export class SessionManager {
       status: 'starting',
       createdAt: Date.now(),
     };
-
-    const runner = new SessionRunner(
-      {
-        sessionId: id,
-        prompt: command.prompt,
-        images: command.images,
-        model,
-        effort,
-        permissionMode,
-        permissionPolicy: this.config.permissions,
-        cwd,
-        apiKeyFallback: this.apiKeyFallback,
-        settingSources: this.config.settingSources,
-        todoFeatureEnabled: this.config.todoFeatureEnabled,
-        maxTurns,
-        ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
-        ...(resumeSessionId !== undefined ? { resumeSessionId } : {}),
-        // External MCP servers (enabled entries the Rust core resolved + injected on
-        // the command). Folded into `Options.mcpServers` by the runner, additively
-        // over the user's native config. Absent ⇒ none injected (pre-feature shape).
-        ...(command.mcpServers !== undefined
-          ? { mcpServers: command.mcpServers }
-          : {}),
-        // The raw task kind, threaded so the runner can post-process a `decompose`
-        // session's final result into structured `proposedSubtasks` on the
-        // `session-completed` event (mirrors the Insight findings pipeline). The
-        // PERSONA still comes from the resolved preset below; this is only the
-        // result-parse selector. Absent ⇒ no per-kind result post-processing.
-        ...(command.kind !== undefined ? { kind: command.kind } : {}),
-        ...(preset.appendSystemPrompt !== undefined
-          ? { appendSystemPrompt: preset.appendSystemPrompt }
-          : {}),
-        // Pre-flight context pack: the trusted, Nightcore-assembled pack the Rust
-        // core passes on the command. The runner composes it BEFORE the
-        // preset persona (project rules lead). Absent ⇒ no pack (pre-feature shape).
-        ...(command.appendContextPack !== undefined
-          ? { appendContextPack: command.appendContextPack }
-          : {}),
-        // Harness runtime policy (module #3): the manifest-declared protected
-        // paths + Bash deny patterns the Rust core resolved for this project.
-        // Enforced by the runner's PreToolUse gate (holds under bypass). Absent ⇒
-        // no policy layer (pre-feature shape).
-        ...(command.harnessPolicy !== undefined
-          ? { harnessPolicy: command.harnessPolicy }
-          : {}),
-        // Session flight recorder (module #5): the per-task ledger path the Rust
-        // core computed from the project root. The runner appends every
-        // PreToolUse gate evaluation there. Absent ⇒ no recording (pre-feature
-        // shape).
-        ...(command.ledgerPath !== undefined
-          ? { ledgerPath: command.ledgerPath }
-          : {}),
-        // OPT-IN macOS OS write containment (module #15): requested by the Rust
-        // core from the `sandbox_sessions` setting. The runner wraps the CLI in
-        // a Seatbelt deny-write-except profile when the host supports it (and
-        // warns loudly + runs unwrapped when it doesn't). Absent ⇒ off.
-        ...(command.sandboxWrites !== undefined
-          ? { sandboxWrites: command.sandboxWrites }
-          : {}),
-        ...(preset.allowedTools !== undefined
-          ? { allowedTools: preset.allowedTools }
-          : {}),
-        ...(preset.disallowedTools !== undefined
-          ? { disallowedTools: preset.disallowedTools }
-          : {}),
-        // SDK-native structured output (`decompose` preset): forwarded so the
-        // runner sets `Options.outputFormat` and the SDK returns a schema-conforming
-        // `{ subtasks }` object (retrying non-conforming output itself). Absent ⇒ a
-        // free-form text result (every other kind).
-        ...(preset.outputFormat !== undefined
-          ? { outputFormat: preset.outputFormat }
-          : {}),
-      },
-      (event) => this.handleEvent(id, event),
-      this.logger?.child(`session-${id}`),
-    );
 
     const session: ManagedSession = { id, runner, record };
     this.sessions.set(id, session);

@@ -211,19 +211,18 @@ export default tseslint.config(
     },
   },
   {
-    // Engine-internal SDK confinement: the SDK *runtime* (query() and the
-    // session-store functions) may be imported only in session/sdk-adapter.ts —
-    // the one boundary file that translates SDKMessage → NightcoreEvent. Every other
-    // engine module may import SDK *types* (`import type`) but never a runtime
-    // value, so the SDK's drift-prone runtime API surface stays in one place.
-    // The `apps/**` block above keeps surfaces fully SDK-free; this is its
-    // intra-engine counterpart (the invariant the layer doc + engine AGENTS.md
-    // describe). Uses @typescript-eslint/no-restricted-imports for
-    // `allowTypeImports`, which the base ESLint rule lacks. Tests are exempt:
-    // they stub the SDK boundary via mock.module() / await import().
+    // Engine-internal SDK confinement (issue #18): the Claude Agent SDK — runtime
+    // AND types — is confined to the provider boundary directory
+    // `providers/claude/**`. Everything outside that directory talks
+    // NightcoreEvent / contract types / the neutral `AgentProvider` seam only, so a
+    // second provider slots in without rewriting orchestration. NO `allowTypeImports`:
+    // an SDK *type* leaking outward is the exact funnel-leak the seam seals, so it is
+    // banned too. The `apps/**` block above keeps surfaces fully SDK-free; this is its
+    // intra-engine counterpart. Tests are exempt: they stub the SDK boundary via
+    // mock.module() / await import().
     files: ['packages/engine/src/**/*.ts'],
     ignores: [
-      'packages/engine/src/session/sdk-adapter.ts',
+      'packages/engine/src/providers/claude/**',
       'packages/engine/src/**/*.test.ts',
     ],
     rules: {
@@ -233,9 +232,8 @@ export default tseslint.config(
           paths: [
             {
               name: '@anthropic-ai/claude-agent-sdk',
-              allowTypeImports: true,
               message:
-                'The SDK runtime API is confined to packages/engine/src/session/sdk-adapter.ts. Other engine modules may import SDK *types* only (`import type`). Route runtime calls through sdk-adapter.',
+                'The Claude Agent SDK (runtime and types) is confined to packages/engine/src/providers/claude/**. Everything outside talks NightcoreEvent / contract types / the AgentProvider seam.',
             },
           ],
         },

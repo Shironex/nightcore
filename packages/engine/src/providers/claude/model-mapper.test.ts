@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test';
 
 import type { ModelInfo } from '@anthropic-ai/claude-agent-sdk';
 
-import { toModelDescriptor } from './session-manager.js';
+import { toModelDescriptor } from './mappers.js';
 
 describe('toModelDescriptor', () => {
   test('maps a fully-populated ModelInfo straight across', () => {
