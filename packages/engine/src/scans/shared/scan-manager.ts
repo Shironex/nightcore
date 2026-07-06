@@ -20,9 +20,6 @@
  * structurally-identical manager classes so a cross-cutting fix (a pool bug, a retry
  * change, a new cancel guard) lands in one audited place instead of three clones.
  */
-import * as fs from 'node:fs';
-import * as path from 'node:path';
-
 import type {
   Config,
   EffortLevel,
@@ -35,6 +32,9 @@ import {
   SessionRunner,
   type SessionRunnerConfig,
 } from '../../session/session-runner.js';
+import { buildRepoInventory } from './inventory.js';
+import { makeHeartbeat } from './observability.js';
+import { runPool } from './pool.js';
 
 /** Default number of passes to run at once. A 6-wide pool keeps the wall-clock down
  *  while staying bounded so we never open all items' paid Claude subprocesses at
@@ -50,6 +50,16 @@ export const EMPTY_USAGE: TokenUsage = {
   cacheReadTokens: 0,
   cacheCreationTokens: 0,
 };
+
+/** The strict-JSON reminder appended to the ONE corrective retry of an ARRAY-shaped
+ *  pass (Insight / Harness / PR-review). Shared so the wording can't drift per
+ *  feature; the retry mechanism itself lives in the base `runItem`. */
+export const RETRY_REMINDER_ARRAY =
+  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON array, nothing else.';
+
+/** The strict-JSON reminder for an OBJECT-shaped pass (Scorecard / Issue-triage). */
+export const RETRY_REMINDER_OBJECT =
+  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON object, nothing else.';
 
 /** The stable failure reason carried by a `session-failed` event. */
 export type SessionFailedReason = Extract<
@@ -547,9 +557,10 @@ export abstract class ScanManager<
   }
 }
 
-// ── Shared scan mechanics (bounded pool, usage accumulation, observability, repo
-//    inventory) — used by the base above and re-exported through the feature barrel
-//    for the synthesis pass + tests ──────────────────────────────────────────────
+// ── Token-usage accumulation — the one piece of shared scan mechanics that stays
+//    with the base class. The bounded pool, heartbeat observability, repo inventory,
+//    and log formatters now live in ./pool, ./observability, ./inventory, ./format.
+//    Used by the base above and by the synthesis pass. ─────────────────────────────
 
 /** Accumulate token usage in place. */
 export function addUsage(into: TokenUsage, add: TokenUsage | undefined): void {
@@ -558,159 +569,4 @@ export function addUsage(into: TokenUsage, add: TokenUsage | undefined): void {
   into.outputTokens += add.outputTokens;
   into.cacheReadTokens += add.cacheReadTokens;
   into.cacheCreationTokens += add.cacheCreationTokens;
-}
-
-/**
- * Run `worker` over `items` with at most `concurrency` in flight. Resolves when all
- * are done. A worker that throws propagates (the orchestrator wraps the whole pool in
- * try/catch). Order of completion is not guaranteed; effects are emitted as each
- * finishes (streaming UX). Shared by every scan orchestrator so a concurrency fix
- * lands in one place.
- */
-export async function runPool<T>(
-  items: readonly T[],
-  concurrency: number,
-  worker: (item: T) => Promise<void>,
-): Promise<void> {
-  const cap = Math.max(1, Math.min(concurrency, items.length || 1));
-  let cursor = 0;
-  const runNext = async (): Promise<void> => {
-    while (cursor < items.length) {
-      const index = cursor++;
-      await worker(items[index] as T);
-    }
-  };
-  await Promise.all(Array.from({ length: cap }, () => runNext()));
-}
-
-/** Heartbeat throttle: at most one progress line per sub-session this often. A
- *  16-minute scan used to print two lines then go silent; this surfaces steady life
- *  without flooding the terminal. */
-const HEARTBEAT_INTERVAL_MS = 3000;
-
-/**
- * Build a throttled heartbeat sink for an internal sub-session. The lens/synthesis
- * sub-sessions are consumed locally (never forwarded to the wire), so a long pass
- * looks frozen from the terminal. This counts `tool-use-requested` events as "turns"
- * and logs at most once per {@link HEARTBEAT_INTERVAL_MS} via `logger.info` (info
- * shows by default; debug is filtered) e.g. `[insight:perf] turn 12 · Read
- * src/app.ts`. Call the returned sink for EVERY sub-session event — it ignores
- * everything but tool uses. A no-op when there is no logger.
- */
-export function makeHeartbeat(
-  logger: Logger | undefined,
-  label: string,
-): (event: NightcoreEvent) => void {
-  if (logger === undefined) return () => {};
-  let turn = 0;
-  let lastBeatAt = 0;
-  return (event) => {
-    if (event.type !== 'tool-use-requested') return;
-    turn += 1;
-    const now = Date.now();
-    if (now - lastBeatAt < HEARTBEAT_INTERVAL_MS) return;
-    lastBeatAt = now;
-    logger.info(
-      `${label} turn ${turn} · ${summarizeToolUse(event.toolName, event.input)}`,
-    );
-  };
-}
-
-/** A short, secret-free descriptor of a tool use for the heartbeat line — the tool
- *  name plus, ONLY for path-like args, its target path (truncated). We never surface
- *  model-controlled value args (pattern/command/query/prompt) here: they can carry
- *  secrets/PII and would leak to the persistent terminal + rolling log. */
-function summarizeToolUse(toolName: string, input: unknown): string {
-  const rec =
-    typeof input === 'object' && input !== null
-      ? (input as Record<string, unknown>)
-      : {};
-  const pick = (key: string): string | undefined =>
-    typeof rec[key] === 'string' ? (rec[key] as string) : undefined;
-  const detail = pick('file_path') ?? pick('path') ?? pick('notebook_path');
-  if (detail === undefined) return toolName;
-  const trimmed = detail.replace(/\s+/g, ' ').trim();
-  const short = trimmed.length > 60 ? `${trimmed.slice(0, 57)}…` : trimmed;
-  return `${toolName} ${short}`;
-}
-
-/** Conventional source dirs worth a shallow peek in the repo inventory. */
-const INVENTORY_PEEK_DIRS = [
-  'src',
-  'app',
-  'apps',
-  'packages',
-  'lib',
-  'crates',
-  'server',
-];
-/** Cap per listing so a pathological dir can't flood the prompt. */
-const INVENTORY_MAX_ENTRIES = 60;
-/** Dirs never worth listing (build output / vendored deps / vcs). */
-const INVENTORY_SKIP_DIRS = new Set(['node_modules', 'target', 'dist', '.git']);
-
-/**
- * A cheap, bounded top-level map of the repo: the root dir/file names plus a shallow
- * peek into a few conventional source dirs. Injected into each pass's prompt so the
- * model starts from a known structure instead of burning turns re-discovering the
- * tree on every pass — the dominant source of wasted exploration in a multi-pass
- * scan. Pure synchronous fs; never throws.
- */
-export function buildRepoInventory(projectPath: string): string {
-  const root = path.resolve(projectPath);
-  let entries: fs.Dirent[];
-  try {
-    entries = fs.readdirSync(root, { withFileTypes: true });
-  } catch {
-    return '(repo inventory unavailable)';
-  }
-  const skip = (name: string): boolean =>
-    name.startsWith('.') || INVENTORY_SKIP_DIRS.has(name);
-  const dirs = entries
-    .filter((e) => e.isDirectory() && !skip(e.name))
-    .map((e) => e.name)
-    .sort()
-    .slice(0, INVENTORY_MAX_ENTRIES);
-  const files = entries
-    .filter((e) => e.isFile() && !e.name.startsWith('.'))
-    .map((e) => e.name)
-    .sort()
-    .slice(0, INVENTORY_MAX_ENTRIES);
-  const lines = [
-    `top-level dirs: ${dirs.join(', ') || '(none)'}`,
-    `top-level files: ${files.join(', ') || '(none)'}`,
-  ];
-  for (const dir of INVENTORY_PEEK_DIRS) {
-    if (!dirs.includes(dir)) continue;
-    try {
-      const children = fs
-        .readdirSync(path.join(root, dir), { withFileTypes: true })
-        .filter((e) => !skip(e.name))
-        .map((e) => (e.isDirectory() ? `${e.name}/` : e.name))
-        .sort()
-        .slice(0, INVENTORY_MAX_ENTRIES);
-      if (children.length > 0) lines.push(`${dir}/: ${children.join(', ')}`);
-    } catch {
-      /* unreadable dir — skip it, never throw */
-    }
-  }
-  return lines.join('\n');
-}
-
-/** `$1.20`-style cost for a log line. */
-export function fmtCost(usd: number): string {
-  return `$${usd.toFixed(2)}`;
-}
-
-/** `41.2s`-style short duration for a per-pass log line. */
-export function fmtSecs(ms: number): string {
-  return `${(ms / 1000).toFixed(1)}s`;
-}
-
-/** `6:12`-style elapsed for a whole-scan log line. */
-export function fmtElapsed(ms: number): string {
-  const total = Math.max(0, Math.round(ms / 1000));
-  const m = Math.floor(total / 60);
-  const s = total % 60;
-  return `${m}:${s.toString().padStart(2, '0')}`;
 }

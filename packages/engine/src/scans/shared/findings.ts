@@ -19,7 +19,9 @@ import {
   type FindingSeverity,
 } from '@nightcore/contracts';
 
+import { dedupeBy } from '../../util/dedupe.js';
 import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
+import { parseItems } from '../../util/json-extract.js';
 
 /** Severity ordering for ranking/merge (low → high). Exported so every scan
  *  pipeline (Insight / Harness / PR-review) shares one rank table instead of
@@ -64,59 +66,6 @@ export function normalizeFile(file: string | undefined): string {
 export function fingerprintOf(file: string | undefined, title: string): string {
   const basis = `${normalizeFile(file)}|${normalizeTitle(title)}`;
   return createHash('sha1').update(basis).digest('hex').slice(0, 16);
-}
-
-/**
- * Pull the first JSON array (or object) out of a model result that may be wrapped
- * in prose or ```json fences. Returns the parsed value, or `undefined` if no
- * valid JSON array/object can be located. Tolerant by design — the model is
- * instructed to return bare JSON but sometimes adds a sentence or a fence.
- */
-export function extractJson(raw: string): unknown {
-  const trimmed = raw.trim();
-  // 1) Whole string is JSON.
-  const whole = tryParse(trimmed);
-  if (whole !== undefined) return whole;
-  // 2) Fenced ```json … ``` block.
-  const fence = /```(?:json)?\s*([\s\S]*?)```/i.exec(trimmed);
-  if (fence?.[1] !== undefined) {
-    const fenced = tryParse(fence[1].trim());
-    if (fenced !== undefined) return fenced;
-  }
-  // 3) First balanced [...] or {...} span.
-  for (const [open, close] of [
-    ['[', ']'],
-    ['{', '}'],
-  ] as const) {
-    const start = trimmed.indexOf(open);
-    const end = trimmed.lastIndexOf(close);
-    if (start !== -1 && end > start) {
-      const span = tryParse(trimmed.slice(start, end + 1));
-      if (span !== undefined) return span;
-    }
-  }
-  return undefined;
-}
-
-function tryParse(s: string): unknown {
-  try {
-    return JSON.parse(s) as unknown;
-  } catch {
-    return undefined;
-  }
-}
-
-/** The model's raw output is a bare array, or an object wrapping the array under a
- *  known key (`findings` / `artifacts` / `subtasks`). Normalize to an array. Shared
- *  by every scan + session pipeline; the wrapper key is passed by the caller so the
- *  single helper serves all of them. */
-export function toRawArray(parsed: unknown, key: string): unknown[] {
-  if (Array.isArray(parsed)) return parsed;
-  if (parsed !== null && typeof parsed === 'object') {
-    const nested = (parsed as Record<string, unknown>)[key];
-    if (Array.isArray(nested)) return nested;
-  }
-  return [];
 }
 
 /** Coerce one raw model item into a contract {@link Finding}, forcing `category`
@@ -224,24 +173,22 @@ function coerceEffort(raw: unknown): Finding['effort'] {
 /**
  * Parse a category pass's raw result text into validated findings. Tolerant:
  * malformed items are skipped, not fatal. Returns the parsed findings plus an
- * `error` when NO JSON could be extracted at all (so the orchestrator can mark
- * the category errored vs legitimately empty).
+ * `error` when NO JSON could be extracted at all, OR when the extracted JSON is
+ * neither an array nor an object exposing a `findings` array (an incidental JSON
+ * example in a prose answer) — so the orchestrator can drive its corrective retry
+ * and mark the category errored vs legitimately empty.
  */
 export function parseFindings(
   raw: string,
   category: FindingCategory,
 ): { findings: Finding[]; error?: string } {
-  const parsed = extractJson(raw);
-  if (parsed === undefined) {
-    return { findings: [], error: 'no JSON findings array in model output' };
-  }
-  const items = toRawArray(parsed, 'findings');
-  const findings: Finding[] = [];
-  for (const item of items) {
-    const finding = coerceFinding(item, category);
-    if (finding !== undefined) findings.push(finding);
-  }
-  return { findings };
+  const { items, error } = parseItems(
+    raw,
+    'findings',
+    (item) => coerceFinding(item, category),
+    'no JSON findings array in model output',
+  );
+  return { findings: items, ...(error !== undefined ? { error } : {}) };
 }
 
 /** Count lines in a file, cheaply. Returns 0 when unreadable. Shared by every scan
@@ -349,22 +296,11 @@ export function clampLocationLines(
  * regardless of which category wins. Order-stable on first appearance.
  */
 export function dedupeFindings(findings: Finding[]): Finding[] {
-  const byKey = new Map<string, Finding>();
-  const order: string[] = [];
-  for (const finding of findings) {
-    const key = finding.fingerprint;
-    const existing = byKey.get(key);
-    if (existing === undefined) {
-      byKey.set(key, finding);
-      order.push(key);
-      continue;
-    }
-    const winner =
-      severityRank(finding.severity) > severityRank(existing.severity)
-        ? finding
-        : existing;
-    const tags = [...new Set([...existing.tags, ...finding.tags])];
-    byKey.set(key, { ...winner, tags });
-  }
-  return order.map((key) => byKey.get(key) as Finding);
+  return dedupeBy(findings, (f) => f.fingerprint, {
+    rank: (f) => severityRank(f.severity),
+    merge: (winner, existing, incoming) => ({
+      ...winner,
+      tags: [...new Set([...existing.tags, ...incoming.tags])],
+    }),
+  });
 }

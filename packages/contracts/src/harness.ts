@@ -1,5 +1,6 @@
 import { z } from 'zod';
 
+import { runTotals, scanFailure, TokenUsageSchema } from './event-fragments.js';
 import { FindingLocationSchema, FindingSeveritySchema } from './insight.js';
 
 /**
@@ -326,3 +327,96 @@ export const HarnessProposalSchema = z.object({
   fingerprint: z.string(),
 });
 export type HarnessProposal = z.infer<typeof HarnessProposalSchema>;
+
+/**
+ * Harness (codebase convention auditor) events. Like the `analysis-*` family these
+ * carry no `sessionId` and correlate by `runId`; the Rust reader routes the whole
+ * `harness-*` family to the `nc:harness` channel and persists the run on
+ * `harness-scan-completed`. The flow adds two hops over Insight: a `harness-profile-ready`
+ * up front (the deterministic repo profile) and a `harness-proposals-ready` near the
+ * end (the synthesized artifacts), so the UI can render the profile banner and the
+ * proposed-harness panel before the terminal event lands.
+ */
+
+/** A scan started. Echoes the resolved categories/model for the UI header. */
+export const HarnessScanStartedEvent = z.object({
+  type: z.literal('harness-scan-started'),
+  runId: z.string(),
+  categories: z.array(ConventionCategorySchema),
+  model: z.string(),
+});
+
+/** The deterministic repo profile is ready (emitted before any convention pass). */
+export const HarnessProfileReadyEvent = z.object({
+  type: z.literal('harness-profile-ready'),
+  runId: z.string(),
+  profile: RepoProfileSchema,
+});
+
+/** A convention pass began exploring (the UI shows skeleton cards for it). */
+export const HarnessCategoryStartedEvent = z.object({
+  type: z.literal('harness-category-started'),
+  runId: z.string(),
+  category: ConventionCategorySchema,
+});
+
+/** A convention pass finished: its grounded findings stream in as a batch, plus the
+ *  pass's own token usage and cost so the UI can show per-lens spend. */
+export const HarnessCategoryCompletedEvent = z.object({
+  type: z.literal('harness-category-completed'),
+  runId: z.string(),
+  category: ConventionCategorySchema,
+  findings: z.array(ConventionFindingSchema),
+  usage: TokenUsageSchema.optional(),
+  costUsd: z.number().default(0),
+  /** Set when the pass itself failed (parse/abort): findings is then empty and the
+   *  UI marks the lens errored rather than "0 findings". */
+  error: z.string().optional(),
+});
+
+/** The synthesis pass began (after every convention pass, before proposals).
+ *  Carries no payload beyond `runId`: it exists so the UI can show a
+ *  "Synthesizing harness…" state instead of a frozen, all-lenses-done dead zone,
+ *  and so the Rust/terminal logs mark the start of the (serial) synthesis tail. */
+export const HarnessSynthesisStartedEvent = z.object({
+  type: z.literal('harness-synthesis-started'),
+  runId: z.string(),
+});
+
+/** The synthesis pass finished: the proposed harness artifacts stream in as a batch.
+ *  Emitted after every convention pass, before the terminal event. `proposals` are the
+ *  task-shaped recommendations the user converts to board tasks; additive (`.default([])`)
+ *  so a scan that emits only artifacts — and any pre-proposals on-disk run — stays valid. */
+export const HarnessProposalsReadyEvent = z.object({
+  type: z.literal('harness-proposals-ready'),
+  runId: z.string(),
+  artifacts: z.array(ProposedArtifactSchema),
+  proposals: z.array(HarnessProposalSchema).default([]),
+});
+
+/** The whole scan finished: the final profile, deduped convention findings, and
+ *  proposed artifacts plus run totals. The Rust reader persists from THIS event. */
+export const HarnessScanCompletedEvent = z.object({
+  type: z.literal('harness-scan-completed'),
+  runId: z.string(),
+  profile: RepoProfileSchema,
+  findings: z.array(ConventionFindingSchema),
+  artifacts: z.array(ProposedArtifactSchema),
+  /** The task-shaped proposals the user converts to board tasks. Additive
+   *  (`.default([])`) so an older on-disk run loads with an empty set — zero risk. */
+  proposals: z.array(HarnessProposalSchema).default([]),
+  categoriesRun: z.array(ConventionCategorySchema),
+  ...runTotals,
+  /** Set when the synthesis pass could not produce proposals (parse/session failure):
+   *  the scan still completes with its findings, and the UI marks synthesis errored
+   *  rather than silently showing zero proposals. */
+  synthesisError: z.string().optional(),
+});
+
+/** The scan failed before completing (could not start, or aborted). Reuses the
+ *  same reason set as `analysis-failed` (collapses to one generated Rust enum). */
+export const HarnessScanFailedEvent = z.object({
+  type: z.literal('harness-scan-failed'),
+  runId: z.string(),
+  ...scanFailure,
+});

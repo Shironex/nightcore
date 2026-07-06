@@ -1,31 +1,53 @@
 import { z } from 'zod';
 
 import { PermissionModeSchema } from './config.js';
+import { TokenUsageSchema } from './event-fragments.js';
 import {
-  ConventionCategorySchema,
-  ConventionFindingSchema,
-  HarnessProposalSchema,
-  ProposedArtifactSchema,
-  RepoProfileSchema,
+  HarnessCategoryCompletedEvent,
+  HarnessCategoryStartedEvent,
+  HarnessProfileReadyEvent,
+  HarnessProposalsReadyEvent,
+  HarnessScanCompletedEvent,
+  HarnessScanFailedEvent,
+  HarnessScanStartedEvent,
+  HarnessSynthesisStartedEvent,
 } from './harness.js';
 import {
-  AnalysisScopeSchema,
-  FindingCategorySchema,
-  FindingSchema,
+  AnalysisCategoryCompletedEvent,
+  AnalysisCategoryStartedEvent,
+  AnalysisCompletedEvent,
+  AnalysisFailedEvent,
+  AnalysisStartedEvent,
 } from './insight.js';
-import { IssueValidationResultSchema } from './issue-triage.js';
 import {
-  MergeVerdictSchema,
-  ReviewFindingSchema,
-  ReviewLensSchema,
+  IssueValidationCompletedEvent,
+  IssueValidationConvertedEvent,
+  IssueValidationFailedEvent,
+  IssueValidationProgressEvent,
+  IssueValidationStartedEvent,
+} from './issue-triage.js';
+import {
+  PrReviewCompletedEvent,
+  PrReviewFailedEvent,
+  PrReviewFindingConvertedEvent,
+  PrReviewLensCompletedEvent,
+  PrReviewLensStartedEvent,
+  PrReviewStartedEvent,
 } from './pr-review.js';
 import { ProviderConfigSnapshotSchema } from './provider-config.js';
 import {
-  ScorecardDimensionSchema,
-  ScorecardReadingSchema,
+  ScorecardCompletedEvent,
+  ScorecardDimensionCompletedEvent,
+  ScorecardDimensionStartedEvent,
+  ScorecardFailedEvent,
+  ScorecardStartedEvent,
 } from './scorecard.js';
 import { SessionStatusSchema } from './session.js';
 import { ToolRiskSchema } from './tools.js';
+
+// `TokenUsage` historically lived in this module; re-exported so the barrel
+// surface (and every `@nightcore/contracts` consumer) is unchanged.
+export { type TokenUsage, TokenUsageSchema } from './event-fragments.js';
 
 /**
  * `NightcoreEvent` — the typed stream flowing engine → surface.
@@ -66,8 +88,11 @@ export const SessionReadyEvent = z.object({
 });
 
 /** Status of an SDK task/subagent step, mirroring the SDK's `task_updated`
- *  patch status superset. */
-export const TaskStatusSchema = z.enum([
+ *  patch status superset. Named `SubagentStepStatus` (not `TaskStatus`) so it
+ *  never collides with the board's task status (`store::task::TaskStatus`,
+ *  exported to the web as `generated/TaskStatus.ts`) — two different vocabularies
+ *  that used to share a name and trap import sites. */
+export const SubagentStepStatusSchema = z.enum([
   'pending',
   'running',
   'completed',
@@ -75,7 +100,7 @@ export const TaskStatusSchema = z.enum([
   'killed',
   'paused',
 ]);
-export type TaskStatus = z.infer<typeof TaskStatusSchema>;
+export type SubagentStepStatus = z.infer<typeof SubagentStepStatusSchema>;
 
 /** A task/subagent step started or changed. The surface merges these by
  *  `taskId` into a live task panel. Folded from the SDK's `task_started` /
@@ -84,7 +109,7 @@ export const TaskUpdatedEvent = z.object({
   ...base,
   type: z.literal('task-updated'),
   taskId: z.string(),
-  status: TaskStatusSchema.optional(),
+  status: SubagentStepStatusSchema.optional(),
   /** Human description of what the task is doing. */
   description: z.string().optional(),
   /** Short progress/result summary, when the SDK provides one. */
@@ -185,14 +210,15 @@ export const QuestionRequiredEvent = z.object({
   questions: z.array(QuestionItemSchema),
 });
 
-/** Token usage for a completed session, distilled from the SDK result message. */
-export const TokenUsageSchema = z.object({
-  inputTokens: z.number().int().nonnegative(),
-  outputTokens: z.number().int().nonnegative(),
-  cacheReadTokens: z.number().int().nonnegative().default(0),
-  cacheCreationTokens: z.number().int().nonnegative().default(0),
+/** One proposed sub-task from a `decompose`-kind session: a short imperative
+ *  `title` + a self-contained `prompt`. Single-sourced HERE so the wire shape
+ *  (`SessionCompletedEvent.proposedSubtasks`) and the engine's decompose parser
+ *  validate against the SAME schema and can never drift. */
+export const ProposedSubtaskSchema = z.object({
+  title: z.string(),
+  prompt: z.string(),
 });
-export type TokenUsage = z.infer<typeof TokenUsageSchema>;
+export type ProposedSubtask = z.infer<typeof ProposedSubtaskSchema>;
 
 /** Session reached a successful terminal state. */
 export const SessionCompletedEvent = z.object({
@@ -208,12 +234,10 @@ export const SessionCompletedEvent = z.object({
   usage: TokenUsageSchema.optional(),
   /** Sub-task proposals parsed from the agent's final result text. Populated ONLY
    *  for `decompose`-kind sessions — the engine extracts a JSON array from the
-   *  result and validates each `{ title, prompt }` against this shape (dropping
+   *  result and validates each item against {@link ProposedSubtaskSchema} (dropping
    *  blank-title items), mirroring how Insight turns a session into findings.
    *  Absent for every other kind. */
-  proposedSubtasks: z
-    .array(z.object({ title: z.string(), prompt: z.string() }))
-    .optional(),
+  proposedSubtasks: z.array(ProposedSubtaskSchema).optional(),
 });
 
 /**
@@ -386,365 +410,6 @@ export const QueryResultEvent = z.object({
   providerConfig: ProviderConfigSnapshotSchema.optional(),
   /** Set when `ok` is false: a short failure reason. */
   error: z.string().optional(),
-});
-
-/**
- * Shared spreadable fragments for the scan-event families (`analysis-*`,
- * `harness-*`, `scorecard-*`, `pr-review-*`), mirroring the `base`/`sessionTarget`
- * spread pattern above. These are spread (not composed as sub-schemas) so the
- * emitted zod object shapes — and therefore the generated Rust — stay identical to
- * inlining the fields.
- */
-
-/** The run-totals tail shared by every scan family's terminal `*-completed` event. */
-const runTotals = {
-  costUsd: z.number(),
-  durationMs: z.number().nonnegative().default(0),
-  usage: TokenUsageSchema.optional(),
-};
-
-/** The reason/message pair shared by the `analysis`/`harness`/`scorecard` `*-failed`
- *  events. The single `reason` value-set collapses to ONE generated Rust enum, the
- *  same collapse the three inline copies produced. (`pr-review-failed` keeps a free
- *  `z.string()` reason and does NOT use this.) */
-const scanFailure = {
-  reason: z.enum(['aborted', 'runner-crash', 'unknown']),
-  message: z.string(),
-};
-
-/**
- * Insight analysis events. These do NOT carry `sessionId` (the category passes are
- * internal to the engine's analysis orchestrator and never surface as ordinary
- * sessions); they correlate by `runId`. The Rust reader routes the whole
- * `analysis-*` family to the `nc:insight` channel and persists the run on
- * `analysis-completed`.
- */
-
-/** A run started. Echoes the resolved categories/scope/model for the UI header. */
-export const AnalysisStartedEvent = z.object({
-  type: z.literal('analysis-started'),
-  runId: z.string(),
-  scope: AnalysisScopeSchema,
-  categories: z.array(FindingCategorySchema),
-  model: z.string(),
-});
-
-/** A category pass began exploring (the UI shows skeleton cards for it). */
-export const AnalysisCategoryStartedEvent = z.object({
-  type: z.literal('analysis-category-started'),
-  runId: z.string(),
-  category: FindingCategorySchema,
-});
-
-/** A category pass finished: its grounded findings stream in as a batch, plus the
- *  pass's own token usage and cost so the UI can show per-category spend. */
-export const AnalysisCategoryCompletedEvent = z.object({
-  type: z.literal('analysis-category-completed'),
-  runId: z.string(),
-  category: FindingCategorySchema,
-  findings: z.array(FindingSchema),
-  usage: TokenUsageSchema.optional(),
-  costUsd: z.number().default(0),
-  /** Set when the pass itself failed (parse/abort): findings is then empty and the
-   *  UI marks the category errored rather than "0 findings". */
-  error: z.string().optional(),
-});
-
-/** The whole run finished: the final cross-category-deduped findings plus run
- *  totals. The Rust reader persists from THIS event (authoritative). */
-export const AnalysisCompletedEvent = z.object({
-  type: z.literal('analysis-completed'),
-  runId: z.string(),
-  findings: z.array(FindingSchema),
-  categoriesRun: z.array(FindingCategorySchema),
-  ...runTotals,
-});
-
-/** The run failed before completing (could not start, or aborted). */
-export const AnalysisFailedEvent = z.object({
-  type: z.literal('analysis-failed'),
-  runId: z.string(),
-  ...scanFailure,
-});
-
-/**
- * Harness (codebase convention auditor) events. Like the `analysis-*` family these
- * carry no `sessionId` and correlate by `runId`; the Rust reader routes the whole
- * `harness-*` family to the `nc:harness` channel and persists the run on
- * `harness-scan-completed`. The flow adds two hops over Insight: a `harness-profile-ready`
- * up front (the deterministic repo profile) and a `harness-proposals-ready` near the
- * end (the synthesized artifacts), so the UI can render the profile banner and the
- * proposed-harness panel before the terminal event lands.
- */
-
-/** A scan started. Echoes the resolved categories/model for the UI header. */
-export const HarnessScanStartedEvent = z.object({
-  type: z.literal('harness-scan-started'),
-  runId: z.string(),
-  categories: z.array(ConventionCategorySchema),
-  model: z.string(),
-});
-
-/** The deterministic repo profile is ready (emitted before any convention pass). */
-export const HarnessProfileReadyEvent = z.object({
-  type: z.literal('harness-profile-ready'),
-  runId: z.string(),
-  profile: RepoProfileSchema,
-});
-
-/** A convention pass began exploring (the UI shows skeleton cards for it). */
-export const HarnessCategoryStartedEvent = z.object({
-  type: z.literal('harness-category-started'),
-  runId: z.string(),
-  category: ConventionCategorySchema,
-});
-
-/** A convention pass finished: its grounded findings stream in as a batch, plus the
- *  pass's own token usage and cost so the UI can show per-lens spend. */
-export const HarnessCategoryCompletedEvent = z.object({
-  type: z.literal('harness-category-completed'),
-  runId: z.string(),
-  category: ConventionCategorySchema,
-  findings: z.array(ConventionFindingSchema),
-  usage: TokenUsageSchema.optional(),
-  costUsd: z.number().default(0),
-  /** Set when the pass itself failed (parse/abort): findings is then empty and the
-   *  UI marks the lens errored rather than "0 findings". */
-  error: z.string().optional(),
-});
-
-/** The synthesis pass began (after every convention pass, before proposals).
- *  Carries no payload beyond `runId`: it exists so the UI can show a
- *  "Synthesizing harness…" state instead of a frozen, all-lenses-done dead zone,
- *  and so the Rust/terminal logs mark the start of the (serial) synthesis tail. */
-export const HarnessSynthesisStartedEvent = z.object({
-  type: z.literal('harness-synthesis-started'),
-  runId: z.string(),
-});
-
-/** The synthesis pass finished: the proposed harness artifacts stream in as a batch.
- *  Emitted after every convention pass, before the terminal event. `proposals` are the
- *  task-shaped recommendations the user converts to board tasks; additive (`.default([])`)
- *  so a scan that emits only artifacts — and any pre-proposals on-disk run — stays valid. */
-export const HarnessProposalsReadyEvent = z.object({
-  type: z.literal('harness-proposals-ready'),
-  runId: z.string(),
-  artifacts: z.array(ProposedArtifactSchema),
-  proposals: z.array(HarnessProposalSchema).default([]),
-});
-
-/** The whole scan finished: the final profile, deduped convention findings, and
- *  proposed artifacts plus run totals. The Rust reader persists from THIS event. */
-export const HarnessScanCompletedEvent = z.object({
-  type: z.literal('harness-scan-completed'),
-  runId: z.string(),
-  profile: RepoProfileSchema,
-  findings: z.array(ConventionFindingSchema),
-  artifacts: z.array(ProposedArtifactSchema),
-  /** The task-shaped proposals the user converts to board tasks. Additive
-   *  (`.default([])`) so an older on-disk run loads with an empty set — zero risk. */
-  proposals: z.array(HarnessProposalSchema).default([]),
-  categoriesRun: z.array(ConventionCategorySchema),
-  ...runTotals,
-  /** Set when the synthesis pass could not produce proposals (parse/session failure):
-   *  the scan still completes with its findings, and the UI marks synthesis errored
-   *  rather than silently showing zero proposals. */
-  synthesisError: z.string().optional(),
-});
-
-/** The scan failed before completing (could not start, or aborted). Reuses the
- *  same reason set as `analysis-failed` (collapses to one generated Rust enum). */
-export const HarnessScanFailedEvent = z.object({
-  type: z.literal('harness-scan-failed'),
-  runId: z.string(),
-  ...scanFailure,
-});
-
-/**
- * Readiness Scorecard events (the Profile twin of the `analysis-*` family). Like
- * `analysis-*` they carry no `sessionId` and correlate by `runId`; the Rust reader
- * routes the whole `scorecard-*` family to the `nc:scorecard` channel and persists
- * the run on `scorecard-completed`. Each dimension pass emits ONE grounded reading
- * (an A–F grade plus evidence) rather than a batch of severity-ranked findings.
- */
-
-/** A run started. Echoes the resolved dimensions/model for the UI header. */
-export const ScorecardStartedEvent = z.object({
-  type: z.literal('scorecard-started'),
-  runId: z.string(),
-  dimensions: z.array(ScorecardDimensionSchema),
-  model: z.string(),
-});
-
-/** A dimension pass began grading (the UI shows a skeleton row for it). */
-export const ScorecardDimensionStartedEvent = z.object({
-  type: z.literal('scorecard-dimension-started'),
-  runId: z.string(),
-  dimension: ScorecardDimensionSchema,
-});
-
-/** A dimension pass finished: its single grounded reading streams in, plus the
- *  pass's own token usage and cost so the UI can show per-dimension spend. */
-export const ScorecardDimensionCompletedEvent = z.object({
-  type: z.literal('scorecard-dimension-completed'),
-  runId: z.string(),
-  dimension: ScorecardDimensionSchema,
-  /** The graded reading; absent when the pass itself failed (parse/abort). */
-  reading: ScorecardReadingSchema.optional(),
-  usage: TokenUsageSchema.optional(),
-  costUsd: z.number().default(0),
-  /** Set when the pass itself failed (parse/abort): `reading` is then absent and the
-   *  UI marks the dimension errored rather than "ungraded". */
-  error: z.string().optional(),
-});
-
-/** The whole run finished: the final per-dimension readings plus run totals. The
- *  Rust reader persists from THIS event (authoritative). */
-export const ScorecardCompletedEvent = z.object({
-  type: z.literal('scorecard-completed'),
-  runId: z.string(),
-  readings: z.array(ScorecardReadingSchema),
-  dimensionsRun: z.array(ScorecardDimensionSchema),
-  ...runTotals,
-});
-
-/** The run failed before completing (could not start, or aborted). Reuses the same
- *  reason set as `analysis-failed` (collapses to one generated Rust enum). */
-export const ScorecardFailedEvent = z.object({
-  type: z.literal('scorecard-failed'),
-  runId: z.string(),
-  ...scanFailure,
-});
-
-/**
- * PR Review events (the fourth scan sibling). Like the `analysis-*` family these carry
- * no `sessionId` and correlate by `runId`; the Rust reader routes the whole
- * `pr-review-*` family to the `nc:pr-review` channel and persists the run on
- * `pr-review-completed`. Each lens pass emits a batch of grounded findings over the PR
- * diff. `pr-review-finding-converted` is a Rust-emitted notice on the same channel (the
- * convert-to-task acknowledgement), part of the union so surfaces can narrow it.
- */
-
-/** A run started. Echoes the resolved lenses/model for the UI header. */
-export const PrReviewStartedEvent = z.object({
-  type: z.literal('pr-review-started'),
-  runId: z.string(),
-  lenses: z.array(ReviewLensSchema),
-  model: z.string(),
-});
-
-/** A lens pass began reviewing (the UI shows skeleton cards for it). */
-export const PrReviewLensStartedEvent = z.object({
-  type: z.literal('pr-review-lens-started'),
-  runId: z.string(),
-  lens: ReviewLensSchema,
-});
-
-/** A lens pass finished: its grounded findings stream in as a batch, plus the pass's
- *  own token usage and cost so the UI can show per-lens spend. */
-export const PrReviewLensCompletedEvent = z.object({
-  type: z.literal('pr-review-lens-completed'),
-  runId: z.string(),
-  lens: ReviewLensSchema,
-  findings: z.array(ReviewFindingSchema),
-  usage: TokenUsageSchema.optional(),
-  costUsd: z.number().default(0),
-  /** Set when the pass itself failed (parse/abort): findings is then empty and the UI
-   *  marks the lens errored rather than "0 findings". */
-  error: z.string().optional(),
-});
-
-/** The whole run finished: the final cross-lens-deduped findings plus run totals. The
- *  Rust reader persists from THIS event (authoritative). `lensesRun` is the count of
- *  lens passes that ran. */
-export const PrReviewCompletedEvent = z.object({
-  type: z.literal('pr-review-completed'),
-  runId: z.string(),
-  findings: z.array(ReviewFindingSchema),
-  lensesRun: z.number().int().nonnegative(),
-  ...runTotals,
-  /** The synthesis pass's overall merge recommendation for the PR. Additive +
-   *  optional (FAIL-OPEN): a synthesis pass that errors/times-out/cancels completes
-   *  the run WITHOUT it, and an older engine that never runs the pass omits it. */
-  verdict: MergeVerdictSchema.optional(),
-  /** The synthesis pass's short (~120-word) justification for {@link verdict}. Present
-   *  only when `verdict` is; same fail-open/additive posture. */
-  verdictReasoning: z.string().optional(),
-});
-
-/** The run failed before completing (could not start, or aborted). `reason` is a free
- *  string (the manager's failure code) so a surface degrades on drift. */
-export const PrReviewFailedEvent = z.object({
-  type: z.literal('pr-review-failed'),
-  runId: z.string(),
-  reason: z.string(),
-  message: z.string(),
-});
-
-/** A finding was converted into a board task. Emitted by the Rust convert command on
- *  the `nc:pr-review` channel (mirrors Insight's convert notice), not by the engine. */
-export const PrReviewFindingConvertedEvent = z.object({
-  type: z.literal('pr-review-finding-converted'),
-  runId: z.string(),
-  findingId: z.string(),
-  taskId: z.string(),
-});
-
-/**
- * Issue Triage validation events. Unlike the scan families this is ONE read-only
- * session per run (not a fan-out), so there are no per-pass started/completed events —
- * just start, an optional progress note, and a terminal complete/fail. They carry no
- * `sessionId` and correlate by `runId`; the Rust reader routes the whole
- * `issue-validation-*` family to the `nc:issue-triage` channel and persists the run on
- * `issue-validation-completed`. `issue-validation-converted` is a Rust-emitted notice
- * on the same channel (the convert-to-task acknowledgement), part of the union so
- * surfaces can narrow it.
- */
-
-/** A validation started. Echoes the issue number + resolved model for the UI header. */
-export const IssueValidationStartedEvent = z.object({
-  type: z.literal('issue-validation-started'),
-  runId: z.string(),
-  issueNumber: z.number().int().positive(),
-  model: z.string(),
-});
-
-/** A human-readable progress note from the running validation (e.g. "Investigating
- *  related files…"), so the UI shows live movement rather than a frozen spinner. */
-export const IssueValidationProgressEvent = z.object({
-  type: z.literal('issue-validation-progress'),
-  runId: z.string(),
-  message: z.string(),
-});
-
-/** The validation finished: its single grounded verdict plus run totals. The Rust
- *  reader persists from THIS event (authoritative). */
-export const IssueValidationCompletedEvent = z.object({
-  type: z.literal('issue-validation-completed'),
-  runId: z.string(),
-  issueNumber: z.number().int().positive(),
-  result: IssueValidationResultSchema,
-  ...runTotals,
-});
-
-/** The validation failed before completing (could not start, or aborted). `reason`
- *  is a free string (the manager's failure code) so a surface degrades on drift —
- *  mirrors `pr-review-failed`. */
-export const IssueValidationFailedEvent = z.object({
-  type: z.literal('issue-validation-failed'),
-  runId: z.string(),
-  reason: z.string(),
-  message: z.string(),
-});
-
-/** A validation was converted into a board task. Emitted by the Rust convert command
- *  on the `nc:issue-triage` channel (mirrors the PR-review convert notice), not by the
- *  engine. */
-export const IssueValidationConvertedEvent = z.object({
-  type: z.literal('issue-validation-converted'),
-  runId: z.string(),
-  issueNumber: z.number().int().positive(),
-  taskId: z.string(),
 });
 
 /** The discriminated union of every engine → surface event, keyed by `type`. */

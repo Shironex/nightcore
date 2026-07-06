@@ -73,6 +73,18 @@ describe('parseReading', () => {
     const { error } = parseReading(JSON.stringify({ grade: 'A' }), 'a11y');
     expect(error).toBeDefined();
   });
+
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent pass)', () => {
+    // Same silent-empty class as the findings parsers: an embedded JSON *example*
+    // must not parse into a reading — the shape checks (title/summary/grade) reject it.
+    const raw =
+      'The docs look fine. A reading would normally look like:\n' +
+      '```json\n{"example": {"note": "not a real reading"}}\n```\n' +
+      'so I have nothing to grade.';
+    const { reading, error } = parseReading(raw, 'docs-ci');
+    expect(reading).toBeUndefined();
+    expect(error).toBeDefined();
+  });
 });
 
 describe('groundReading', () => {

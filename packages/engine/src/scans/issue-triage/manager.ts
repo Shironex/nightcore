@@ -30,13 +30,12 @@ import type {
   SurfaceCommand,
 } from '@nightcore/contracts';
 
+import { fmtCost, fmtElapsed, fmtSecs } from '../shared/format.js';
 import {
   DEFAULT_MAX_TURNS,
   type FinalizeArgs,
-  fmtCost,
-  fmtElapsed,
-  fmtSecs,
   type ItemCompletedArgs,
+  RETRY_REMINDER_OBJECT,
   type ScanFailureReason,
   ScanManager,
   type ScanManagerDeps,
@@ -142,7 +141,7 @@ export class IssueTriageScanManager extends ScanManager<
   }
 
   protected retryReminderSuffix(): string {
-    return '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the single JSON verdict object, nothing else.';
+    return RETRY_REMINDER_OBJECT;
   }
 
   protected emitStarted(command: StartIssueValidation, model: string): void {

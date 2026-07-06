@@ -8,33 +8,11 @@ import type { Finding } from '@nightcore/contracts';
 
 import {
   dedupeFindings,
-  extractJson,
   fingerprintOf,
   groundFindings,
   parseFindings,
   severityRank,
 } from './findings.js';
-
-describe('extractJson', () => {
-  test('parses a bare JSON array', () => {
-    expect(extractJson('[{"a":1}]')).toEqual([{ a: 1 }]);
-  });
-
-  test('parses a ```json fenced block with surrounding prose', () => {
-    const raw =
-      'Here are the findings:\n```json\n[{"title":"x"}]\n```\nDone.';
-    expect(extractJson(raw)).toEqual([{ title: 'x' }]);
-  });
-
-  test('extracts a balanced array from mixed prose', () => {
-    const raw = 'blah blah [ {"title":"y"} ] trailing';
-    expect(extractJson(raw)).toEqual([{ title: 'y' }]);
-  });
-
-  test('returns undefined when no JSON is present', () => {
-    expect(extractJson('no json here at all')).toBeUndefined();
-  });
-});
 
 describe('parseFindings', () => {
   test('coerces raw items, forces category, assigns id + fingerprint', () => {
@@ -102,6 +80,28 @@ describe('parseFindings', () => {
     const { findings, error } = parseFindings('the code looks fine', 'tests');
     expect(findings).toHaveLength(0);
     expect(error).toBeDefined();
+  });
+
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent empty)', () => {
+    // The silent-empty regression: a prose answer embedding a fenced JSON *example*
+    // used to parse "successfully" into 0 findings with no error — indistinguishable
+    // from a legitimately clean pass, so no corrective retry and no WARN fired.
+    const raw =
+      'The code looks clean. For reference, a finding would look like:\n' +
+      '```json\n{"example": {"title": "Sample", "severity": "high"}}\n```\n' +
+      'but nothing rose to that bar.';
+    const { findings, error } = parseFindings(raw, 'bugs');
+    expect(findings).toHaveLength(0);
+    expect(error).toBeDefined();
+  });
+
+  test('accepts an empty {findings: []} wrapper as zero findings, no error', () => {
+    const { findings, error } = parseFindings(
+      JSON.stringify({ findings: [] }),
+      'bugs',
+    );
+    expect(error).toBeUndefined();
+    expect(findings).toHaveLength(0);
   });
 });
 

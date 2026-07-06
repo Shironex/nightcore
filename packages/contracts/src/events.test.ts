@@ -1,6 +1,8 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 
+import { z } from 'zod';
+
 import { type NightcoreEvent,NightcoreEventSchema } from './events.js';
 
 describe('NightcoreEventSchema round-trips', () => {
@@ -297,5 +299,42 @@ describe('session-failed structured ErrorDetail (additive)', () => {
       detail: { category: 'meltdown', message: 'x', retriable: false },
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe('union-membership guard — every exported *Event is registered', () => {
+  const unionTypes = new Set<string>(
+    NightcoreEventSchema.options.map(
+      (option) => (option.shape.type as z.ZodLiteral<string>).value,
+    ),
+  );
+
+  /** Names of exported `*Event` zod objects whose `type` literal is NOT a member
+   *  of `NightcoreEventSchema`'s union. An unregistered event schema is silently
+   *  unreachable on the wire — the codegen full-coverage assert only checks
+   *  members that ARE in the union, so this is the missing direction. */
+  function unregisteredEvents(exports: Record<string, unknown>): string[] {
+    const missing: string[] = [];
+    for (const [name, value] of Object.entries(exports)) {
+      if (!name.endsWith('Event')) continue;
+      if (!(value instanceof z.ZodObject)) continue;
+      const typeField = (value.shape as Record<string, unknown>).type;
+      if (!(typeField instanceof z.ZodLiteral)) continue;
+      if (!unionTypes.has(typeField.value as string)) missing.push(name);
+    }
+    return missing;
+  }
+
+  test('every *Event schema exported from the barrel appears in the union', async () => {
+    const barrel = (await import('./index.js')) as Record<string, unknown>;
+    expect(unregisteredEvents(barrel)).toEqual([]);
+  });
+
+  test('the guard goes red on a synthetic unregistered event', () => {
+    const RogueEvent = z.object({
+      type: z.literal('rogue-event'),
+      runId: z.string(),
+    });
+    expect(unregisteredEvents({ RogueEvent })).toEqual(['RogueEvent']);
   });
 });

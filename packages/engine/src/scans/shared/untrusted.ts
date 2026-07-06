@@ -5,10 +5,11 @@
  *
  * Lives in `shared/` — NOT in a single feature module — because it is a general,
  * security-relevant helper, the same reason {@link import('./findings.js').fileExists}'s
- * containment check and {@link import('./findings.js').extractJson} live here: one source
- * of truth every untrusted-input scan can adopt without re-declaring (and diverging)
- * the logic. Issue-triage uses it today; any other scan that ingests untrusted material
- * (PR-review's diff, a future intake) can import the same wrapper.
+ * containment check lives here (and the generic JSON extractor lives in
+ * `util/json-extract.ts`): one source of truth every untrusted-input scan can adopt
+ * without re-declaring (and diverging) the logic. Issue-triage uses it today; any other
+ * scan that ingests untrusted material (PR-review's diff, a future intake) can import
+ * the same wrapper.
  */
 
 /**

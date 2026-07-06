@@ -23,17 +23,17 @@ import {
   type FindingLocation,
 } from '@nightcore/contracts';
 
+import { dedupeBy } from '../../util/dedupe.js';
 import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
+import { parseItems } from '../../util/json-extract.js';
 import {
   clampLocationLines,
   coerceLocation,
   coerceSeverity,
-  extractJson,
   fileExists,
   lineCount,
   normalizeTitle,
   severityRank,
-  toRawArray,
 } from '../shared/findings.js';
 
 /**
@@ -115,24 +115,22 @@ function coerceKind(raw: unknown): ConventionKind {
 /**
  * Parse a convention pass's raw result text into validated findings. Tolerant:
  * malformed items are skipped, not fatal. Returns the parsed findings plus an
- * `error` when NO JSON could be extracted at all (so the orchestrator can mark
- * the lens errored vs legitimately empty).
+ * `error` when NO JSON could be extracted at all, OR when the extracted JSON is
+ * neither an array nor an object exposing a `findings` array (an incidental JSON
+ * example in a prose answer) — so the orchestrator can drive its corrective retry
+ * and mark the lens errored vs legitimately empty.
  */
 export function parseConventionFindings(
   raw: string,
   category: ConventionCategory,
 ): { findings: ConventionFinding[]; error?: string } {
-  const parsed = extractJson(raw);
-  if (parsed === undefined) {
-    return { findings: [], error: 'no JSON convention findings in model output' };
-  }
-  const items = toRawArray(parsed, 'findings');
-  const findings: ConventionFinding[] = [];
-  for (const item of items) {
-    const finding = coerceConventionFinding(item, category);
-    if (finding !== undefined) findings.push(finding);
-  }
-  return { findings };
+  const { items, error } = parseItems(
+    raw,
+    'findings',
+    (item) => coerceConventionFinding(item, category),
+    'no JSON convention findings in model output',
+  );
+  return { findings: items, ...(error !== undefined ? { error } : {}) };
 }
 
 /**
@@ -169,22 +167,11 @@ export function groundConventionFindings(
 export function dedupeConventionFindings(
   findings: ConventionFinding[],
 ): ConventionFinding[] {
-  const byKey = new Map<string, ConventionFinding>();
-  const order: string[] = [];
-  for (const finding of findings) {
-    const key = finding.fingerprint;
-    const existing = byKey.get(key);
-    if (existing === undefined) {
-      byKey.set(key, finding);
-      order.push(key);
-      continue;
-    }
-    const winner =
-      severityRank(finding.severity) > severityRank(existing.severity)
-        ? finding
-        : existing;
-    const tags = [...new Set([...existing.tags, ...finding.tags])];
-    byKey.set(key, { ...winner, tags });
-  }
-  return order.map((key) => byKey.get(key) as ConventionFinding);
+  return dedupeBy(findings, (f) => f.fingerprint, {
+    rank: (f) => severityRank(f.severity),
+    merge: (winner, existing, incoming) => ({
+      ...winner,
+      tags: [...new Set([...existing.tags, ...incoming.tags])],
+    }),
+  });
 }

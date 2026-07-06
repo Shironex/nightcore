@@ -22,14 +22,13 @@ import type {
   SurfaceCommand,
 } from '@nightcore/contracts';
 
+import { fmtCost, fmtElapsed, fmtSecs } from '../shared/format.js';
 import {
   addUsage,
   DEFAULT_MAX_TURNS,
   type FinalizeArgs,
-  fmtCost,
-  fmtElapsed,
-  fmtSecs,
   type ItemCompletedArgs,
+  RETRY_REMINDER_ARRAY,
   type ScanFailureReason,
   ScanManager,
   type ScanManagerDeps,
@@ -147,7 +146,7 @@ export class HarnessManager extends ScanManager<
   }
 
   protected retryReminderSuffix(): string {
-    return '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON array, nothing else.';
+    return RETRY_REMINDER_ARRAY;
   }
 
   protected emitStarted(command: StartHarnessScan, model: string): void {

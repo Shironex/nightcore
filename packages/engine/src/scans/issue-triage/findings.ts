@@ -37,7 +37,8 @@ import {
   getString,
   getStringArray,
 } from '../../util/field-extract.js';
-import { extractJson, fileExists, normalizeFile } from '../shared/findings.js';
+import { extractJson } from '../../util/json-extract.js';
+import { fileExists, normalizeFile } from '../shared/findings.js';
 
 // The canonical membership sets are DERIVED from the contract's zod enums (their
 // `.options` tuple), never re-listed as literals here. This is the single source of

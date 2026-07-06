@@ -249,9 +249,10 @@ export interface TranslateResult {
     | { kind: 'failed'; reason: NightcoreEventOfReason; message: string };
 }
 
-/** Normalize the SDK's task-status superset onto the Nightcore `TaskStatus`
- *  set. The only divergence is `'stopped'` (used by `task_notification`), which
- *  maps to `'killed'`; every other value already matches the contract enum. */
+/** Normalize the SDK's task-status superset onto the Nightcore
+ *  `SubagentStepStatus` set. The only divergence is `'stopped'` (used by
+ *  `task_notification`), which maps to `'killed'`; every other value already
+ *  matches the contract enum. */
 function normalizeTaskStatus(
   status: string | undefined,
 ): TaskUpdatedEvent['status'] {

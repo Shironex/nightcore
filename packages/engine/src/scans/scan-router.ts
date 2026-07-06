@@ -25,23 +25,31 @@ import { PrReviewScanManager } from './pr-review/manager.js';
 import { ScorecardManager } from './scorecard/manager.js';
 
 /** The scan command families this router owns — the `runId`-keyed `start-*` /
- *  `cancel-*` pairs, distinct from the session-id-keyed session commands. */
-export type ScanCommand = Extract<
-  SurfaceCommand,
-  {
-    type:
-      | 'start-analysis'
-      | 'cancel-analysis'
-      | 'start-harness-scan'
-      | 'cancel-harness-scan'
-      | 'start-scorecard'
-      | 'cancel-scorecard'
-      | 'start-pr-review'
-      | 'cancel-pr-review'
-      | 'start-issue-validation'
-      | 'cancel-issue-validation';
-  }
->;
+ *  `cancel-*` pairs, distinct from the session-id-keyed session commands. This is
+ *  the SINGLE source of truth: the {@link ScanCommand} type and the
+ *  {@link ScanRouter.handles} membership check both derive from it, so the two can
+ *  never drift. `satisfies` pins every entry to a real `SurfaceCommand` type. */
+const SCAN_COMMAND_TYPES = [
+  'start-analysis',
+  'cancel-analysis',
+  'start-harness-scan',
+  'cancel-harness-scan',
+  'start-scorecard',
+  'cancel-scorecard',
+  'start-pr-review',
+  'cancel-pr-review',
+  'start-issue-validation',
+  'cancel-issue-validation',
+] as const satisfies readonly SurfaceCommand['type'][];
+
+type ScanCommandType = (typeof SCAN_COMMAND_TYPES)[number];
+
+/** The scan command families this router owns, narrowed from `SurfaceCommand` by
+ *  the {@link SCAN_COMMAND_TYPES} source of truth. */
+export type ScanCommand = Extract<SurfaceCommand, { type: ScanCommandType }>;
+
+/** Runtime membership set derived from the same source of truth as the type. */
+const SCAN_COMMAND_TYPE_SET: ReadonlySet<string> = new Set(SCAN_COMMAND_TYPES);
 
 export interface ScanRouterOptions {
   config: Config;
@@ -94,23 +102,11 @@ export class ScanRouter {
   }
 
   /** Whether `command` belongs to a scan family this router owns. Narrows the type
-   *  so the supervisor can delegate then return without a redundant re-check. */
+   *  so the supervisor can delegate then return without a redundant re-check.
+   *  Membership comes from the {@link SCAN_COMMAND_TYPES} source of truth the
+   *  {@link ScanCommand} type is also derived from. */
   handles(command: SurfaceCommand): command is ScanCommand {
-    switch (command.type) {
-      case 'start-analysis':
-      case 'cancel-analysis':
-      case 'start-harness-scan':
-      case 'cancel-harness-scan':
-      case 'start-scorecard':
-      case 'cancel-scorecard':
-      case 'start-pr-review':
-      case 'cancel-pr-review':
-      case 'start-issue-validation':
-      case 'cancel-issue-validation':
-        return true;
-      default:
-        return false;
-    }
+    return SCAN_COMMAND_TYPE_SET.has(command.type);
   }
 
   /**

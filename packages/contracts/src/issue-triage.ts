@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+import { runTotals } from './event-fragments.js';
+
 /**
  * `@nightcore/contracts` — Issue Triage (GitHub issue intake + validation) shapes.
  *
@@ -257,3 +259,60 @@ export const IssueValidationSchema = z.object({
   viewedAt: z.string().optional(),
 });
 export type IssueValidation = z.infer<typeof IssueValidationSchema>;
+
+/**
+ * Issue Triage validation events. Unlike the scan families this is ONE read-only
+ * session per run (not a fan-out), so there are no per-pass started/completed events —
+ * just start, an optional progress note, and a terminal complete/fail. They carry no
+ * `sessionId` and correlate by `runId`; the Rust reader routes the whole
+ * `issue-validation-*` family to the `nc:issue-triage` channel and persists the run on
+ * `issue-validation-completed`. `issue-validation-converted` is a Rust-emitted notice
+ * on the same channel (the convert-to-task acknowledgement), part of the union so
+ * surfaces can narrow it.
+ */
+
+/** A validation started. Echoes the issue number + resolved model for the UI header. */
+export const IssueValidationStartedEvent = z.object({
+  type: z.literal('issue-validation-started'),
+  runId: z.string(),
+  issueNumber: z.number().int().positive(),
+  model: z.string(),
+});
+
+/** A human-readable progress note from the running validation (e.g. "Investigating
+ *  related files…"), so the UI shows live movement rather than a frozen spinner. */
+export const IssueValidationProgressEvent = z.object({
+  type: z.literal('issue-validation-progress'),
+  runId: z.string(),
+  message: z.string(),
+});
+
+/** The validation finished: its single grounded verdict plus run totals. The Rust
+ *  reader persists from THIS event (authoritative). */
+export const IssueValidationCompletedEvent = z.object({
+  type: z.literal('issue-validation-completed'),
+  runId: z.string(),
+  issueNumber: z.number().int().positive(),
+  result: IssueValidationResultSchema,
+  ...runTotals,
+});
+
+/** The validation failed before completing (could not start, or aborted). `reason`
+ *  is a free string (the manager's failure code) so a surface degrades on drift —
+ *  mirrors `pr-review-failed`. */
+export const IssueValidationFailedEvent = z.object({
+  type: z.literal('issue-validation-failed'),
+  runId: z.string(),
+  reason: z.string(),
+  message: z.string(),
+});
+
+/** A validation was converted into a board task. Emitted by the Rust convert command
+ *  on the `nc:issue-triage` channel (mirrors the PR-review convert notice), not by the
+ *  engine. */
+export const IssueValidationConvertedEvent = z.object({
+  type: z.literal('issue-validation-converted'),
+  runId: z.string(),
+  issueNumber: z.number().int().positive(),
+  taskId: z.string(),
+});
