@@ -61,6 +61,25 @@ describe('parseConventionFindings', () => {
     expect(error).toBeDefined();
   });
 
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent empty)', () => {
+    const raw =
+      'The repo follows its conventions well. A finding would look like:\n' +
+      '```json\n{"example": {"title": "Sample", "kind": "gap"}}\n```\n' +
+      'but nothing rose to that bar.';
+    const { findings, error } = parseConventionFindings(raw, 'naming');
+    expect(findings).toHaveLength(0);
+    expect(error).toBeDefined();
+  });
+
+  test('accepts an empty {findings: []} wrapper as zero findings, no error', () => {
+    const { findings, error } = parseConventionFindings(
+      JSON.stringify({ findings: [] }),
+      'naming',
+    );
+    expect(error).toBeUndefined();
+    expect(findings).toHaveLength(0);
+  });
+
   test('defaults kind to gap and maps synonym severities', () => {
     const raw = JSON.stringify([
       { severity: 'warning', title: 'a', description: 'd' },

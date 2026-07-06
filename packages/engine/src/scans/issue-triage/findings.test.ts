@@ -63,6 +63,18 @@ describe('parseIssueVerdict — the strict single-object contract', () => {
     expect(error).toBeDefined();
   });
 
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent pass)', () => {
+    // Same silent-empty class as the findings parsers: an embedded JSON *example*
+    // must not parse into a verdict — the non-fabricatable `verdict` field rejects it.
+    const raw =
+      'I read the issue. A verdict object would normally look like:\n' +
+      '```json\n{"example": {"note": "not a real verdict"}}\n```\n' +
+      'but I could not reach a conclusion.';
+    const { verdict, error } = parseIssueVerdict(raw);
+    expect(verdict).toBeUndefined();
+    expect(error).toBeDefined();
+  });
+
   test('errors on an off-contract verdict value (must not be fabricated)', () => {
     const { verdict, error } = parseIssueVerdict(
       JSON.stringify({ ...FULL_VERDICT, verdict: 'maybe' }),

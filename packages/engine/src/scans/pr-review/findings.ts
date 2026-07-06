@@ -28,6 +28,7 @@ import {
   coerceLocation,
   coerceSeverity,
   extractJson,
+  isRawArrayShape,
   normalizeFile,
   normalizeTitle,
   severityRank,
@@ -116,8 +117,10 @@ function coerceReviewFinding(
 /**
  * Parse a lens pass's raw result text into validated findings. Tolerant: malformed
  * items are skipped, not fatal. Returns the parsed findings plus an `error` when NO
- * JSON could be extracted at all (so the orchestrator can drive its single corrective
- * retry / mark the lens errored vs legitimately empty).
+ * JSON could be extracted at all, OR when the extracted JSON is neither an array nor
+ * an object exposing a `findings` array (an incidental JSON example in a prose
+ * answer) — so the orchestrator can drive its single corrective retry / mark the
+ * lens errored vs legitimately empty.
  */
 export function parsePrReviewFindings(
   raw: string,
@@ -126,6 +129,13 @@ export function parsePrReviewFindings(
   const parsed = extractJson(raw);
   if (parsed === undefined) {
     return { findings: [], error: 'no JSON review findings in model output' };
+  }
+  if (!isRawArrayShape(parsed, 'findings')) {
+    return {
+      findings: [],
+      error:
+        'model output JSON is not a findings array (nor an object with a "findings" array)',
+    };
   }
   const items = toRawArray(parsed, 'findings');
   const findings: ReviewFinding[] = [];

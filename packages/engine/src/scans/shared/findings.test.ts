@@ -103,6 +103,28 @@ describe('parseFindings', () => {
     expect(findings).toHaveLength(0);
     expect(error).toBeDefined();
   });
+
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent empty)', () => {
+    // The silent-empty regression: a prose answer embedding a fenced JSON *example*
+    // used to parse "successfully" into 0 findings with no error — indistinguishable
+    // from a legitimately clean pass, so no corrective retry and no WARN fired.
+    const raw =
+      'The code looks clean. For reference, a finding would look like:\n' +
+      '```json\n{"example": {"title": "Sample", "severity": "high"}}\n```\n' +
+      'but nothing rose to that bar.';
+    const { findings, error } = parseFindings(raw, 'bugs');
+    expect(findings).toHaveLength(0);
+    expect(error).toBeDefined();
+  });
+
+  test('accepts an empty {findings: []} wrapper as zero findings, no error', () => {
+    const { findings, error } = parseFindings(
+      JSON.stringify({ findings: [] }),
+      'bugs',
+    );
+    expect(error).toBeUndefined();
+    expect(findings).toHaveLength(0);
+  });
 });
 
 describe('fingerprintOf', () => {

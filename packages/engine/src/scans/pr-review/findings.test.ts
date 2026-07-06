@@ -102,6 +102,16 @@ describe('parsePrReviewFindings', () => {
     expect(findings).toHaveLength(0);
     expect(error).toBeDefined();
   });
+
+  test('errors on prose whose only JSON is an incidental example (⇒ retry, not silent empty)', () => {
+    const raw =
+      'The diff looks fine. For reference, a finding would look like:\n' +
+      '```json\n{"example": {"file": "src/a.ts", "title": "Sample"}}\n```\n' +
+      'but nothing rose to that bar.';
+    const { findings, error } = parsePrReviewFindings(raw, 'security');
+    expect(findings).toHaveLength(0);
+    expect(error).toBeDefined();
+  });
 });
 
 describe('reviewFingerprint', () => {

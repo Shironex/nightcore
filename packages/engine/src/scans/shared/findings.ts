@@ -119,6 +119,22 @@ export function toRawArray(parsed: unknown, key: string): unknown[] {
   return [];
 }
 
+/** Whether extracted JSON has the expected top-level shape for a findings-style
+ *  parse: a bare array, or an object exposing an array under the wrapper `key`.
+ *  Anything else — typically an *incidental* JSON example embedded in a prose
+ *  answer, which `extractJson`'s balanced-span scan happily parses — is
+ *  off-contract and must set a parse `error` rather than silently normalize to an
+ *  empty list, so the orchestrator's corrective retry + WARN path fires instead of
+ *  the pass reading as a legitimately clean result. Shared by every array-shaped
+ *  scan parser (Insight / Harness / PR-review). */
+export function isRawArrayShape(parsed: unknown, key: string): boolean {
+  if (Array.isArray(parsed)) return true;
+  if (parsed !== null && typeof parsed === 'object') {
+    return Array.isArray((parsed as Record<string, unknown>)[key]);
+  }
+  return false;
+}
+
 /** Coerce one raw model item into a contract {@link Finding}, forcing `category`
  *  (the pass owns it, not the model) and assigning a stable id + fingerprint.
  *  Returns `undefined` when the item can't satisfy the schema. */
@@ -224,8 +240,10 @@ function coerceEffort(raw: unknown): Finding['effort'] {
 /**
  * Parse a category pass's raw result text into validated findings. Tolerant:
  * malformed items are skipped, not fatal. Returns the parsed findings plus an
- * `error` when NO JSON could be extracted at all (so the orchestrator can mark
- * the category errored vs legitimately empty).
+ * `error` when NO JSON could be extracted at all, OR when the extracted JSON is
+ * neither an array nor an object exposing a `findings` array (an incidental JSON
+ * example in a prose answer) — so the orchestrator can drive its corrective retry
+ * and mark the category errored vs legitimately empty.
  */
 export function parseFindings(
   raw: string,
@@ -234,6 +252,13 @@ export function parseFindings(
   const parsed = extractJson(raw);
   if (parsed === undefined) {
     return { findings: [], error: 'no JSON findings array in model output' };
+  }
+  if (!isRawArrayShape(parsed, 'findings')) {
+    return {
+      findings: [],
+      error:
+        'model output JSON is not a findings array (nor an object with a "findings" array)',
+    };
   }
   const items = toRawArray(parsed, 'findings');
   const findings: Finding[] = [];

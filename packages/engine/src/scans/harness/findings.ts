@@ -30,6 +30,7 @@ import {
   coerceSeverity,
   extractJson,
   fileExists,
+  isRawArrayShape,
   lineCount,
   normalizeTitle,
   severityRank,
@@ -115,8 +116,10 @@ function coerceKind(raw: unknown): ConventionKind {
 /**
  * Parse a convention pass's raw result text into validated findings. Tolerant:
  * malformed items are skipped, not fatal. Returns the parsed findings plus an
- * `error` when NO JSON could be extracted at all (so the orchestrator can mark
- * the lens errored vs legitimately empty).
+ * `error` when NO JSON could be extracted at all, OR when the extracted JSON is
+ * neither an array nor an object exposing a `findings` array (an incidental JSON
+ * example in a prose answer) — so the orchestrator can drive its corrective retry
+ * and mark the lens errored vs legitimately empty.
  */
 export function parseConventionFindings(
   raw: string,
@@ -125,6 +128,13 @@ export function parseConventionFindings(
   const parsed = extractJson(raw);
   if (parsed === undefined) {
     return { findings: [], error: 'no JSON convention findings in model output' };
+  }
+  if (!isRawArrayShape(parsed, 'findings')) {
+    return {
+      findings: [],
+      error:
+        'model output JSON is not a findings array (nor an object with a "findings" array)',
+    };
   }
   const items = toRawArray(parsed, 'findings');
   const findings: ConventionFinding[] = [];
