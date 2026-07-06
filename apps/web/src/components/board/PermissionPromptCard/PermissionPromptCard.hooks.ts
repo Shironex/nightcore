@@ -7,11 +7,11 @@ export { summarizeInput, truncate } from '@/lib/summarize';
 /** The allow/deny decision made from a permission prompt. */
 type Decision = 'allow' | 'deny';
 
-/** In-flight decision state for {@link PermissionPrompt}. Approving/denying an
+/** In-flight decision state for {@link PermissionPromptCard}. Approving/denying an
  *  agent's tool request is consequential and irreversible, so the first click
  *  latches the decision: both buttons then disable + report `aria-busy` and a
  *  second click is a no-op, closing the double-fire window (mirrors the
- *  QuestionPrompt sibling, whose Send latches on submit). The parked prompt
+ *  QuestionPromptCard sibling, whose Send latches on submit). The parked prompt
  *  unmounts once the run resumes, so the latch never needs resetting.
  *
  *  A ref latches synchronously (defense-in-depth against a double-click landing

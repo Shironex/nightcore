@@ -1,20 +1,20 @@
 import { AlertIcon, Button, Kbd, Spinner, TerminalIcon } from '@/components/ui';
 
-import { summarizeInput, usePermissionDecision } from './PermissionPrompt.hooks';
-import type { PermissionPromptProps } from './PermissionPrompt.types';
+import { summarizeInput, usePermissionDecision } from './PermissionPromptCard.hooks';
+import type { PermissionPromptCardProps } from './PermissionPromptCard.types';
 
 /** An interactive permission prompt: the tool the agent wants to run plus a
  *  one-line input summary, with Allow / Deny. Rendered in the interaction dock
  *  while a run is parked awaiting approval. Presentational — the decision is
  *  relayed up.
  *
- *  Mirrors the QuestionPrompt sibling's convention: a native `<form>` whose
+ *  Mirrors the QuestionPromptCard sibling's convention: a native `<form>` whose
  *  primary action (Allow) is the submit, so Enter-on-Allow and a form-level
  *  Cmd/Ctrl+Enter both approve, and the shortcut is announced with a `<Kbd>`
  *  hint. The first decision latches (see {@link usePermissionDecision}), so both
  *  buttons then disable + report `aria-busy` — no double-fire on a consequential,
  *  security-relevant control, and an accessible in-flight signal. */
-export function PermissionPrompt({ prompt, onRespond }: PermissionPromptProps) {
+export function PermissionPromptCard({ prompt, onRespond }: PermissionPromptCardProps) {
   const { deciding, respond } = usePermissionDecision(prompt.requestId, onRespond);
   const pending = deciding !== null;
 

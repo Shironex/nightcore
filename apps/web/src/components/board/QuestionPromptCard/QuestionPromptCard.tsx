@@ -1,8 +1,8 @@
 /** Interactive AskUserQuestion prompt shown in the interaction dock. */
 import { Button, CheckIcon, Kbd, QuestionIcon } from '@/components/ui';
 
-import { useQuestionAnswers } from './QuestionPrompt.hooks';
-import type { QuestionPromptProps } from './QuestionPrompt.types';
+import { useQuestionAnswers } from './QuestionPromptCard.hooks';
+import type { QuestionPromptCardProps } from './QuestionPromptCard.types';
 
 /**
  * An interactive `AskUserQuestion` prompt: the model's question(s), each with
@@ -17,7 +17,7 @@ import type { QuestionPromptProps } from './QuestionPrompt.types';
  * matching the board's modal convention. `submit()` is a no-op until every
  * question is answered, so an early Enter can't send a partial answer.
  */
-export function QuestionPrompt({ prompt, onAnswer }: QuestionPromptProps) {
+export function QuestionPromptCard({ prompt, onAnswer }: QuestionPromptCardProps) {
   const answers = useQuestionAnswers(prompt);
 
   const submit = () => {

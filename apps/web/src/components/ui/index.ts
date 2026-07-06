@@ -46,7 +46,7 @@ export type {
 } from './LensChipGrid';
 export { chipClass, LensChipGrid, ScanConfigForm } from './LensChipGrid';
 export type { MarkdownProps } from './Markdown';
-export { Markdown, renderMarkdown } from './Markdown';
+export { Markdown } from './Markdown';
 export type { MenuItem, MenuProps } from './Menu';
 export { Menu } from './Menu';
 export type { ModalProps } from './Modal';

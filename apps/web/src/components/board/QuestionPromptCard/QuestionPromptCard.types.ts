@@ -1,8 +1,8 @@
-/** Prop types for the QuestionPrompt component. */
+/** Prop types for the QuestionPromptCard component. */
 import type { QuestionAnswer, QuestionPrompt as QuestionPromptData } from '@/lib/bridge';
 
-/** Props for `QuestionPrompt`. */
-export interface QuestionPromptProps {
+/** Props for `QuestionPromptCard`. */
+export interface QuestionPromptCardProps {
   /** The parked AskUserQuestion prompt to render (1–4 questions). */
   prompt: QuestionPromptData;
   /** Answer the prompt: submit the chosen/typed answers, or `cancel` to skip. */

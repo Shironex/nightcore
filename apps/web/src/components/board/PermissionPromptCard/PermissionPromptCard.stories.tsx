@@ -1,11 +1,11 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fn } from 'storybook/test';
 
-import { PermissionPrompt } from './PermissionPrompt';
+import { PermissionPromptCard } from './PermissionPromptCard';
 
 const meta = {
-  title: 'Board/PermissionPrompt',
-  component: PermissionPrompt,
+  title: 'Board/PermissionPromptCard',
+  component: PermissionPromptCard,
   parameters: { layout: 'centered' },
   args: { onRespond: fn() },
   decorators: [
@@ -15,7 +15,7 @@ const meta = {
       </div>
     ),
   ],
-} satisfies Meta<typeof PermissionPrompt>;
+} satisfies Meta<typeof PermissionPromptCard>;
 
 export default meta;
 type Story = StoryObj<typeof meta>;

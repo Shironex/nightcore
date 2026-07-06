@@ -10,8 +10,7 @@ import {
   renameProject,
   setActiveProject,
 } from '@/lib/bridge';
-
-import { useAsyncData } from './useAsyncData.hooks';
+import { useAsyncData } from '@/lib/useAsyncData';
 
 /** Cap on the initial registry read. A wedged core could leave the `invoke` pending
  *  forever; since the boot splash now waits on `loaded`, that would hang the app on
