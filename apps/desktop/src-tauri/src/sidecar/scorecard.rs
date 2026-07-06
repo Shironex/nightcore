@@ -22,9 +22,10 @@ use crate::store::scorecard::{ScorecardRun, ScorecardStore, StoredReading};
 use crate::store::TaskStore;
 use crate::task::{Task, TaskKind, TASK_EVENT};
 
+use super::fence::untrusted_block;
 use super::scan::{
     begin_scan_run, dispatch_scan_command, failure_reason, finalize_scan_items,
-    scan_lifecycle_commands, untrusted_block, wire_str, ScanRunInit, ScanTelemetry,
+    scan_lifecycle_commands, wire_str, ScanRunInit, ScanTelemetry,
 };
 use super::SCORECARD_EVENT;
 

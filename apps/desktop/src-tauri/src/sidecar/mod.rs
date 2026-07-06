@@ -19,6 +19,7 @@
 
 mod commands;
 mod convert;
+mod fence;
 mod harness;
 mod insight;
 mod issue_triage;
@@ -61,10 +62,10 @@ pub(crate) use verification::dispatch_reviewer_for;
 // The PR-comment fix-build dispatcher (PR arc, phase 3): `workflow::pr_comments`
 // reaches it as `crate::sidecar::dispatch_pr_comment_fix`, a peer of the reviewer.
 pub(crate) use verification::dispatch_pr_comment_fix;
-// The untrusted-content fence (`scan` is a private module): re-exported so the PR
+// The untrusted-content fence (`fence` is a private module): re-exported so the PR
 // review-comment prompt in `workflow::pr_comments` can wrap UNTRUSTED GitHub
 // comment bodies as `crate::sidecar::untrusted_block`.
-pub(crate) use scan::untrusted_block;
+pub(crate) use fence::untrusted_block;
 // Re-exported only to keep the `crate::sidecar::MAX_FIX_ATTEMPTS` intra-doc link
 // in `task.rs` resolving; no code outside `verification` reads it through here.
 #[allow(unused_imports)]

@@ -17,9 +17,9 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::contracts::{ConventionCategory, EffortLevel, SurfaceCommand};
 use crate::project::ProjectStore;
+use crate::sidecar::fence::untrusted_block;
 use crate::sidecar::scan::{
-    begin_scan_run, dispatch_scan_command, scan_lifecycle_commands, untrusted_block, wire_str,
-    ScanRunInit,
+    begin_scan_run, dispatch_scan_command, scan_lifecycle_commands, wire_str, ScanRunInit,
 };
 use crate::sidecar::HARNESS_EVENT;
 use crate::store::harness::{

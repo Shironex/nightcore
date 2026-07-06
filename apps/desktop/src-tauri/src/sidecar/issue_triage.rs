@@ -41,8 +41,8 @@ use crate::workflow::issue_triage::{
 use crate::workflow::merge::{acquire_root_lease, require_project};
 
 use super::scan::{
-    begin_scan_run, dispatch_scan_command, failure_reason, scan_lifecycle_commands,
-    untrusted_block, ScanRunInit, ScanTelemetry,
+    begin_scan_run, dispatch_scan_command, failure_reason, scan_lifecycle_commands, ScanRunInit,
+    ScanTelemetry,
 };
 use super::ISSUE_TRIAGE_EVENT;
 
@@ -469,7 +469,7 @@ fn validation_description(
         }
         body.push('\n');
     }
-    let mut out = untrusted_block(&body);
+    let mut out = super::untrusted_block(&body);
     out.push_str(&format!(
         "\n---\n_Created from an Issue Triage validation of issue #{}._\n",
         run.issue_number

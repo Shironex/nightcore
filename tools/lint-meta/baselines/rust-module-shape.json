@@ -6,6 +6,5 @@
   "size:apps/desktop/src-tauri/src/analysis/repo_map.rs": 636,
   "size:apps/desktop/src-tauri/src/sidecar/harness/commands.rs": 486,
   "size:apps/desktop/src-tauri/src/sidecar/issue_triage.rs": 425,
-  "size:apps/desktop/src-tauri/src/sidecar/scan.rs": 402,
   "size:apps/desktop/src-tauri/src/workflow/pr_fix/command.rs": 490
 }
