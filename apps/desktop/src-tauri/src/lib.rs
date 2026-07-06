@@ -228,7 +228,7 @@ pub fn run() {
             workflow::pr_review_post::post_review_to_github,
             workflow::pr_list::list_open_prs,
             workflow::pr_changed_files::pr_changed_files,
-            transcript::read_transcript,
+            commands::transcript::read_transcript,
             plan_approval::approve_task,
             plan_approval::reject_task,
             plan_approval::refine_task,

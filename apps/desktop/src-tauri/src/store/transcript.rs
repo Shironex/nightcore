@@ -21,7 +21,7 @@ use std::thread;
 use std::time::Duration;
 
 use serde_json::Value;
-use tauri::{Manager, State};
+use tauri::Manager;
 
 use crate::store::TaskStore;
 
@@ -276,7 +276,11 @@ fn restrict_dir_to_owner(_dir: &Path) {}
 /// [`TRANSCRIPT_TAIL`]. Each line is one `NightcoreEvent`; unparsable lines are
 /// skipped. Returns an empty vec when the task has no transcript yet (never an
 /// error — a task that hasn't run simply has nothing to reseed).
-fn read_events(tasks_dir: &Path, task_id: &str) -> Vec<Value> {
+///
+/// `pub(crate)` so the thin `commands::transcript::read_transcript` wrapper can
+/// reseed the web from it while the command handler lives in the command tier —
+/// keeping `store/` a pure persistence leaf with no `#[tauri::command]` of its own.
+pub(crate) fn read_events(tasks_dir: &Path, task_id: &str) -> Vec<Value> {
     // Defence in depth: reject a task id that isn't a flat filename component before
     // joining it into the transcript path (path-traversal at the command boundary).
     if !crate::store::is_safe_task_id(task_id) {
@@ -330,16 +334,6 @@ fn read_tail_lines(path: &Path, max_lines: usize) -> Option<Vec<String>> {
         lines.drain(0..drop);
     }
     Some(lines)
-}
-
-// --- Commands ---------------------------------------------------------------
-
-/// Return a task's persisted transcript events (tail-bounded). The web reseeds its
-/// `nc:session` stream view from this on mount / when a task is opened, so a reload
-/// no longer blanks the transcript (M4.7 §C).
-#[tauri::command]
-pub fn read_transcript(store: State<'_, TaskStore>, task_id: String) -> Result<Vec<Value>, String> {
-    Ok(read_events(&store.tasks_dir(), &task_id))
 }
 
 /// A compact, bounded plain-text digest of a task's transcript for commit-message
