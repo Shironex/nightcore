@@ -42,6 +42,7 @@ import { z } from 'zod';
 // specifiers to their `.ts` sources, so the relative source entry works as-is.
 import {
   CHANNELS,
+  KnownModelSchema,
   NightcoreEventSchema,
   SurfaceCommandSchema,
   SurfaceQuerySchema,
@@ -428,6 +429,12 @@ const ENUM_NAMES: Record<string, string> = {
   // (distinct value-set from the SDK `PermissionMode` above, so no collision).
   'bypass|auto-accept|ask|plan': 'AutonomyLevel',
   'full|tokens-only|none': 'CostTelemetry',
+  // The curated known-model family list (issue #18, item 4). `model` rides the wire
+  // as a free `z.string()` (the SDK accepts any id), so this enum is NOT wire-
+  // reachable — it is force-emitted below so the Rust settings layer consumes the
+  // codegen'd `KnownModel` (the canonical long ids + the default) instead of
+  // re-listing the family strings, single-sourcing the catalog to the contract.
+  'claude-opus-4-8|claude-sonnet-4-6|claude-haiku-4-5|claude-fable-5': 'KnownModel',
 };
 
 /** Guard the {@link ENUM_NAMES} registry: it must be an INJECTION — each canonical
@@ -810,6 +817,13 @@ function emitRust(): string {
   const surface = emitTaggedUnion(SurfaceCommandSchema, 'SurfaceCommand', ctx);
   const query = emitTaggedUnion(SurfaceQuerySchema, 'SurfaceQuery', ctx);
   const event = emitTaggedUnion(NightcoreEventSchema, 'NightcoreEvent', ctx);
+
+  // Force-emit `KnownModel` (issue #18, item 4): the curated model family list is
+  // NOT wire-reachable (`model` is a free `z.string()` so custom ids pass through),
+  // but the Rust settings layer consumes the codegen'd enum to single-source the
+  // catalog + default from the contract. Registered here as a standalone enum so it
+  // lands in `ctx.decls` alongside the wire-derived supporting types.
+  registerInlineEnum(KnownModelSchema, 'KnownModel', ctx);
 
   // Supporting types (enums + nested structs) declared in a stable order so the
   // output is deterministic regardless of discovery order.

@@ -954,6 +954,18 @@ pub enum IssueVerdict {
     NeedsClarification,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum KnownModel {
+    #[serde(rename = "claude-opus-4-8")]
+    ClaudeOpus48,
+    #[serde(rename = "claude-sonnet-4-6")]
+    ClaudeSonnet46,
+    #[serde(rename = "claude-haiku-4-5")]
+    ClaudeHaiku45,
+    #[serde(rename = "claude-fable-5")]
+    ClaudeFable5,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct McpServerEntry {

@@ -97,6 +97,28 @@ mod tests {
     }
 
     #[test]
+    fn known_model_ids_come_from_the_codegen_enum() {
+        use crate::contracts::KnownModel;
+        // Issue #18, item 4: the catalog is single-sourced from the contract
+        // `KnownModelSchema`. These assertions pin the codegen'd serde renames (a
+        // contract rename reds this drift guard) and prove `canonical_model_id` /
+        // `Settings::default` derive their long ids from the enum, not literals.
+        assert_eq!(known_model_id(KnownModel::ClaudeOpus48), "claude-opus-4-8");
+        assert_eq!(
+            known_model_id(KnownModel::ClaudeSonnet46),
+            "claude-sonnet-4-6"
+        );
+        assert_eq!(
+            known_model_id(KnownModel::ClaudeHaiku45),
+            "claude-haiku-4-5"
+        );
+        assert_eq!(known_model_id(KnownModel::ClaudeFable5), "claude-fable-5");
+        // The default is the first known model, single-sourced (not a duplicated literal).
+        assert_eq!(default_model_id(), "claude-opus-4-8");
+        assert_eq!(Settings::default().default_model, default_model_id());
+    }
+
+    #[test]
     fn default_model_resolves_project_then_global_as_long_id() {
         let (store, _tmp) = temp_store();
         // Global default is already a long id.

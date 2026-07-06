@@ -317,9 +317,11 @@ impl From<McpServerEntry> for crate::contracts::McpServerEntry {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            // SDK long ids (the value sent on the wire); see `canonical_model_id`
-            // for the legacy short-id fallback so old settings files still resolve.
-            default_model: "claude-opus-4-8".to_string(),
+            // The default model, single-sourced from the contract `KnownModel`
+            // (issue #18, item 4) — no longer a literal duplicated with
+            // `canonical_model_id`. See that fn for the legacy short-id fallback so
+            // old settings files still resolve.
+            default_model: super::helpers::default_model_id(),
             default_effort: "medium".to_string(),
             max_concurrency: 3,
             // M4.7 §A1: bypass by default — new tasks run unattended with no

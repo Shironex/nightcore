@@ -4,6 +4,8 @@
  * invoking a live backend, so the board renders with representative data. Kept
  * separate from the command logic so the fallback fixtures are reviewable on their own.
  */
+import { KnownModelSchema } from '@nightcore/contracts';
+
 import { PROVIDER_LABEL } from '../provider';
 import type {
   AppInfo,
@@ -16,8 +18,12 @@ import type {
 } from './types';
 
 /** Canonical fallbacks shared by the browser-preview mocks and UI fallbacks, so
- *  the default model id and repo URL live in exactly one place. */
-const DEFAULT_MODEL_ID = 'claude-opus-4-8';
+ *  the default model id and repo URL live in exactly one place. The default model
+ *  is the first `KnownModel` from the contract (issue #18, item 4) — the same
+ *  single source the Rust settings layer and the model picker consume, so the
+ *  catalog default is never re-hardcoded per surface. */
+// A zod enum always has at least one option, so the first `KnownModel` is present.
+const DEFAULT_MODEL_ID = KnownModelSchema.options[0]!;
 export const DEFAULT_REPO_URL = 'https://github.com/Shironex/nightcore';
 
 /** A populated mock snapshot so the inspector renders outside Tauri (browser
