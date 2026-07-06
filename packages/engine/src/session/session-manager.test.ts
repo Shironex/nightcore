@@ -6,6 +6,18 @@ import { afterAll, afterEach, beforeEach, describe, expect, mock, test } from 'b
 
 import type { Config, NightcoreEvent } from '@nightcore/contracts';
 
+import type {
+  AgentProvider,
+  AgentSession,
+  PreflightRequest,
+  StartSessionParams,
+} from '../providers/agent-provider.js';
+import { assertHooksInvariant } from '../providers/agent-provider.js';
+import {
+  CLAUDE_CAPABILITIES,
+  permissionModeToAutonomy,
+} from '../providers/claude/capabilities.js';
+
 /**
  * The SDK boundary is stubbed so no live Claude model is ever spawned. Each
  * fake `query()` call pulls the next scripted message script from `nextScript`,
@@ -790,5 +802,124 @@ describe('SessionManager stale interactive replies are observable', () => {
     );
     expect(call).toBeDefined();
     expect(call?.[1]).toMatchObject({ requestId: 'stale-q', sessionId: 1 });
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Fail-closed autonomy invariant at the supervisor seam (issue #18)
+// ---------------------------------------------------------------------------
+
+describe('SessionManager fail-closed autonomy invariant', () => {
+  const STUB_SESSION: AgentSession = {
+    permissionMode: 'default',
+    run: async () => {},
+    streamInput: () => {},
+    interrupt: async () => {},
+    setModel: async () => {},
+    setAutonomy: async () => {},
+    approvePermission: () => false,
+    answerQuestion: () => false,
+    listModels: async () => [],
+    probeConfig: async () => {
+      throw new Error('probe not used in this test');
+    },
+  };
+
+  /** A provider whose ONLY material difference from Claude is that it cannot enforce
+   *  PreToolUse hooks — it refuses elevated autonomy at the seam exactly as the
+   *  invariant demands (never spins a real SDK session). */
+  class DegradedProvider implements AgentProvider {
+    capabilities() {
+      return {
+        ...CLAUDE_CAPABILITIES,
+        id: 'fake',
+        label: 'Fake',
+        supportsHooks: false,
+      };
+    }
+    preflight(request: PreflightRequest): void {
+      assertHooksInvariant(
+        this.capabilities(),
+        permissionModeToAutonomy(request.permissionMode),
+        { osSandboxed: request.osSandboxed },
+      );
+    }
+    startSession(params: StartSessionParams): AgentSession {
+      const mode = params.permissionModeOverride ?? 'default';
+      this.preflight({
+        permissionMode: mode,
+        osSandboxed: params.sandboxWrites === true,
+      });
+      return { ...STUB_SESSION, permissionMode: mode };
+    }
+    createProbeSession(): AgentSession {
+      return STUB_SESSION;
+    }
+  }
+
+  function isFailed(
+    e: NightcoreEvent,
+  ): e is Extract<NightcoreEvent, { type: 'session-failed' }> {
+    return e.type === 'session-failed';
+  }
+
+  test('REFUSES bypass on a no-hooks provider — terminal session-failed, no start', async () => {
+    const manager = new SessionManager(
+      makeConfig(),
+      undefined,
+      new DegradedProvider(),
+    );
+    const events: NightcoreEvent[] = [];
+    manager.on((e) => events.push(e));
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'x',
+      permissionMode: 'bypassPermissions',
+    });
+
+    const failed = events.find(isFailed);
+    expect(failed).toBeDefined();
+    expect(failed?.message).toContain('hooks');
+    expect(events.some((e) => e.type === 'session-started')).toBe(false);
+  });
+
+  test('STARTS at a non-elevated autonomy on the same degraded provider', async () => {
+    const manager = new SessionManager(
+      makeConfig(),
+      undefined,
+      new DegradedProvider(),
+    );
+    const events: NightcoreEvent[] = [];
+    manager.on((e) => events.push(e));
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'x',
+      permissionMode: 'default',
+    });
+
+    expect(events.some((e) => e.type === 'session-started')).toBe(true);
+    expect(events.some(isFailed)).toBe(false);
+  });
+
+  test('permits bypass when the OS write sandbox compensates', async () => {
+    const manager = new SessionManager(
+      makeConfig(),
+      undefined,
+      new DegradedProvider(),
+    );
+    const events: NightcoreEvent[] = [];
+    manager.on((e) => events.push(e));
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'x',
+      permissionMode: 'bypassPermissions',
+      sandboxWrites: true,
+    });
+
+    expect(events.some((e) => e.type === 'session-started')).toBe(true);
+    expect(events.some(isFailed)).toBe(false);
   });
 });

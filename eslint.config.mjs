@@ -215,13 +215,11 @@ export default tseslint.config(
     // AND types — is confined to the provider boundary directory
     // `providers/claude/**`. Everything outside that directory talks
     // NightcoreEvent / contract types / the neutral `AgentProvider` seam only, so a
-    // second provider slots in without rewriting orchestration. During the Phase-1
-    // migration `allowTypeImports` is still on so the not-yet-sealed supervisor can
-    // name a stray SDK *type*; Phase 1's final commit drops it to ban SDK types too.
-    // The `apps/**` block above keeps surfaces fully SDK-free; this is its
-    // intra-engine counterpart. Uses @typescript-eslint/no-restricted-imports for
-    // `allowTypeImports`, which the base ESLint rule lacks. Tests are exempt: they
-    // stub the SDK boundary via mock.module() / await import().
+    // second provider slots in without rewriting orchestration. NO `allowTypeImports`:
+    // an SDK *type* leaking outward is the exact funnel-leak the seam seals, so it is
+    // banned too. The `apps/**` block above keeps surfaces fully SDK-free; this is its
+    // intra-engine counterpart. Tests are exempt: they stub the SDK boundary via
+    // mock.module() / await import().
     files: ['packages/engine/src/**/*.ts'],
     ignores: [
       'packages/engine/src/providers/claude/**',
@@ -234,9 +232,8 @@ export default tseslint.config(
           paths: [
             {
               name: '@anthropic-ai/claude-agent-sdk',
-              allowTypeImports: true,
               message:
-                'The Claude Agent SDK is confined to packages/engine/src/providers/claude/**. Everything outside talks NightcoreEvent / contract types / the AgentProvider seam.',
+                'The Claude Agent SDK (runtime and types) is confined to packages/engine/src/providers/claude/**. Everything outside talks NightcoreEvent / contract types / the AgentProvider seam.',
             },
           ],
         },
