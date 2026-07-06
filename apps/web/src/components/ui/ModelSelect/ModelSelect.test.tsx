@@ -17,6 +17,24 @@ const STATIC_MODELS: ModelDescriptor[] =
   STATIC_MODEL_CATALOG_DATA.mode === 'sync' ? STATIC_MODEL_CATALOG_DATA.read() : [];
 const READY: ModelCatalogState = { status: 'ready', models: STATIC_MODELS };
 
+/** A codex model, used to build a catalog whose providers interleave. */
+const CODEX_MODEL: ModelDescriptor = {
+  value: 'gpt-5-codex',
+  displayName: 'Codex GPT-5',
+  description: 'OpenAI coding model',
+  supportsEffort: true,
+  supportedEffortLevels: ['low', 'medium', 'high'],
+};
+
+/** A catalog whose providers are interleaved in source order (Claude → Codex →
+ *  Claude…), so the grouped display order differs from catalog-iteration order —
+ *  the case that desyncs a naive source-order keyboard-nav index. Splicing the
+ *  Codex model between the first two Claude models does it. */
+const INTERLEAVED: ModelCatalogState = {
+  status: 'ready',
+  models: STATIC_MODELS.flatMap((model, i) => (i === 1 ? [CODEX_MODEL, model] : [model])),
+};
+
 test('the combobox is collapsed until opened', async () => {
   const screen = render(<Default />);
   expect(screen.container.querySelector('[role="listbox"]')).toBeNull();
@@ -91,6 +109,33 @@ test('arrow-down + Enter picks the highlighted model with the keyboard', async (
   await screen.getByRole('combobox', { name: /model/i }).click();
   await userEvent.keyboard('{ArrowDown}{Enter}');
   expect(onChange).toHaveBeenCalledWith(expect.objectContaining({ model: 'claude-opus-4-8' }));
+});
+
+test('grouped keyboard-nav stays in sync across an interleaved provider boundary', async () => {
+  const onChange = vi.fn();
+  const screen = render(
+    <ModelSelect value={{ model: null, effort: null }} onChange={onChange} catalog={INTERLEAVED} />,
+  );
+  const combobox = screen.getByRole('combobox', { name: /model/i });
+  await combobox.click();
+  // Inherit(0) → Opus(1) → Sonnet(2). The third flat row is a Claude model that
+  // trails the interleaved Codex model in source order, so a source-order index
+  // would point the highlight at the Codex row instead.
+  await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+
+  // Invariant: the visually-highlighted (aria-selected) option IS the option the
+  // combobox's aria-activedescendant references — the desync bug splits them onto
+  // different rows once a provider interleaves.
+  const active = screen.container.querySelector('[role="option"][aria-selected="true"]');
+  expect(active).not.toBeNull();
+  expect(active?.id).toBe(combobox.element().getAttribute('aria-activedescendant'));
+  expect(active?.getAttribute('aria-label')).toMatch(/sonnet/i);
+
+  // …and Enter picks that same row, not the source-order neighbor.
+  await userEvent.keyboard('{Enter}');
+  expect(onChange).toHaveBeenCalledWith(
+    expect.objectContaining({ model: 'claude-sonnet-4-6', providerId: 'claude' }),
+  );
 });
 
 test('Escape closes the listbox', async () => {

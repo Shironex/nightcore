@@ -13,19 +13,29 @@ const STATIC_MODELS: ModelDescriptor[] =
   STATIC_MODEL_CATALOG_DATA.mode === 'sync' ? STATIC_MODEL_CATALOG_DATA.read() : [];
 const READY: ModelCatalogState = { status: 'ready', models: STATIC_MODELS };
 
+/** A codex model, so the provider grouping is visible / interleavable. */
+const CODEX_MODEL: ModelDescriptor = {
+  value: 'gpt-5-codex',
+  displayName: 'Codex GPT-5',
+  description: 'OpenAI coding model',
+  supportsEffort: true,
+  supportedEffortLevels: ['low', 'medium', 'high'],
+};
+
 /** A second provider (Codex) added so the provider grouping is visible. */
 const MULTI_PROVIDER: ModelCatalogState = {
   status: 'ready',
-  models: [
-    ...STATIC_MODELS,
-    {
-      value: 'gpt-5-codex',
-      displayName: 'Codex GPT-5',
-      description: 'OpenAI coding model',
-      supportsEffort: true,
-      supportedEffortLevels: ['low', 'medium', 'high'],
-    },
-  ],
+  models: [...STATIC_MODELS, CODEX_MODEL],
+};
+
+/** A catalog whose providers interleave in source order (Claude → Codex → Claude…)
+ *  rather than arriving pre-grouped — the shape a live `listModels()` can return.
+ *  Exercises the grouped keyboard-nav invariant: the flat index the combobox walks
+ *  must track each row's display position, or the highlight, aria-activedescendant,
+ *  and Enter-target desync across the provider boundary. */
+const INTERLEAVED: ModelCatalogState = {
+  status: 'ready',
+  models: STATIC_MODELS.flatMap((model, i) => (i === 1 ? [CODEX_MODEL, model] : [model])),
 };
 
 const meta = {
@@ -68,6 +78,26 @@ export const MultiProvider: Story = {
     await userEvent.click(canvas.getByRole('combobox', { name: /model/i }));
     await expect(canvas.getByRole('group', { name: 'Claude' })).toBeInTheDocument();
     await expect(canvas.getByRole('group', { name: 'Codex' })).toBeInTheDocument();
+  },
+};
+
+/** Interleaved providers: arrow-navigating past the group boundary keeps the
+ *  highlighted (aria-selected) row, the aria-activedescendant, and the Enter-target
+ *  on the same option. Regression cover for the source-order vs grouped-order index
+ *  desync. */
+export const InterleavedProviders: Story = {
+  args: { catalog: INTERLEAVED },
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    const combobox = canvas.getByRole('combobox', { name: /model/i });
+    await userEvent.click(combobox);
+    // Inherit(0) → Opus(1) → Sonnet(2): the third flat row trails the interleaved
+    // Codex model in source order.
+    await userEvent.keyboard('{ArrowDown}{ArrowDown}');
+    const active = canvasElement.querySelector('[role="option"][aria-selected="true"]');
+    expect(active).not.toBeNull();
+    expect(active?.id).toBe(combobox.getAttribute('aria-activedescendant'));
+    expect(active?.getAttribute('aria-label')).toMatch(/sonnet/i);
   },
 };
 

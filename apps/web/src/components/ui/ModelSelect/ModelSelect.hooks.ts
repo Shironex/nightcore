@@ -93,9 +93,22 @@ export function useModelCatalog(
   return state;
 }
 
-/** Group the catalog by provider (inferred from the model id), assigning each kept
- *  row its flat keyboard-nav index (Inherit → groups) plus a stable option id, and
- *  enriching each with web tier metadata. Pure. */
+/** The provider a row belongs to (a known brand id, or `null` for the fallback
+ *  bucket) — the resolver's return type. */
+type RowProvider = ReturnType<typeof resolveProviderForModel>;
+
+/** A model row before its position is known — bucketed by provider first, then
+ *  stamped with the flat keyboard-nav index + option id during the final flatten. */
+type PendingRow = Omit<ModelRow, 'index' | 'id'>;
+
+/** Group the catalog by provider (inferred from the model id), then assign each
+ *  kept row its flat keyboard-nav index (Inherit → groups) plus a stable option id
+ *  *from that final grouped order* — NOT catalog-iteration order. The two diverge
+ *  whenever the catalog interleaves providers (e.g. `[claude, codex, claude]`);
+ *  keying `index`/`id` off the flattened order keeps `row.index` equal to the row's
+ *  position in `flatRows`, so the highlight, `aria-activedescendant`, and the
+ *  Enter-target never disagree. Also enriches each row with web tier metadata.
+ *  Pure. */
 function buildGroups(
   models: ModelDescriptor[],
   baseId: string,
@@ -110,20 +123,18 @@ function buildGroups(
     id: `${baseId}-opt-inherit`,
   };
 
-  let index = 1;
-  const order: (ReturnType<typeof resolveProviderForModel>)[] = [];
-  const buckets = new Map<ReturnType<typeof resolveProviderForModel>, ModelRow[]>();
+  // Bucket by provider in first-seen order, WITHOUT assigning positions yet.
+  const order: RowProvider[] = [];
+  const buckets = new Map<RowProvider, PendingRow[]>();
   for (const descriptor of models) {
     const provider = resolveProviderForModel(descriptor.value);
     const meta = modelOptionFor(descriptor.value);
-    const row: ModelRow = {
+    const row: PendingRow = {
       value: descriptor.value,
       label: descriptor.displayName,
       description: descriptor.description,
       tier: meta?.tier ?? null,
       provider,
-      index: index++,
-      id: `${baseId}-opt-${index}`,
     };
     const bucket = buckets.get(provider);
     if (bucket === undefined) {
@@ -134,10 +145,19 @@ function buildGroups(
     }
   }
 
+  // Flatten in grouped order (Inherit is index 0; provider rows follow), stamping
+  // each row's flat index + option id from that final order. `.map` runs the groups
+  // and their rows sequentially, so the shared counter walks the flat list in
+  // display order — exactly the order `flatRows` is later assembled in.
+  let index = 1;
   const groups: ProviderGroup[] = order.map((provider) => ({
     provider,
     label: provider !== null ? providerLabel(provider) : 'Other',
-    rows: buckets.get(provider) ?? [],
+    rows: (buckets.get(provider) ?? []).map((row) => {
+      const flat: ModelRow = { ...row, index, id: `${baseId}-opt-${index}` };
+      index += 1;
+      return flat;
+    }),
   }));
   return { inheritRow, groups, count: index };
 }
