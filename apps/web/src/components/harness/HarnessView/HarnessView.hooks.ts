@@ -33,21 +33,30 @@ import {
   type Task,
 } from '@/lib/bridge';
 import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
-import { deriveRunPhase, patchStreamItem, seedStepState } from '@/lib/scan-run';
+import {
+  buildLensTabs,
+  countByLens,
+  countOpenItems,
+  deriveRunPhase,
+  patchStreamItem,
+  scanSkeletonCount,
+  seedStepState,
+} from '@/lib/scan-run';
+import { sortBySeverityThenStatus } from '@/lib/severity';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import type { RunConfig } from '@/lib/useRunConfig';
 import { useScanItemActions } from '@/lib/useScanItemActions';
+import { useScanResultsView } from '@/lib/useScanResultsView';
 import { useScanRun } from '@/lib/useScanRun';
 
 import type { CategoryTab } from '../CategoryTabs';
-import { ALL_CATEGORIES, CATEGORY_META, severityRankValue } from '../harness.constants';
+import { ALL_CATEGORIES, CATEGORY_META } from '../harness.constants';
 import type {
   ConventionFindingVM,
   HarnessProposalVM,
   ProposedArtifactVM,
 } from '../harness.types';
 import {
-  type CategoryProgress,
   EMPTY_HARNESS_STREAM,
   foldHarness,
   type HarnessStream,
@@ -339,40 +348,10 @@ export function useHarness(hasProject: boolean): UseHarnessResult {
   };
 }
 
-const RUNNING: CategoryProgress = 'running';
-
 /** The Rust check kind + suggested command shown (verbatim) when arming an eslint-class
  *  artifact as a gauntlet check. `lint-plugin` is the gauntlet's kind for an ESLint gate;
  *  `npx eslint .` is the conventional whole-repo lint the user reviews + confirms. */
 const ARM_SUGGESTION = { kind: 'lint-plugin', command: 'npx eslint .' } as const;
-
-/** Order findings for display: open before dismissed, then severity (high→low). */
-function sortFindings(findings: ConventionFindingVM[]): ConventionFindingVM[] {
-  const statusRank = (f: ConventionFindingVM) => (f.status === 'open' ? 0 : 1);
-  return [...findings].sort((a, b) => {
-    const s = statusRank(a) - statusRank(b);
-    if (s !== 0) return s;
-    return severityRankValue(b.severity) - severityRankValue(a.severity);
-  });
-}
-
-/** Lenses that appear as tabs: those requested this scan plus any that produced
- *  findings (covers loading a past run whose requested set we project from). */
-function tabCategories(stream: HarnessStream): ConventionCategory[] {
-  const present = new Set<ConventionCategory>(stream.requestedCategories);
-  for (const f of stream.findings) present.add(f.category);
-  return ALL_CATEGORIES.filter((c) => present.has(c));
-}
-
-function openCount(
-  findings: ConventionFindingVM[],
-  category?: ConventionCategory,
-): number {
-  return findings.filter(
-    (f) =>
-      f.status === 'open' && (category === undefined || f.category === category),
-  ).length;
-}
 
 /** Which body section is showing: the convention grid, the task-shaped proposals,
  *  the file-level artifacts, or the runtime-policy editor + injection scan. */
@@ -515,12 +494,17 @@ export function useHarnessView({
   const harness = useHarness(hasProject);
   const { stream } = harness;
 
+  const toast = useToast();
+  // The shared results-view cluster: tab / finding selection / pending+runAction /
+  // reconfigure / peek. Harness's extra selections (proposal / artifact) and the
+  // apply/arm confirm flows stay family-side below.
+  const view = useScanResultsView<ConventionCategory>({
+    notifyError: (title, err) => toast.error(title, err),
+  });
+  const { activeTab, resetTransient, runAction, startReconfigure } = view;
   const [section, setSection] = useState<HarnessSection>('conventions');
-  const [activeTab, setActiveTab] = useState<'all' | ConventionCategory>('all');
-  const [selectedFindingId, setSelectedFindingId] = useState<string | null>(null);
   const [selectedProposalId, setSelectedProposalId] = useState<string | null>(null);
   const [selectedArtifactId, setSelectedArtifactId] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
   const [applyTargetId, setApplyTargetId] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
@@ -529,11 +513,9 @@ export function useHarnessView({
 
   // Lifted CONFIGURE run config (the shared shape Insight uses too). It lives here
   // (not in RunControls) so the config survives the CONFIGURE → RUNNING → RESULTS
-  // phase swaps and pre-fills on a new run. `reconfiguring` is the explicit "New
-  // run" override that returns RESULTS to CONFIGURE without discarding the run.
+  // phase swaps and pre-fills on a new run. `view.reconfiguring` is the explicit
+  // "New run" override that returns RESULTS to CONFIGURE without discarding the run.
   const config = useRunConfig(!hasProject);
-  const [reconfiguring, setReconfiguring] = useState(false);
-  const [peekCategory, setPeekCategory] = useState<ConventionCategory | null>(null);
 
   // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
   // a run + item to open. Consume the target FIRST, land on that run's RESULTS in
@@ -543,23 +525,20 @@ export function useHarnessView({
     preselect,
     onPreselectConsumed,
     selectRun: harness.selectRun,
-    onEnter: () => {
-      setReconfiguring(false);
-      setPeekCategory(null);
-    },
+    onEnter: resetTransient,
     onOpenItem: ({ itemId, kind }) => {
       if (kind === 'proposal') {
         setSection('proposals');
         setSelectedProposalId(itemId);
       } else {
         setSection('conventions');
-        setActiveTab('all');
-        setSelectedFindingId(itemId);
+        view.setActiveTab('all');
+        view.setSelectedId(itemId);
       }
     },
   });
 
-  const phase: RunPhase = deriveRunPhase(stream.status, harness.isStarting, reconfiguring);
+  const phase: RunPhase = deriveRunPhase(stream.status, harness.isStarting, view.reconfiguring);
 
   // "New run": pre-fill the form from the last run's model + lenses, then drop back
   // to CONFIGURE. (Effort isn't persisted on a run, so the lifted value carries.)
@@ -570,15 +549,13 @@ export function useHarnessView({
       model: stream.model,
       categories: stream.requestedCategories,
     });
-    setPeekCategory(null);
-    setReconfiguring(true);
-  }, [config, stream.model, stream.requestedCategories]);
+    startReconfigure();
+  }, [config, stream.model, stream.requestedCategories, startReconfigure]);
 
   const onScan = useCallback(() => {
-    setReconfiguring(false);
-    setPeekCategory(null);
+    resetTransient();
     void harness.start(config.orderedSelected, config.model, config.effort);
-  }, [harness, config]);
+  }, [harness, config, resetTransient]);
 
   const summary = useMemo(() => {
     const modelLabel =
@@ -603,67 +580,49 @@ export function useHarnessView({
     [stream.requestedCategories],
   );
 
-  const findingCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const f of stream.findings) {
-      counts[f.category] = (counts[f.category] ?? 0) + 1;
-    }
-    return counts;
-  }, [stream.findings]);
+  const findingCounts = useMemo(
+    () => countByLens(stream.findings, (f) => f.category),
+    [stream.findings],
+  );
 
   const peekFindings = useMemo(
     () =>
-      peekCategory === null
+      view.peekLens === null
         ? []
-        : sortFindings(stream.findings.filter((f) => f.category === peekCategory)),
-    [peekCategory, stream.findings],
+        : sortBySeverityThenStatus(
+            stream.findings.filter((f) => f.category === view.peekLens),
+          ),
+    [view.peekLens, stream.findings],
   );
 
-  const visibleCategories = useMemo(() => tabCategories(stream), [stream]);
-
-  const tabs: CategoryTab[] = useMemo(() => {
-    const runningCount = Object.values(stream.categoryState).filter(
-      (s) => s === RUNNING,
-    ).length;
-    const head: CategoryTab = {
-      key: 'all',
-      count: openCount(stream.findings),
-      running: runningCount > 0,
-      errored: false,
-    };
-    return [
-      head,
-      ...visibleCategories.map((c) => ({
-        key: c,
-        count: openCount(stream.findings, c),
-        running: stream.categoryState[c] === RUNNING,
-        errored: stream.categoryState[c] === 'error',
-      })),
-    ];
-  }, [stream, visibleCategories]);
+  const tabs: CategoryTab[] = useMemo(
+    () =>
+      buildLensTabs({
+        all: ALL_CATEGORIES,
+        requested: stream.requestedCategories,
+        stepState: stream.categoryState,
+        items: stream.findings,
+        lensOf: (f) => f.category,
+      }),
+    [stream.requestedCategories, stream.categoryState, stream.findings],
+  );
 
   const gridFindings = useMemo(() => {
     const filtered =
       activeTab === 'all'
         ? stream.findings
         : stream.findings.filter((f) => f.category === activeTab);
-    return sortFindings(filtered);
+    return sortBySeverityThenStatus(filtered);
   }, [stream.findings, activeTab]);
 
-  const skeletonCount = useMemo(() => {
-    if (stream.status !== 'running') return 0;
-    if (activeTab === 'all') {
-      const running = Object.values(stream.categoryState).filter(
-        (s) => s === RUNNING,
-      ).length;
-      return Math.min(6, running * 2);
-    }
-    return stream.categoryState[activeTab] === RUNNING ? 3 : 0;
-  }, [stream.status, stream.categoryState, activeTab]);
+  const skeletonCount = useMemo(
+    () => scanSkeletonCount(stream.status, stream.categoryState, activeTab),
+    [stream.status, stream.categoryState, activeTab],
+  );
 
   const selectedFinding = useMemo(
-    () => stream.findings.find((f) => f.id === selectedFindingId) ?? null,
-    [stream.findings, selectedFindingId],
+    () => stream.findings.find((f) => f.id === view.selectedId) ?? null,
+    [stream.findings, view.selectedId],
   );
   const selectedProposal = useMemo(
     () => stream.proposals.find((p) => p.id === selectedProposalId) ?? null,
@@ -700,12 +659,11 @@ export function useHarnessView({
         label: `${new Date(run.createdAt).toLocaleString()} · ${run.findings.length} conventions`,
         onClick: () => {
           // Selecting a past run lands on its RESULTS — drop any reconfigure/peek.
-          setReconfiguring(false);
-          setPeekCategory(null);
+          resetTransient();
           void harness.selectRun(run.id);
         },
       })),
-    [harness],
+    [harness, resetTransient],
   );
 
   const emptyMessage = useMemo(() => {
@@ -738,25 +696,6 @@ export function useHarnessView({
     }
     return 'No harness artifacts proposed for this scan.';
   }, [stream.status, stream.error]);
-
-  const toast = useToast();
-  const runAction = useCallback(
-    async (label: string, fn: () => Promise<unknown>) => {
-      setPending(true);
-      try {
-        await fn();
-      } catch (err) {
-        // Fired as `void runAction(...)`, so without this catch a failed action would
-        // only clear `pending` and vanish into the generic global toast. Mirror the
-        // Insight sibling: log + a labeled toast through the routed-failure channel.
-        console.error(`${label} failed`, err);
-        toast.error(`Could not ${label}`, err);
-      } finally {
-        setPending(false);
-      }
-    },
-    [toast],
-  );
 
   const confirmApply = useCallback(() => {
     if (applyTargetId === null) return;
@@ -855,22 +794,22 @@ export function useHarnessView({
     categoryRunState: stream.categoryState,
     findingCounts,
     synthesizing: stream.synthesizing,
-    peekCategory,
-    peekLabel: peekCategory === null ? null : CATEGORY_META[peekCategory].label,
+    peekCategory: view.peekLens,
+    peekLabel: view.peekLens === null ? null : CATEGORY_META[view.peekLens].label,
     peekFindings,
-    openCategory: (key: string) => setPeekCategory(key as ConventionCategory),
-    clearPeek: () => setPeekCategory(null),
+    openCategory: (key: string) => view.openPeek(key as ConventionCategory),
+    clearPeek: view.clearPeek,
     runHistory,
     hasHistory: harness.runs.length > 0,
     profileLoading: stream.status === 'running' && stream.profile === null,
     section,
     setSection,
-    conventionCount: openCount(stream.findings),
+    conventionCount: countOpenItems(stream.findings),
     proposalCount: stream.proposals.filter((p) => p.status === 'proposed').length,
     artifactCount: stream.artifacts.filter((a) => a.status === 'proposed').length,
     tabs,
     activeTab,
-    setActiveTab,
+    setActiveTab: view.setActiveTab,
     gridFindings,
     skeletonCount,
     emptyMessage,
@@ -881,8 +820,8 @@ export function useHarnessView({
     artifactsLoading: stream.status === 'running' && stream.artifacts.length === 0,
     artifactsEmptyMessage,
     selectedFinding,
-    openFinding: (finding: ConventionFindingVM) => setSelectedFindingId(finding.id),
-    closeFinding: () => setSelectedFindingId(null),
+    openFinding: (finding: ConventionFindingVM) => view.setSelectedId(finding.id),
+    closeFinding: () => view.setSelectedId(null),
     selectedProposal,
     openProposal: (proposal: HarnessProposalVM) => setSelectedProposalId(proposal.id),
     closeProposal: () => setSelectedProposalId(null),
@@ -890,7 +829,7 @@ export function useHarnessView({
     selectedArtifact,
     openArtifact: (artifact: ProposedArtifactVM) => setSelectedArtifactId(artifact.id),
     closeArtifact: () => setSelectedArtifactId(null),
-    pending,
+    pending: view.pending,
     applyTarget,
     applying,
     applyError,

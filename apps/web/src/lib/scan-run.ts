@@ -153,6 +153,93 @@ export function normalizeLocation(
   };
 }
 
+/** How many open (unresolved) items a scan run currently shows. */
+export function countOpenItems<Item extends { status: string }>(
+  items: readonly Item[],
+): number {
+  return items.filter((i) => i.status === 'open').length;
+}
+
+/** Total items per lens (the RunProgress per-lens counters). */
+export function countByLens<Item>(
+  items: readonly Item[],
+  lensOf: (item: Item) => string,
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const item of items) {
+    const lens = lensOf(item);
+    counts[lens] = (counts[lens] ?? 0) + 1;
+  }
+  return counts;
+}
+
+/** One results-tab descriptor: the `'all'` head or a lens tab with its open
+ *  count and live run state. Structurally identical to each family's local
+ *  `CategoryTab`. */
+export interface LensTab<Lens extends string> {
+  key: 'all' | Lens;
+  count: number;
+  running: boolean;
+  errored: boolean;
+}
+
+/**
+ * Build the results tab strip: an `'all'` head (open count across every lens,
+ * running while any lens runs) plus one tab per visible lens — those requested
+ * this run or that produced items (covers loading a past run whose requested
+ * set we project from) — in canonical (`all`) order. Cloned byte-identical by
+ * the Insight and Harness view models.
+ */
+export function buildLensTabs<Item extends { status: string }, Lens extends string>(opts: {
+  /** The full lens vocabulary in canonical display order. */
+  all: readonly Lens[];
+  /** The lenses requested this run. */
+  requested: readonly Lens[];
+  /** The per-lens live progress map (`categoryState` / `lensState`). */
+  stepState: Record<string, ScanStepProgress>;
+  items: readonly Item[];
+  lensOf: (item: Item) => Lens;
+}): LensTab<Lens>[] {
+  const present = new Set<Lens>(opts.requested);
+  for (const item of opts.items) present.add(opts.lensOf(item));
+  const visible = opts.all.filter((l) => present.has(l));
+  const runningCount = Object.values(opts.stepState).filter(
+    (s) => s === 'running',
+  ).length;
+  const openCount = (lens?: Lens) =>
+    opts.items.filter(
+      (i) => i.status === 'open' && (lens === undefined || opts.lensOf(i) === lens),
+    ).length;
+  return [
+    { key: 'all', count: openCount(), running: runningCount > 0, errored: false },
+    ...visible.map((l) => ({
+      key: l,
+      count: openCount(l),
+      running: opts.stepState[l] === 'running',
+      errored: opts.stepState[l] === 'error',
+    })),
+  ];
+}
+
+/**
+ * How many skeleton cards the results grid shows while the scan runs: on the
+ * `'all'` tab, two per currently-running lens (capped at 6); on a lens tab,
+ * three while that lens runs. Zero once the run settles. Cloned byte-identical
+ * by the Insight and Harness view models.
+ */
+export function scanSkeletonCount(
+  status: string,
+  stepState: Record<string, ScanStepProgress>,
+  activeTab: string,
+): number {
+  if (status !== 'running') return 0;
+  if (activeTab === 'all') {
+    const running = Object.values(stepState).filter((s) => s === 'running').length;
+    return Math.min(6, running * 2);
+  }
+  return stepState[activeTab] === 'running' ? 3 : 0;
+}
+
 /** The stream fields the shared fold manages directly. Every scan stream carries
  *  these; the family's `write` spreads the patch onto its concrete stream. */
 export interface ScanFoldCorePatch<FailureReason> {

@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import type {
   MenuItem,
@@ -22,6 +22,7 @@ import {
 import { deriveRunPhase, patchStreamItem, seedStepState } from '@/lib/scan-run';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import { useScanItemActions } from '@/lib/useScanItemActions';
+import { useScanResultsView } from '@/lib/useScanResultsView';
 import { useScanRun } from '@/lib/useScanRun';
 
 import type { DimensionRow } from '../DimensionGrid';
@@ -211,9 +212,13 @@ export function useScorecardView({
 
   const config = useRunConfig(!hasProject);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  const [reconfiguring, setReconfiguring] = useState(false);
+  const toast = useToast();
+  // The shared results-view cluster; Scorecard uses only selection / pending /
+  // reconfigure (its grid has no tabs and its RUNNING screen has no peek).
+  const view = useScanResultsView<ScorecardDimension>({
+    notifyError: (title, err) => toast.error(title, err),
+  });
+  const { setSelectedId, resetTransient, runAction } = view;
 
   // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
   // a run + reading to open. Consume the target FIRST, land on that run's RESULTS,
@@ -222,11 +227,11 @@ export function useScorecardView({
     preselect,
     onPreselectConsumed,
     selectRun: scorecard.selectRun,
-    onEnter: () => setReconfiguring(false),
+    onEnter: resetTransient,
     onOpenItem: (target) => setSelectedId(target.itemId),
   });
 
-  const phase: RunPhase = deriveRunPhase(stream.status, scorecard.isStarting, reconfiguring);
+  const phase: RunPhase = deriveRunPhase(stream.status, scorecard.isStarting, view.reconfiguring);
 
   const rows: DimensionRow[] = useMemo(() => {
     const byDim = new Map<string, ScorecardReadingView>();
@@ -240,8 +245,8 @@ export function useScorecardView({
   }, [stream.readings, stream.requestedDimensions, stream.dimensionState]);
 
   const selected = useMemo(
-    () => stream.readings.find((r) => r.id === selectedId) ?? null,
-    [stream.readings, selectedId],
+    () => stream.readings.find((r) => r.id === view.selectedId) ?? null,
+    [stream.readings, view.selectedId],
   );
 
   const progressCategories: RunProgressCategory[] = useMemo(
@@ -275,11 +280,11 @@ export function useScorecardView({
       scorecard.runs.map((run) => ({
         label: `${new Date(run.createdAt).toLocaleString()} · ${run.readings.length} graded`,
         onClick: () => {
-          setReconfiguring(false);
+          resetTransient();
           void scorecard.selectRun(run.id);
         },
       })),
-    [scorecard],
+    [scorecard, resetTransient],
   );
 
   const emptyMessage = useMemo(() => {
@@ -293,24 +298,6 @@ export function useScorecardView({
     }
     return 'No dimensions graded.';
   }, [stream.status, stream.error, stream.failureReason]);
-
-  const toast = useToast();
-  const runAction = useCallback(
-    async (label: string, fn: () => Promise<unknown>) => {
-      setPending(true);
-      try {
-        await fn();
-      } catch (err) {
-        // Fired as `void runAction(...)`: surface a labeled toast instead of letting
-        // the rejection fall through to the generic global handler (Insight parity).
-        console.error(`${label} failed`, err);
-        toast.error(`Could not ${label}`, err);
-      } finally {
-        setPending(false);
-      }
-    },
-    [toast],
-  );
 
   return {
     hasProject,
@@ -330,9 +317,9 @@ export function useScorecardView({
     selected,
     openReading: (reading: ScorecardReadingView) => setSelectedId(reading.id),
     closeReading: () => setSelectedId(null),
-    pending,
+    pending: view.pending,
     onGrade: () => {
-      setReconfiguring(false);
+      resetTransient();
       void scorecard.start(config.orderedSelected, config.model, config.effort);
     },
     onCancel: () => void scorecard.cancel(),
@@ -341,7 +328,7 @@ export function useScorecardView({
         model: stream.model,
         categories: stream.requestedDimensions,
       });
-      setReconfiguring(true);
+      view.startReconfigure();
     },
     onHarden: (id) => void runAction('harden dimension', () => scorecard.harden(id)),
     onGotoBoard,

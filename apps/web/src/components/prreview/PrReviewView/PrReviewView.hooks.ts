@@ -22,6 +22,7 @@ import {
   viewerLogin,
 } from '@/lib/bridge';
 import { seedStepState } from '@/lib/scan-run';
+import { sortBySeverityThenStatus } from '@/lib/severity';
 import { useBulkConvert } from '@/lib/useBulkConvert';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import { useRunConfig } from '@/lib/useRunConfig';
@@ -31,7 +32,6 @@ import {
   LENS_META,
   SEVERITY_META,
   SEVERITY_ORDER,
-  severityRankValue,
 } from '../prreview.constants';
 import type { ReviewFindingView, ReviewVerdict } from '../prreview.types';
 import { usePrFixes } from '../prreview-fixes.hooks';
@@ -156,16 +156,6 @@ export function useOpenPrs(enabled: boolean): OpenPrs {
     });
   }, []);
   return { prs, loading, loadingMore, error, hasMore, refresh, loadMore };
-}
-
-/** Order findings for display: open before resolved, then severity (high→low). */
-function sortFindings(findings: ReviewFindingView[]): ReviewFindingView[] {
-  const statusRank = (f: ReviewFindingView) => (f.status === 'open' ? 0 : 1);
-  return [...findings].sort((a, b) => {
-    const s = statusRank(a) - statusRank(b);
-    if (s !== 0) return s;
-    return severityRankValue(b.severity) - severityRankValue(a.severity);
-  });
 }
 
 /** The one-line verdict framing prepended to the composed review body. */
@@ -531,7 +521,7 @@ export function usePrReviewView({
     login !== null && selectedSummary !== null && selectedSummary.author === login;
 
   const gridFindings = useMemo(
-    () => sortFindings(displayStream?.findings ?? []),
+    () => sortBySeverityThenStatus(displayStream?.findings ?? []),
     [displayStream?.findings],
   );
 

@@ -1,6 +1,6 @@
 /** Hooks that resolve the Insight surface into a single view model: the live and
  *  persisted run stream, the lifted run-config, and every screen's derived state. */
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useMemo } from 'react';
 
 import type {
   MenuItem,
@@ -24,17 +24,26 @@ import {
   startAnalysis,
   type Task,
 } from '@/lib/bridge';
-import { deriveRunPhase, patchStreamItem, seedStepState } from '@/lib/scan-run';
+import {
+  buildLensTabs,
+  countByLens,
+  countOpenItems,
+  deriveRunPhase,
+  patchStreamItem,
+  scanSkeletonCount,
+  seedStepState,
+} from '@/lib/scan-run';
+import { sortBySeverityThenStatus } from '@/lib/severity';
 import { useBulkConvert } from '@/lib/useBulkConvert';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import { useScanItemActions } from '@/lib/useScanItemActions';
+import { useScanResultsView } from '@/lib/useScanResultsView';
 import { useScanRun } from '@/lib/useScanRun';
 
 import type { CategoryTab } from '../CategoryTabs';
-import { ALL_CATEGORIES, CATEGORY_META, severityRankValue } from '../insight.constants';
+import { ALL_CATEGORIES, CATEGORY_META } from '../insight.constants';
 import type { InsightFinding } from '../insight.types';
 import {
-  type CategoryProgress,
   EMPTY_INSIGHT_STREAM,
   foldInsight,
   type InsightStream,
@@ -160,33 +169,6 @@ export function useInsight(hasProject: boolean): UseInsightResult {
   };
 }
 
-const RUNNING: CategoryProgress = 'running';
-
-/** Order findings for display: open before resolved, then severity (high→low). */
-function sortFindings(findings: InsightFinding[]): InsightFinding[] {
-  const statusRank = (f: InsightFinding) => (f.status === 'open' ? 0 : 1);
-  return [...findings].sort((a, b) => {
-    const s = statusRank(a) - statusRank(b);
-    if (s !== 0) return s;
-    return severityRankValue(b.severity) - severityRankValue(a.severity);
-  });
-}
-
-/** Categories that appear as tabs: those requested this run plus any that produced
- *  findings (covers loading a past run whose requested set we project from). */
-function tabCategories(stream: InsightStream): FindingCategory[] {
-  const present = new Set<FindingCategory>(stream.requestedCategories);
-  for (const f of stream.findings) present.add(f.category);
-  return ALL_CATEGORIES.filter((c) => present.has(c));
-}
-
-function openCount(findings: InsightFinding[], category?: FindingCategory): number {
-  return findings.filter(
-    (f) =>
-      f.status === 'open' && (category === undefined || f.category === category),
-  ).length;
-}
-
 /** Everything the InsightView shell renders. `hasProject === false` is the only
  *  early-return branch; every other field is meaningful in the project view. */
 export interface InsightViewModel {
@@ -268,14 +250,12 @@ export function useInsightView({
   // CONFIGURE → RUNNING → RESULTS phase swaps and pre-fills on "New run".
   const config = useRunConfig(!hasProject);
 
-  const [activeTab, setActiveTab] = useState<'all' | FindingCategory>('all');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [pending, setPending] = useState(false);
-  // Explicit "New run" override so RESULTS can return to CONFIGURE without
-  // discarding the persisted run.
-  const [reconfiguring, setReconfiguring] = useState(false);
-  // RUNNING partial-reveal: the finished category currently peeked, if any.
-  const [peekCategory, setPeekCategory] = useState<FindingCategory | null>(null);
+  // The shared results-view cluster: tab / selection / pending+runAction /
+  // reconfigure / peek.
+  const view = useScanResultsView<FindingCategory>({
+    notifyError: (title, err) => toast.error(title, err),
+  });
+  const { activeTab, setSelectedId, resetTransient, runAction } = view;
   // Bulk convert-all progress + loop (shared with the PR-Review sibling).
   const { resetBulk, convertAll, bulkConverting, bulkProgress, bulkStatusMessage, bulkError } =
     useBulkConvert(insight.convert, 'convertFindingToTask failed');
@@ -288,61 +268,43 @@ export function useInsightView({
     onPreselectConsumed,
     selectRun: insight.selectRun,
     onEnter: () => {
-      setReconfiguring(false);
-      setPeekCategory(null);
+      resetTransient();
       resetBulk();
-      setActiveTab('all');
+      view.setActiveTab('all');
     },
     onOpenItem: (target) => setSelectedId(target.itemId),
   });
 
-  const phase: RunPhase = deriveRunPhase(stream.status, insight.isStarting, reconfiguring);
+  const phase: RunPhase = deriveRunPhase(stream.status, insight.isStarting, view.reconfiguring);
 
-  const visibleCategories = useMemo(() => tabCategories(stream), [stream]);
-
-  const tabs: CategoryTab[] = useMemo(() => {
-    const runningCount = Object.values(stream.categoryState).filter(
-      (s) => s === RUNNING,
-    ).length;
-    const head: CategoryTab = {
-      key: 'all',
-      count: openCount(stream.findings),
-      running: runningCount > 0,
-      errored: false,
-    };
-    return [
-      head,
-      ...visibleCategories.map((c) => ({
-        key: c,
-        count: openCount(stream.findings, c),
-        running: stream.categoryState[c] === RUNNING,
-        errored: stream.categoryState[c] === 'error',
-      })),
-    ];
-  }, [stream, visibleCategories]);
+  const tabs: CategoryTab[] = useMemo(
+    () =>
+      buildLensTabs({
+        all: ALL_CATEGORIES,
+        requested: stream.requestedCategories,
+        stepState: stream.categoryState,
+        items: stream.findings,
+        lensOf: (f) => f.category,
+      }),
+    [stream.requestedCategories, stream.categoryState, stream.findings],
+  );
 
   const gridFindings = useMemo(() => {
     const filtered =
       activeTab === 'all'
         ? stream.findings
         : stream.findings.filter((f) => f.category === activeTab);
-    return sortFindings(filtered);
+    return sortBySeverityThenStatus(filtered);
   }, [stream.findings, activeTab]);
 
-  const skeletonCount = useMemo(() => {
-    if (stream.status !== 'running') return 0;
-    if (activeTab === 'all') {
-      const running = Object.values(stream.categoryState).filter(
-        (s) => s === RUNNING,
-      ).length;
-      return Math.min(6, running * 2);
-    }
-    return stream.categoryState[activeTab] === RUNNING ? 3 : 0;
-  }, [stream.status, stream.categoryState, activeTab]);
+  const skeletonCount = useMemo(
+    () => scanSkeletonCount(stream.status, stream.categoryState, activeTab),
+    [stream.status, stream.categoryState, activeTab],
+  );
 
   const selected = useMemo(
-    () => stream.findings.find((f) => f.id === selectedId) ?? null,
-    [stream.findings, selectedId],
+    () => stream.findings.find((f) => f.id === view.selectedId) ?? null,
+    [stream.findings, view.selectedId],
   );
 
   // RunProgress feed: requested lenses → ordered descriptors + per-lens counts.
@@ -356,18 +318,17 @@ export function useInsightView({
     [stream.requestedCategories],
   );
 
-  const findingCounts = useMemo(() => {
-    const counts: Record<string, number> = {};
-    for (const f of stream.findings) {
-      counts[f.category] = (counts[f.category] ?? 0) + 1;
-    }
-    return counts;
-  }, [stream.findings]);
+  const findingCounts = useMemo(
+    () => countByLens(stream.findings, (f) => f.category),
+    [stream.findings],
+  );
 
   const peekFindings = useMemo(() => {
-    if (peekCategory === null) return [];
-    return sortFindings(stream.findings.filter((f) => f.category === peekCategory));
-  }, [stream.findings, peekCategory]);
+    if (view.peekLens === null) return [];
+    return sortBySeverityThenStatus(
+      stream.findings.filter((f) => f.category === view.peekLens),
+    );
+  }, [stream.findings, view.peekLens]);
 
   const summary = useMemo(() => {
     const n = stream.requestedCategories.length;
@@ -387,13 +348,12 @@ export function useInsightView({
         onClick: () => {
           // Selecting a past run lands on its RESULTS — drop any reconfigure/peek
           // first, else the derived phase stays on CONFIGURE (reconfiguring=true).
-          setReconfiguring(false);
-          setPeekCategory(null);
+          resetTransient();
           resetBulk();
           void insight.selectRun(run.id);
         },
       })),
-    [insight, resetBulk],
+    [insight, resetTransient, resetBulk],
   );
 
   const emptyMessage = useMemo(() => {
@@ -407,26 +367,6 @@ export function useInsightView({
     }
     return 'No findings in this category — a clean bill of health.';
   }, [stream.status, stream.error, stream.failureReason]);
-
-  const runAction = useCallback(
-    async (label: string, fn: () => Promise<unknown>) => {
-      setPending(true);
-      try {
-        await fn();
-      } catch (err) {
-        // Callers fire this as `void runAction(...)`, so without this catch a failed
-        // convert/dismiss/restore would only clear `pending` and vanish — no toast,
-        // no inline error, the card silently unchanged (and the rejection escaping as
-        // an unhandled promise rejection). Surface it through the toast channel that
-        // every routed `invoke` failure already uses.
-        console.error(`${label} finding failed`, err);
-        toast.error(`Could not ${label} finding`, err);
-      } finally {
-        setPending(false);
-      }
-    },
-    [toast],
-  );
 
   return {
     hasProject,
@@ -443,17 +383,16 @@ export function useInsightView({
     findingCounts,
     tabs,
     activeTab,
-    setActiveTab,
+    setActiveTab: view.setActiveTab,
     gridFindings,
     skeletonCount,
     emptyMessage,
     selected,
     openFinding: (finding: InsightFinding) => setSelectedId(finding.id),
     closeFinding: () => setSelectedId(null),
-    pending,
+    pending: view.pending,
     onAnalyze: () => {
-      setReconfiguring(false);
-      setPeekCategory(null);
+      resetTransient();
       // Clear any prior convert-all summary so it can't bleed into the next run.
       resetBulk();
       void insight.start(
@@ -464,29 +403,28 @@ export function useInsightView({
       );
     },
     onCancel: () => void insight.cancel(),
-    peekCategory,
-    peekLabel: peekCategory !== null ? CATEGORY_META[peekCategory].label : null,
+    peekCategory: view.peekLens,
+    peekLabel: view.peekLens !== null ? CATEGORY_META[view.peekLens].label : null,
     peekFindings,
-    onOpenCategory: (key: string) => setPeekCategory(key as FindingCategory),
-    clearPeek: () => setPeekCategory(null),
+    onOpenCategory: (key: string) => view.openPeek(key as FindingCategory),
+    clearPeek: view.clearPeek,
     startNewRun: () => {
       config.prefill({
         scope: stream.scope,
         model: stream.model,
         categories: stream.requestedCategories,
       });
-      setPeekCategory(null);
-      setReconfiguring(true);
+      view.startReconfigure();
     },
     convertAll: () => convertAll(stream.findings.filter((f) => f.status === 'open')),
     bulkConverting,
     bulkProgress,
     bulkStatusMessage,
     bulkError,
-    openCount: openCount(stream.findings),
-    onConvert: (id) => void runAction('convert', () => insight.convert(id)),
-    onDismiss: (id) => void runAction('dismiss', () => insight.dismiss(id)),
-    onRestore: (id) => void runAction('restore', () => insight.restore(id)),
+    openCount: countOpenItems(stream.findings),
+    onConvert: (id) => void runAction('convert finding', () => insight.convert(id)),
+    onDismiss: (id) => void runAction('dismiss finding', () => insight.dismiss(id)),
+    onRestore: (id) => void runAction('restore finding', () => insight.restore(id)),
     onGotoBoard,
   };
 }
