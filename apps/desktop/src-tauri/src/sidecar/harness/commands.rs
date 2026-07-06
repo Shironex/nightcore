@@ -217,25 +217,46 @@ pub fn restore_harness_artifact(
 /// the only command that mutates a user's files, so the destination is validated against
 /// the project root before any write. `create` artifacts never overwrite an existing file
 /// (`create_new`); `merge-section` artifacts replace a delimited managed block (creating
-/// the file if absent), leaving the user's surrounding content untouched.
+/// the file if absent), leaving the user's surrounding content untouched. The defended
+/// file writes run on the blocking pool — never on the UI thread; concurrency is already
+/// serialized by the store's locked mutations + the per-artifact idempotent apply, so no
+/// extra single-flight guard is needed.
 #[tauri::command]
-pub fn apply_harness_artifact(
+pub async fn apply_harness_artifact(
     app: AppHandle,
-    harness_store: State<'_, HarnessStore>,
     run_id: String,
     artifact_id: String,
 ) -> Result<HarnessRun, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_harness_artifact_blocking(&app, &run_id, &artifact_id)
+    })
+    .await
+    .map_err(|e| format!("apply harness artifact failed to run: {e}"))?
+}
+
+/// The blocking body of `apply_harness_artifact`, run off the UI thread. Managed state is
+/// re-acquired from the owned `AppHandle` (`try_state` so an unmanaged store fails
+/// gracefully); the write path itself ([`apply_one_artifact`] → `apply.rs`) is unchanged.
+fn apply_harness_artifact_blocking(
+    app: &AppHandle,
+    run_id: &str,
+    artifact_id: &str,
+) -> Result<HarnessRun, String> {
+    use tauri::Manager;
+    let harness_store = app
+        .try_state::<HarnessStore>()
+        .ok_or_else(|| "harness store unavailable".to_string())?;
     let run = harness_store
-        .get(&run_id)
+        .get(run_id)
         .ok_or_else(|| format!("no harness run with id {run_id}"))?;
     let artifact = harness_store
-        .get_artifact(&run_id, &artifact_id)
+        .get_artifact(run_id, artifact_id)
         .ok_or_else(|| format!("artifact {artifact_id} not found in run {run_id}"))?;
 
-    apply_one_artifact(&app, &harness_store, &run_id, &run.project_path, &artifact)?;
+    apply_one_artifact(app, &harness_store, run_id, &run.project_path, &artifact)?;
     // Return the up-to-date run (the write above may have flipped this or a concurrent
     // artifact's status); fall back to the pre-apply snapshot only if the run vanished.
-    Ok(harness_store.get(&run_id).unwrap_or(run))
+    Ok(harness_store.get(run_id).unwrap_or(run))
 }
 
 /// Write ONE proposed artifact into the target repo and commit its `applied` status,
@@ -328,17 +349,37 @@ fn apply_one_artifact(
 /// retry re-runs cleanly — succeeded artifacts short-circuit). An `agent-task` proposal has
 /// no artifacts to write and is rejected (convert it to a board task instead).
 #[tauri::command]
-pub fn apply_harness_proposal(
+pub async fn apply_harness_proposal(
     app: AppHandle,
-    harness_store: State<'_, HarnessStore>,
     run_id: String,
     proposal_id: String,
 ) -> Result<HarnessRun, String> {
+    // A bundle is N defended file writes — run it on the blocking pool like the
+    // single-artifact apply; the same store-level serialization covers it.
+    tauri::async_runtime::spawn_blocking(move || {
+        apply_harness_proposal_blocking(&app, &run_id, &proposal_id)
+    })
+    .await
+    .map_err(|e| format!("apply harness proposal failed to run: {e}"))?
+}
+
+/// The blocking body of `apply_harness_proposal`, run off the UI thread. Managed state
+/// is re-acquired from the owned `AppHandle` (`try_state` so an unmanaged store fails
+/// gracefully); the per-artifact write path is unchanged.
+fn apply_harness_proposal_blocking(
+    app: &AppHandle,
+    run_id: &str,
+    proposal_id: &str,
+) -> Result<HarnessRun, String> {
+    use tauri::Manager;
+    let harness_store = app
+        .try_state::<HarnessStore>()
+        .ok_or_else(|| "harness store unavailable".to_string())?;
     let run = harness_store
-        .get(&run_id)
+        .get(run_id)
         .ok_or_else(|| format!("no harness run with id {run_id}"))?;
     let proposal = harness_store
-        .get_proposal(&run_id, &proposal_id)
+        .get_proposal(run_id, proposal_id)
         .ok_or_else(|| format!("proposal {proposal_id} not found in run {run_id}"))?;
 
     if proposal.kind != "apply-artifacts" {
@@ -357,17 +398,17 @@ pub fn apply_harness_proposal(
     // warn rather than aborting the whole bundle.
     let mut applied = 0usize;
     for artifact_id in &proposal.artifact_ids {
-        let Some(artifact) = harness_store.get_artifact(&run_id, artifact_id) else {
+        let Some(artifact) = harness_store.get_artifact(run_id, artifact_id) else {
             tracing::warn!(target: "nightcore", run_id = %run_id, proposal_id = %proposal_id, artifact_id = %artifact_id, "proposal references an unknown artifact; skipping");
             continue;
         };
-        apply_one_artifact(&app, &harness_store, &run_id, &run.project_path, &artifact)?;
+        apply_one_artifact(app, &harness_store, run_id, &run.project_path, &artifact)?;
         applied += 1;
     }
 
     // Every referenced artifact is on disk → mark the proposal applied (an unconditional
     // overwrite; re-applying is idempotent). The link field is left untouched.
-    let updated = harness_store.set_proposal_status(&run_id, &proposal_id, "applied", None)?;
+    let updated = harness_store.set_proposal_status(run_id, proposal_id, "applied", None)?;
     let _ = app.emit(
         HARNESS_EVENT,
         json!({

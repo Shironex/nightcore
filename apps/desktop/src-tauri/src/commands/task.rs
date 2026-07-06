@@ -134,17 +134,33 @@ pub fn convert_subtask(
 
 /// Decompose §B: convert EVERY still-open proposed sub-task of a decompose task.
 /// One sub-task's failure is logged and skipped so the rest still convert (mirrors
-/// the Insight bulk-convert). Returns the updated PARENT task.
+/// the Insight bulk-convert). Returns the updated PARENT task. N task-mint file
+/// writes — run on the blocking pool so a large decompose can't jank the UI.
 #[tauri::command]
-pub fn convert_all_subtasks(
-    app: AppHandle,
-    store: State<'_, TaskStore>,
-    settings: State<'_, crate::settings::SettingsStore>,
-    projects: State<'_, crate::project::ProjectStore>,
-    parent_id: String,
-) -> Result<Task, String> {
+pub async fn convert_all_subtasks(app: AppHandle, parent_id: String) -> Result<Task, String> {
+    tauri::async_runtime::spawn_blocking(move || convert_all_subtasks_blocking(&app, &parent_id))
+        .await
+        .map_err(|e| format!("convert all sub-tasks failed to run: {e}"))?
+}
+
+/// The blocking body of `convert_all_subtasks`, run off the UI thread. Managed
+/// state is re-acquired from the owned `AppHandle` (a `State<'_, _>` guard can't
+/// cross the thread boundary); `try_state` so an unmanaged store fails gracefully.
+/// Per-sub-task conversion is already idempotent + race-safe (`convert_one`'s
+/// compare-and-set), so the bulk loop needs no extra single-flight guard.
+fn convert_all_subtasks_blocking(app: &AppHandle, parent_id: &str) -> Result<Task, String> {
+    use tauri::Manager;
+    let store = app
+        .try_state::<TaskStore>()
+        .ok_or_else(|| "task store unavailable".to_string())?;
+    let settings = app
+        .try_state::<crate::settings::SettingsStore>()
+        .ok_or_else(|| "settings store unavailable".to_string())?;
+    let projects = app
+        .try_state::<crate::project::ProjectStore>()
+        .ok_or_else(|| "project store unavailable".to_string())?;
     let parent = store
-        .get(&parent_id)
+        .get(parent_id)
         .ok_or_else(|| format!("no decompose task with id {parent_id}"))?;
     let open_ids: Vec<String> = parent
         .proposed_subtasks
@@ -153,12 +169,12 @@ pub fn convert_all_subtasks(
         .map(|s| s.id.clone())
         .collect();
     for id in open_ids {
-        if let Err(e) = convert_one(&app, &store, &settings, &projects, &parent_id, &id) {
+        if let Err(e) = convert_one(app, &store, &settings, &projects, parent_id, &id) {
             tracing::error!(target: "nightcore", parent_id = %parent_id, subtask_id = %id, error = %e, "convert sub-task failed; continuing");
         }
     }
     store
-        .get(&parent_id)
+        .get(parent_id)
         .ok_or_else(|| format!("no decompose task with id {parent_id}"))
 }
 
@@ -198,28 +214,48 @@ pub fn delete_task(app: AppHandle, store: State<'_, TaskStore>, id: String) -> R
 /// Add image attachments to an existing task (pre-run, from the detail drawer).
 /// Persists the files to app-data, appends the refs, and emits `nc:task`. The
 /// per-task count is enforced over the existing + incoming set. Errors if the id is
-/// unknown.
+/// unknown. Base64 decode + multi-MB image writes — run on the blocking pool
+/// (mirrors the already-async `read_task_attachment`).
 #[tauri::command]
-pub fn add_task_attachments(
+pub async fn add_task_attachments(
     app: AppHandle,
-    store: State<'_, TaskStore>,
     id: String,
     attachments: Vec<crate::store::attachments::NewAttachment>,
 ) -> Result<Task, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        add_task_attachments_blocking(&app, &id, attachments)
+    })
+    .await
+    .map_err(|e| format!("add attachments failed to run: {e}"))?
+}
+
+/// The blocking body of `add_task_attachments`, run off the UI thread. Managed
+/// state is re-acquired from the owned `AppHandle`; `try_state` so an unmanaged
+/// store fails gracefully. The vanished-task cleanup path is unchanged — the
+/// store's `mutate` compare-and-set already makes the commit step race-safe.
+fn add_task_attachments_blocking(
+    app: &AppHandle,
+    id: &str,
+    attachments: Vec<crate::store::attachments::NewAttachment>,
+) -> Result<Task, String> {
+    use tauri::Manager;
+    let store = app
+        .try_state::<TaskStore>()
+        .ok_or_else(|| "task store unavailable".to_string())?;
     let existing = store
-        .get(&id)
+        .get(id)
         .ok_or_else(|| format!("no task with id {id}"))?;
     let new_refs =
-        crate::store::attachments::persist(&app, &id, &existing.attachments, attachments)?;
+        crate::store::attachments::persist(app, id, &existing.attachments, attachments)?;
     // Commit the refs; if the task vanished between the read and the write, delete the
     // files we just persisted so a failed add leaves no orphans (mirrors create_task).
     let to_commit = new_refs.clone();
-    let result = store.mutate(&id, move |task| task.attachments.extend(to_commit));
+    let result = store.mutate(id, move |task| task.attachments.extend(to_commit));
     let task = match result {
         Ok(task) => task,
         Err(e) => {
             for att in &new_refs {
-                let _ = crate::store::attachments::remove_one(&app, &id, att);
+                let _ = crate::store::attachments::remove_one(app, id, att);
             }
             return Err(e);
         }
