@@ -10,6 +10,22 @@ import type {
   WorktreeInfo,
 } from '@/lib/bridge';
 
+import type { TaskDetailActions } from './actions';
+
+/** Build a grouped task-actions fixture for `TaskActionsProvider` in stories and
+ *  tests: the three required handlers stubbed as no-ops, with any subset
+ *  overridden (typically a spy for the handler under test). */
+export function makeTaskActions(
+  overrides: Partial<TaskDetailActions> = {},
+): TaskDetailActions {
+  return {
+    onRun: () => {},
+    onCancel: () => {},
+    onDelete: () => {},
+    ...overrides,
+  };
+}
+
 /** Build a Task fixture for stories/tests. Mirrors the canonical Task shape. */
 export function makeTask(overrides: Partial<Task> = {}): Task {
   const now = 1_718_900_000_000;

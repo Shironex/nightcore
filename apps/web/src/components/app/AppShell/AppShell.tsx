@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 
-import { Board, EMPTY_TRANSCRIPT, NewTaskForm } from '@/components/board';
+import { Board, EMPTY_TRANSCRIPT, NewTaskForm, TaskActionsProvider } from '@/components/board';
 import { NewProjectDialog } from '@/components/new-project';
 import {
   AnimatePresence,
@@ -169,7 +169,11 @@ export function AppShell() {
   );
 
   return (
-    <>
+    // The shell's grouped task actions travel by context (not props) to the
+    // TaskDetail subtree. `board.detailActions` is referentially stable across
+    // `nc:session` stream flushes (see the `detailActions` memo in
+    // `AppShell.hooks.ts`), so this provider never churns its consumers per-frame.
+    <TaskActionsProvider actions={board.detailActions}>
       {showProjects ? (
         <div className="flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
           {browserPreviewBanner}
@@ -304,12 +308,10 @@ export function AppShell() {
                     gauntlet={board.gauntletResults[selected.id] ?? null}
                     gauntletRunning={board.gauntletRunning.has(selected.id)}
                     onClose={board.closeDetail}
-                    // The drawer's ~25 action callbacks travel as one grouped object,
-                    // pre-assembled once in the `board` controller (`detailActions`) so
-                    // its identity is stable across the per-frame stream flush. Delete
-                    // routes through the confirm-gated `requestDelete` (matching the
-                    // card/column deletes).
-                    actions={board.detailActions}
+                    // The drawer's ~25 action callbacks arrive via the
+                    // TaskActionsProvider above (one grouped, referentially stable
+                    // object — `detailActions`). Delete routes through the
+                    // confirm-gated `requestDelete` (matching the card/column deletes).
                     isActionPending={board.isActionPending}
                     // Provenance chip → the originating scan run/item (routing concern).
                     onOpenSourceRef={routing.gotoSourceRef}
@@ -471,6 +473,6 @@ export function AppShell() {
         onConfirm={confirm.confirm}
         onCancel={confirm.cancel}
       />
-    </>
+    </TaskActionsProvider>
   );
 }
