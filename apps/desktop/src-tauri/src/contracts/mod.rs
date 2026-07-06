@@ -47,11 +47,10 @@ pub(crate) fn trips_breaker_immediately(category: ErrorCategory) -> bool {
     matches!(category, ErrorCategory::Auth | ErrorCategory::DiskFull)
 }
 
-// The inverse direction: Rust serde structs → the web's TS bindings (`ts-rs`).
-// Test-only — the `#[ts(export)]` codegen + its drift guard run under `cargo test`,
-// never in the shipped binary.
-#[cfg(test)]
-mod ts_bindings;
+// The inverse direction — Rust serde structs → the web's TS bindings (`ts-rs`) —
+// lives in the top-rank `crate::bindings` module (issue #17 phase A.4): the ts-rs
+// aggregator references types across every tier, so it can't live in this rank-1
+// leaf. Keeping it out is what lets `contracts` be an exemption-free leaf.
 
 #[cfg(test)]
 mod tests {
