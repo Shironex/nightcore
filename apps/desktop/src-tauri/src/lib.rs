@@ -129,6 +129,10 @@ pub fn run() {
             // forgets the entries but never the work (the auto-commit survives
             // on the PR branch in its checkout).
             app.manage(workflow::pr_fix::PrFixRegistry::default());
+            // The per-provider model catalog cache (issue #80): DERIVED, in-memory —
+            // never persisted. A restart starts cold and `list_models` re-fetches; the
+            // `(provider, auth-state)` key self-invalidates across provider/auth changes.
+            app.manage(store::model_cache::ModelCache::default());
             app.manage(std::sync::Arc::new(orchestration::EngineHandle)
                 as std::sync::Arc<dyn engine_api::EngineApi>);
             // The mirror seam for the other direction (issue #33): workflow's
@@ -178,6 +182,7 @@ pub fn run() {
             sidecar::rename_session,
             sidecar::tag_session,
             sidecar::get_provider_config,
+            sidecar::list_models,
             // The run-based scan commands (Insight / Harness / Scorecard). The store
             // boot + retarget wiring is driven off the single `scan_kinds!` registry;
             // these command paths must still be listed explicitly because Tauri's

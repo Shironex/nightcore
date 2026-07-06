@@ -16,6 +16,7 @@ pub(crate) mod harness_policy;
 pub(crate) mod insight;
 pub(crate) mod issue_triage;
 pub(crate) mod ledger;
+pub(crate) mod model_cache;
 pub(crate) mod pr_review;
 pub(crate) mod project;
 pub(crate) mod run_store;
@@ -35,6 +36,7 @@ mod registry;
 // `TaskStore`/`workspace_root` everywhere) and the retained `#[cfg(test)]` modules
 // keep reaching these items via `use super::*`.
 pub(crate) use atomic::{quarantine_corrupt, write_atomic};
+pub(crate) use model_cache::{claude_static_catalog, ModelCache, ModelCacheKey};
 pub(crate) use paths::is_safe_task_id;
 pub use paths::workspace_root;
 pub use registry::TaskStore;

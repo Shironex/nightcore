@@ -24,6 +24,7 @@ mod harness;
 mod insight;
 mod issue_triage;
 mod lifecycle;
+mod models;
 mod permission;
 mod pr_review;
 mod provider_config;
@@ -46,6 +47,9 @@ pub(crate) use sessions::*;
 // The read-only provider-config inspector command (glob so the `#[tauri::command]`
 // macro siblings resolve through `sidecar::*` for `generate_handler!`).
 pub(crate) use provider_config::*;
+// The dynamic model-catalog command `list_models` (issue #80; glob so the
+// `#[tauri::command]` macro siblings resolve through `sidecar::*` for `generate_handler!`).
+pub(crate) use models::*;
 // The Insight (codebase analysis) commands + the reader-side `analysis-*` handler
 // (glob so the `#[tauri::command]` macro siblings resolve through `sidecar::*`).
 pub(crate) use insight::*;

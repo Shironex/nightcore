@@ -47,9 +47,24 @@ pub fn update_settings(
         .is_none()
         .then_some(patch.max_concurrency)
         .flatten();
+    // Capture the resolved global provider before the merge so a change to it can drop the
+    // provider-keyed model cache (issue #80). The model catalog is a function of the
+    // provider (+ auth), so a provider swap must invalidate it. Provider swaps are
+    // restart-gated today (no `provider` patch field), so this is the forward-looking seam
+    // — it fires the instant a live swap lands; the auth dimension already self-invalidates
+    // via the `(provider, auth-state)` cache key. Only global patches touch `provider`.
+    let provider_before = patch.project_id.is_none().then(|| store.get().provider);
     let merged = store.update(patch)?;
     if let Some(n) = resize {
         crate::orchestration::coordinator::set_max_concurrency(&app, n.max(1) as usize);
+    }
+    if let Some(before) = provider_before {
+        if before != merged.provider {
+            if let Some(cache) = app.try_state::<crate::store::ModelCache>() {
+                cache.invalidate();
+                tracing::info!(target: "nightcore", provider = %merged.provider, "provider changed; invalidated the model catalog cache");
+            }
+        }
     }
     Ok(merged)
 }
