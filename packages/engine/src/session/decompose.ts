@@ -19,7 +19,7 @@
  */
 import { z } from 'zod';
 
-import { extractJson, toRawArray } from '../scans/shared/findings.js';
+import { extractJson, toRawArray } from '../util/json-extract.js';
 
 /** One proposed sub-task: a short imperative `title` + a self-contained `prompt`.
  *  This IS the element shape of the optional `proposedSubtasks` array on the

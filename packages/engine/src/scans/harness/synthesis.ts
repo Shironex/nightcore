@@ -35,7 +35,7 @@ import {
 import type { Logger } from '@nightcore/shared';
 
 import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
-import { extractJson, toRawArray } from '../shared/findings.js';
+import { extractJson, parseItems, toRawArray } from '../../util/json-extract.js';
 import type {
   ScanRunnerFactory,
   ScanSessionRunner,
@@ -326,23 +326,21 @@ function artifactFingerprint(kind: string, targetPath: string): string {
  * malformed items are skipped. GROUNDING drops any artifact whose `targetPath` is
  * absolute, contains `..`, or escapes the repo root, and any with empty content —
  * the engine never proposes writing outside the repo or an empty file. Returns an
- * `error` only when NO JSON could be extracted at all.
+ * `error` when NO JSON could be extracted at all, or when the extracted JSON is
+ * neither an array nor an object exposing an `artifacts` array (the shared parse
+ * contract).
  */
 export function parseProposedArtifacts(
   raw: string,
   projectPath: string,
 ): { artifacts: ProposedArtifact[]; error?: string } {
-  const parsed = extractJson(raw);
-  if (parsed === undefined) {
-    return { artifacts: [], error: 'no JSON artifacts array in synthesis output' };
-  }
-  const items = toRawArray(parsed, 'artifacts');
-  const artifacts: ProposedArtifact[] = [];
-  for (const item of items) {
-    const artifact = coerceArtifact(item, projectPath);
-    if (artifact !== undefined) artifacts.push(artifact);
-  }
-  return { artifacts };
+  const { items, error } = parseItems(
+    raw,
+    'artifacts',
+    (item) => coerceArtifact(item, projectPath),
+    'no JSON artifacts array in synthesis output',
+  );
+  return { artifacts: items, ...(error !== undefined ? { error } : {}) };
 }
 
 /** The combined result of parsing a synthesis answer: the file-level artifacts AND the

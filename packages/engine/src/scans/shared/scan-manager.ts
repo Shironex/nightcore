@@ -51,6 +51,16 @@ export const EMPTY_USAGE: TokenUsage = {
   cacheCreationTokens: 0,
 };
 
+/** The strict-JSON reminder appended to the ONE corrective retry of an ARRAY-shaped
+ *  pass (Insight / Harness / PR-review). Shared so the wording can't drift per
+ *  feature; the retry mechanism itself lives in the base `runItem`. */
+export const RETRY_REMINDER_ARRAY =
+  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON array, nothing else.';
+
+/** The strict-JSON reminder for an OBJECT-shaped pass (Scorecard / Issue-triage). */
+export const RETRY_REMINDER_OBJECT =
+  '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON object, nothing else.';
+
 /** The stable failure reason carried by a `session-failed` event. */
 export type SessionFailedReason = Extract<
   NightcoreEvent,

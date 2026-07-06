@@ -8,33 +8,11 @@ import type { Finding } from '@nightcore/contracts';
 
 import {
   dedupeFindings,
-  extractJson,
   fingerprintOf,
   groundFindings,
   parseFindings,
   severityRank,
 } from './findings.js';
-
-describe('extractJson', () => {
-  test('parses a bare JSON array', () => {
-    expect(extractJson('[{"a":1}]')).toEqual([{ a: 1 }]);
-  });
-
-  test('parses a ```json fenced block with surrounding prose', () => {
-    const raw =
-      'Here are the findings:\n```json\n[{"title":"x"}]\n```\nDone.';
-    expect(extractJson(raw)).toEqual([{ title: 'x' }]);
-  });
-
-  test('extracts a balanced array from mixed prose', () => {
-    const raw = 'blah blah [ {"title":"y"} ] trailing';
-    expect(extractJson(raw)).toEqual([{ title: 'y' }]);
-  });
-
-  test('returns undefined when no JSON is present', () => {
-    expect(extractJson('no json here at all')).toBeUndefined();
-  });
-});
 
 describe('parseFindings', () => {
   test('coerces raw items, forces category, assigns id + fingerprint', () => {

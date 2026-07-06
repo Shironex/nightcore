@@ -27,7 +27,7 @@ import type {
 import type { Logger } from '@nightcore/shared';
 
 import { getStringArray } from '../../util/field-extract.js';
-import { extractJson } from '../shared/findings.js';
+import { extractJson } from '../../util/json-extract.js';
 import {
   EMPTY_USAGE,
   type ScanRunnerFactory,

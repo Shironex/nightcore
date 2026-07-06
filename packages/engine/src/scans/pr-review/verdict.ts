@@ -31,7 +31,7 @@ import { MergeVerdictSchema } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
 import { getString } from '../../util/field-extract.js';
-import { extractJson } from '../shared/findings.js';
+import { extractJson } from '../../util/json-extract.js';
 import type {
   ScanRunnerFactory,
   ScanSessionRunner,

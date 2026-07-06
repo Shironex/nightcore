@@ -36,6 +36,7 @@ import {
   fmtElapsed,
   fmtSecs,
   type ItemCompletedArgs,
+  RETRY_REMINDER_ARRAY,
   type ScanFailureReason,
   ScanManager,
   type ScanManagerDeps,
@@ -161,7 +162,7 @@ export class PrReviewScanManager extends ScanManager<
   }
 
   protected retryReminderSuffix(): string {
-    return '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON array, nothing else.';
+    return RETRY_REMINDER_ARRAY;
   }
 
   protected emitStarted(command: StartPrReview, model: string): void {

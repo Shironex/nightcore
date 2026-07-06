@@ -28,6 +28,7 @@ import {
   fmtElapsed,
   fmtSecs,
   type ItemCompletedArgs,
+  RETRY_REMINDER_OBJECT,
   type ScanFailureReason,
   ScanManager,
   type ScanManagerDeps,
@@ -122,7 +123,7 @@ export class ScorecardManager extends ScanManager<
   }
 
   protected retryReminderSuffix(): string {
-    return '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON object, nothing else.';
+    return RETRY_REMINDER_OBJECT;
   }
 
   protected emitStarted(command: StartScorecard, model: string): void {

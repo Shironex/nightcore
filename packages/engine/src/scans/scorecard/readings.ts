@@ -17,10 +17,10 @@ import {
 } from '@nightcore/contracts';
 
 import { getNumber, getString, getStringArray } from '../../util/field-extract.js';
+import { extractJson } from '../../util/json-extract.js';
 import {
   clampLocationLines,
   coerceLocation,
-  extractJson,
   fileExists,
   fingerprintOf,
   lineCount,

@@ -32,7 +32,6 @@ export type { AnalysisManagerDeps } from './scans/insight/manager.js';
 export { AnalysisManager } from './scans/insight/manager.js';
 export {
   dedupeFindings,
-  extractJson,
   fingerprintOf,
   groundFindings,
   parseFindings,
@@ -46,6 +45,7 @@ export {
   ANALYZER_PERSONA,
   outputContract,
 } from './scans/shared/presets.js';
+export { extractJson } from './util/json-extract.js';
 
 // The Harness (codebase convention auditor) orchestrator + its pure helpers: the
 // deterministic repo profiler, the parse/ground/dedup convention helpers, the

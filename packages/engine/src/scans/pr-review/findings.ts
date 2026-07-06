@@ -23,16 +23,15 @@ import {
   type ReviewSeverity,
 } from '@nightcore/contracts';
 
+import { dedupeBy } from '../../util/dedupe.js';
 import { getNumber, getString } from '../../util/field-extract.js';
+import { parseItems } from '../../util/json-extract.js';
 import {
   coerceLocation,
   coerceSeverity,
-  extractJson,
-  isRawArrayShape,
   normalizeFile,
   normalizeTitle,
   severityRank,
-  toRawArray,
 } from '../shared/findings.js';
 
 /** Numeric rank for a review severity (info=0 … critical=4), for ordering and merge.
@@ -126,24 +125,13 @@ export function parsePrReviewFindings(
   raw: string,
   lens: ReviewLens,
 ): { findings: ReviewFinding[]; error?: string } {
-  const parsed = extractJson(raw);
-  if (parsed === undefined) {
-    return { findings: [], error: 'no JSON review findings in model output' };
-  }
-  if (!isRawArrayShape(parsed, 'findings')) {
-    return {
-      findings: [],
-      error:
-        'model output JSON is not a findings array (nor an object with a "findings" array)',
-    };
-  }
-  const items = toRawArray(parsed, 'findings');
-  const findings: ReviewFinding[] = [];
-  for (const item of items) {
-    const finding = coerceReviewFinding(item, lens);
-    if (finding !== undefined) findings.push(finding);
-  }
-  return { findings };
+  const { items, error } = parseItems(
+    raw,
+    'findings',
+    (item) => coerceReviewFinding(item, lens),
+    'no JSON review findings in model output',
+  );
+  return { findings: items, ...(error !== undefined ? { error } : {}) };
 }
 
 /**
@@ -178,31 +166,22 @@ export function groundPrReviewFindings(
 export function dedupePrReviewFindings(
   findings: ReviewFinding[],
 ): ReviewFinding[] {
-  const byKey = new Map<string, ReviewFinding>();
+  const keyOf = (f: ReviewFinding): string =>
+    `${normalizeFile(f.file)}|${normalizeTitle(f.title)}`;
   // Every lens that reported an issue under a key, so the survivor can list its
   // corroborators (the reporting lenses beyond its own).
   const lensesByKey = new Map<string, Set<ReviewLens>>();
-  const order: string[] = [];
   for (const finding of findings) {
-    const key = `${normalizeFile(finding.file)}|${normalizeTitle(finding.title)}`;
+    const key = keyOf(finding);
     const lenses = lensesByKey.get(key) ?? new Set<ReviewLens>();
     lenses.add(finding.lens);
     lensesByKey.set(key, lenses);
-    const existing = byKey.get(key);
-    if (existing === undefined) {
-      byKey.set(key, finding);
-      order.push(key);
-      continue;
-    }
-    const winner =
-      reviewSeverityRank(finding.severity) > reviewSeverityRank(existing.severity)
-        ? finding
-        : existing;
-    byKey.set(key, winner);
   }
-  return order.map((key) => {
-    const winner = byKey.get(key) as ReviewFinding;
-    const corroborators = [...(lensesByKey.get(key) as Set<ReviewLens>)]
+  const survivors = dedupeBy(findings, keyOf, {
+    rank: (f) => reviewSeverityRank(f.severity),
+  });
+  return survivors.map((winner) => {
+    const corroborators = [...(lensesByKey.get(keyOf(winner)) as Set<ReviewLens>)]
       .filter((lens) => lens !== winner.lens)
       .sort();
     return corroborators.length > 0
