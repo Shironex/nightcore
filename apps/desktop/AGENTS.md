@@ -17,3 +17,7 @@ Read this before editing. Hard guardrails enforced by `bun run lint`, `bun run t
 ## Rust lint & test
 - Before pushing Rust changes, run `cargo fmt --check` and `cargo clippy -- -D warnings` in `src-tauri`. This is a convention, not a `bun run lint` gate: `lint`/`lint:meta` run in the Bun workspace job, which carries no Rust toolchain or Tauri system deps — folding `cargo clippy` there would break that job. Rust compiles in the separate `rust-checks` CI job (`test:rust`).
 - The authoritative test gate is `bun run test:all` (it includes `test:rust`); plain `test` omits the Rust suite.
+
+## Rust module structure (enforced by lint-meta, issue #17)
+These are pure text rules in `tools/lint-meta` (the Bun lint job — never `cargo`):
+- `rust-module-shape`: every `mod.rs` under `src-tauri/src/**` is a manifest — only `mod`/`use` declarations, docs, and attributes; a top-level `fn`/`impl`/`struct`/`enum`/`trait`/`const`/`macro_rules!` body belongs in a sibling file, re-exported (house pattern: `worktree/mod.rs`). Plus a **400 code-line cap** per file, measured EXCLUDING `#[cfg(test)]` blocks (inline tests are ~37% of the crate; sibling `tests.rs` files are not counted). Advisory until the phase-C ratchet (`baselines/rust-module-shape.json`) grandfathers today's offenders, then enforced — a new over-cap file or a `mod.rs` that gains logic fails CI. Do NOT introduce a sibling `tests.rs` to dodge the cap; keep the inline `#[cfg(test)]` convention.

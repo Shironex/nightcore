@@ -46,6 +46,7 @@ bun run lint:meta   # == bun run tools/lint-meta/cli.ts
 | `decision-register-integrity` | every path cited in `docs/decisions/INDEX.md` resolves and the register stays drift-free |
 | `agents-doc-presence` | every deployable surface / public boundary ships an `AGENTS.md` |
 | `ui-primitive-shape` | a `components/ui` primitive that graduates to a folder must ship `<Name>.test.tsx` + `<Name>.stories.tsx` |
+| `rust-module-shape` | desktop Rust `mod.rs` is a manifest (declarations + re-exports only) + no code file exceeds 400 code lines (excluding `#[cfg(test)]` blocks); advisory until the phase-C ratchet grandfathers today's offenders, then enforced |
 
 The registry (`registry.ts`) is the source of truth if this table drifts.
 
