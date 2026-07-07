@@ -6,9 +6,10 @@
  *  scope picker. The live readout + Cancel live on the RUNNING screen
  *  (RunProgress). */
 import {
-  ModelEffortPicker,
+  ModelSelectField,
   ScanConfigForm,
   Spinner,
+  useShowCostLine,
   VerifiedIcon,
 } from '@/components/ui';
 import { PROVIDER_LABEL } from '@/lib/bridge';
@@ -30,16 +31,18 @@ function modelLabel(model: string | null): string {
 
 export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
   const lensCount = config.orderedSelected.length;
+  const showCost = useShowCostLine();
 
   return (
     <ScanConfigForm
       scrollable={false}
       picker={
-        <ModelEffortPicker
-          model={config.model}
-          effort={config.effort}
-          onChangeModel={config.setModel}
-          onChangeEffort={config.setEffort}
+        <ModelSelectField
+          value={{ model: config.model, effort: config.effort }}
+          onChange={(sel) => {
+            config.setModel(sel.model);
+            config.setEffort(sel.effort);
+          }}
         />
       }
       heading={`Lenses (${lensCount}/${ALL_CATEGORIES.length})`}
@@ -58,7 +61,8 @@ export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
       hint={
         <>
           Scans the whole repo across {lensCount} {lensCount === 1 ? 'lens' : 'lenses'}{' '}
-          · ~{PROVIDER_LABEL} {modelLabel(config.model)} · cost depends on repo size.
+          · ~{PROVIDER_LABEL} {modelLabel(config.model)}
+          {showCost && ' · cost depends on repo size'}.
         </>
       }
     />

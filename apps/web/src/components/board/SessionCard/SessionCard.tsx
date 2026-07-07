@@ -6,7 +6,7 @@ import {
   BoltIcon,
   ChevronDownIcon,
   HistoryIcon,
-  ModelEffortPicker,
+  ModelSelectField,
 } from '@/components/ui';
 import type { Task } from '@/lib/bridge';
 import { parseNumericCommit } from '@/lib/numeric-field';
@@ -119,6 +119,7 @@ function EditableSessionBody({
   onChangeRunMode,
   onChangePermissionMode,
   onChangeModel,
+  onChangeProvider,
   onChangeEffort,
   onChangeMaxTurns,
   onChangeMaxBudget,
@@ -128,6 +129,7 @@ function EditableSessionBody({
   onChangeRunMode: NonNullable<TaskDetailActions['onChangeRunMode']>;
   onChangePermissionMode: NonNullable<TaskDetailActions['onChangePermissionMode']>;
   onChangeModel: NonNullable<TaskDetailActions['onChangeModel']>;
+  onChangeProvider: NonNullable<TaskDetailActions['onChangeProvider']>;
   onChangeEffort: NonNullable<TaskDetailActions['onChangeEffort']>;
   onChangeMaxTurns: NonNullable<TaskDetailActions['onChangeMaxTurns']>;
   onChangeMaxBudget: NonNullable<TaskDetailActions['onChangeMaxBudget']>;
@@ -150,11 +152,15 @@ function EditableSessionBody({
         />
       </SessionRow>
       <SessionRow label="Model & effort">
-        <ModelEffortPicker
-          model={task.model}
-          effort={task.effort}
-          onChangeModel={(model) => onChangeModel(task.id, model)}
-          onChangeEffort={(effort) => onChangeEffort(task.id, effort)}
+        <ModelSelectField
+          value={{ model: task.model, effort: task.effort, providerId: task.providerId }}
+          onChange={(sel) => {
+            // A single pick can move model + its provider stamp + a reconciled
+            // effort; patch only the fields that actually changed.
+            if (sel.model !== task.model) onChangeModel(task.id, sel.model);
+            if (sel.providerId !== task.providerId) onChangeProvider(task.id, sel.providerId);
+            if (sel.effort !== task.effort) onChangeEffort(task.id, sel.effort);
+          }}
         />
       </SessionRow>
       <SessionRow label="Limits">
@@ -229,6 +235,7 @@ export function SessionCard({ task, kindEditable }: SessionCardProps) {
     onChangeRunMode,
     onChangePermissionMode,
     onChangeModel,
+    onChangeProvider,
     onChangeEffort,
     onChangeMaxTurns,
     onChangeMaxBudget,
@@ -242,6 +249,7 @@ export function SessionCard({ task, kindEditable }: SessionCardProps) {
     onChangeRunMode !== undefined &&
     onChangePermissionMode !== undefined &&
     onChangeModel !== undefined &&
+    onChangeProvider !== undefined &&
     onChangeEffort !== undefined &&
     onChangeMaxTurns !== undefined &&
     onChangeMaxBudget !== undefined;
@@ -280,6 +288,7 @@ export function SessionCard({ task, kindEditable }: SessionCardProps) {
                 onChangeRunMode={onChangeRunMode}
                 onChangePermissionMode={onChangePermissionMode}
                 onChangeModel={onChangeModel}
+                onChangeProvider={onChangeProvider}
                 onChangeEffort={onChangeEffort}
                 onChangeMaxTurns={onChangeMaxTurns}
                 onChangeMaxBudget={onChangeMaxBudget}

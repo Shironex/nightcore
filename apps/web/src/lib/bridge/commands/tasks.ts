@@ -27,6 +27,9 @@ export async function listTasks(): Promise<Task[]> {
 export interface CreateTaskOptions {
   permissionMode?: PermissionMode | null;
   model?: string | null;
+  /** The provider the picked model belongs to (B5), so a created task round-trips
+   *  its selection's provider. `undefined` ⇒ omit (derive from the model id). */
+  providerId?: string;
   effort?: string | null;
   /** SDK-guardrail max-turns override (`null` = inherit the resolved Settings
    *  default → config default 200). */
@@ -60,6 +63,7 @@ export async function createTask(
     runMode,
     permissionMode: options.permissionMode ?? null,
     model: options.model ?? null,
+    providerId: options.providerId ?? null,
     effort: options.effort ?? null,
     maxTurns: options.maxTurns ?? null,
     maxBudgetUsd: options.maxBudgetUsd ?? null,

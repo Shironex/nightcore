@@ -23,6 +23,7 @@ const actions: TaskDetailActions = {
   onChangeRunMode: fn(),
   onChangePermissionMode: fn(),
   onChangeModel: fn(),
+  onChangeProvider: fn(),
   onChangeEffort: fn(),
   onChangeMaxTurns: fn(),
   onChangeMaxBudget: fn(),

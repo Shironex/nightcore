@@ -13,13 +13,17 @@ import {
   FolderIcon,
   GearIcon,
   LayersIcon,
+  LIVE_MODEL_CATALOG_DATA,
   LockIcon,
+  ModelSelect,
   NumberField,
   Pill,
   RepoLink,
+  resolveProviderForModel,
   Segmented,
   SparkIcon,
   Toggle,
+  useModelCatalog,
 } from '@/components/ui';
 import {
   type AppInfo,
@@ -91,6 +95,31 @@ function resolveModelValue(model: string): string {
   return modelOptionFor(model)?.id ?? model;
 }
 
+/** The default-model control. With a single provider (today) a compact `Segmented`
+ *  row is clearest; once the live catalog reports >1 provider it adopts the
+ *  provider-grouped `ModelSelect` combobox, which scales past a wide chip row (B5).
+ *  The default effort is a separate Settings row, so the combobox hides its own. */
+function DefaultModelControl({ value, onPick }: { value: string; onPick: (m: string) => void }) {
+  const catalog = useModelCatalog(LIVE_MODEL_CATALOG_DATA);
+  const providers =
+    catalog.status === 'ready'
+      ? new Set(catalog.models.map((m) => resolveProviderForModel(m.value) ?? 'other')).size
+      : 1;
+  if (providers > 1) {
+    return (
+      <ModelSelect
+        ariaLabel="Default model"
+        showEffort={false}
+        catalog={catalog}
+        value={{ model: value, effort: null }}
+        // Settings has no "Inherit" default — ignore the synthetic null row.
+        onChange={(sel) => sel.model !== null && onPick(sel.model)}
+      />
+    );
+  }
+  return <Segmented options={MODELS} value={resolveModelValue(value)} onChange={onPick} />;
+}
+
 /** The data and patch callbacks `buildCards` needs to assemble each page's cards. */
 export interface CardContext {
   effective: EffectiveSettings;
@@ -118,10 +147,9 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
               label: 'Default model',
               hint: 'Used for new tasks',
               control: (
-                <Segmented
-                  options={MODELS}
-                  value={resolveModelValue(effective.defaultModel)}
-                  onChange={(v) =>
+                <DefaultModelControl
+                  value={effective.defaultModel}
+                  onPick={(v) =>
                     patchScoped(
                       // Reconcile the stored effort when the new model can't honor
                       // it (e.g. a premium-only level after switching to Haiku).

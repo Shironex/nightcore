@@ -1,6 +1,12 @@
 /** Public types for the ModelEffortPicker component. */
 
-/** Props for the ModelEffortPicker component. */
+/**
+ * Props for the ModelEffortPicker component.
+ *
+ * @deprecated (B5) — the ModelEffortPicker is a thin adapter over
+ * `ModelSelectField` kept for one deprecation cycle. New surfaces should render
+ * `<ModelSelectField value onChange />` (the single-`ModelSelection` API) directly.
+ */
 export interface ModelEffortPickerProps {
   /** The current model id override, or `null` to inherit the default. */
   model: string | null;

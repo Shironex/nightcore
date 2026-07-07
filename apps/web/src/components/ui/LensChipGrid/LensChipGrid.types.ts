@@ -23,8 +23,8 @@ export interface LensChipGridProps<K extends string = string> {
 export interface ScanConfigFormProps<K extends string = string>
   extends LensChipGridProps<K> {
   /** The model/effort picker, composed by the family so this shell stays a
-   *  layout owner instead of a wire for the picker's four props. Each family
-   *  renders its own `<ModelEffortPicker …/>` into this slot. */
+   *  layout owner instead of a wire for the picker's props. Each family renders its
+   *  own `<ModelSelectField …/>` into this slot (B5). */
   picker: ReactNode;
   /** Slot between the picker and the chip grid (e.g. Insight's scope radio). */
   beforeChips?: ReactNode;

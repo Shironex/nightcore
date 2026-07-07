@@ -4,7 +4,7 @@
  *  runs at a time (single-issue; no batch "validate all"). */
 import {
   Button,
-  ModelEffortPicker,
+  ModelSelectField,
   RunProgress,
   type RunProgressCategory,
   SearchIcon,
@@ -76,11 +76,12 @@ export function ValidateControls({
           Validate this issue against the actual codebase with a read-only session — it
           classifies the issue, grounds the related files, and proposes a plan.
         </p>
-        <ModelEffortPicker
-          model={model}
-          effort={effort}
-          onChangeModel={onChangeModel}
-          onChangeEffort={onChangeEffort}
+        <ModelSelectField
+          value={{ model, effort }}
+          onChange={(sel) => {
+            onChangeModel(sel.model);
+            onChangeEffort(sel.effort);
+          }}
           disabled={!canValidate}
         />
       </div>

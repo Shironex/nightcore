@@ -11,7 +11,9 @@ test('shows the Validate button and the model picker when idle', async () => {
   await expect
     .element(screen.getByRole('button', { name: /validate against the codebase/i }))
     .toBeInTheDocument();
-  await expect.element(screen.getByRole('radiogroup', { name: 'Model' })).toBeInTheDocument();
+  // The live-wired ModelSelectField resolves its catalog (mocked outside Tauri) and
+  // renders the model combobox.
+  await expect.element(screen.getByRole('combobox', { name: /model/i })).toBeInTheDocument();
 });
 
 test('relabels the button "Re-validate" once a verdict exists', async () => {

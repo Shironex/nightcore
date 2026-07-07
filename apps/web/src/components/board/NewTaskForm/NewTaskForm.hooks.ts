@@ -46,6 +46,9 @@ export interface NewTaskFormState {
   branches: BranchInfo[];
   permissionMode: PermissionMode | null;
   model: string | null;
+  /** The provider the picked model belongs to (B5), stamped so a created task
+   *  round-trips its selection's provider. `undefined` ⇒ derive from the model id. */
+  providerId: string | undefined;
   effort: string | null;
   /** Raw text of the optional max-turns ceiling (empty = inherit). */
   maxTurns: string;
@@ -67,6 +70,7 @@ export interface NewTaskFormState {
   setBaseBranch: (value: string) => void;
   setPermissionMode: (value: PermissionMode | null) => void;
   setModel: (value: string | null) => void;
+  setProviderId: (value: string | undefined) => void;
   setEffort: (value: string | null) => void;
   setMaxTurns: (value: string) => void;
   setMaxBudget: (value: string) => void;
@@ -97,6 +101,7 @@ export function useNewTaskForm({
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode | null>(null);
   const [model, setModel] = useState<string | null>(null);
+  const [providerId, setProviderId] = useState<string | undefined>(undefined);
   const [effort, setEffort] = useState<string | null>(null);
   const [maxTurns, setMaxTurns] = useState('');
   const [maxBudget, setMaxBudget] = useState('');
@@ -132,6 +137,7 @@ export function useNewTaskForm({
     setBaseBranch('');
     setPermissionMode(null);
     setModel(null);
+    setProviderId(undefined);
     setEffort(null);
     setMaxTurns('');
     setMaxBudget('');
@@ -179,6 +185,7 @@ export function useNewTaskForm({
       await onCreate(title.trim(), description.trim(), kind, runMode, {
         permissionMode,
         model,
+        providerId,
         effort,
         // Empty/blank/invalid input ⇒ inherit (omit the override → null at the seam).
         maxTurns: parsePositiveInt(maxTurns),
@@ -205,6 +212,7 @@ export function useNewTaskForm({
     baseBranch,
     permissionMode,
     model,
+    providerId,
     effort,
     maxTurns,
     maxBudget,
@@ -235,6 +243,7 @@ export function useNewTaskForm({
     branches,
     permissionMode,
     model,
+    providerId,
     effort,
     maxTurns,
     maxBudget,
@@ -251,6 +260,7 @@ export function useNewTaskForm({
     setBaseBranch,
     setPermissionMode,
     setModel,
+    setProviderId,
     setEffort,
     setMaxTurns,
     setMaxBudget,

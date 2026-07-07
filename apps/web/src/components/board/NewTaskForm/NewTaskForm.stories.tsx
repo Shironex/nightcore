@@ -101,8 +101,10 @@ export const CreatesWithOverrides: Story = {
     const canvas = within(canvasElement);
     await userEvent.type(canvas.getByLabelText('Title'), 'Apply a migration');
     await userEvent.click(canvas.getByRole('radio', { name: /^plan$/i }));
-    const models = within(canvas.getByRole('radiogroup', { name: /model/i }));
-    await userEvent.click(models.getByRole('radio', { name: /sonnet/i }));
+    // The model picker is now the live-wired combobox: open it and pick Sonnet,
+    // which stamps its provider onto the selection.
+    await userEvent.click(canvas.getByRole('combobox', { name: /model/i }));
+    await userEvent.click(canvas.getByRole('option', { name: /sonnet/i }));
     const efforts = within(canvas.getByRole('radiogroup', { name: /reasoning effort/i }));
     await userEvent.click(efforts.getByRole('radio', { name: /^high$/i }));
     await userEvent.click(canvas.getByRole('button', { name: /create task/i }));
@@ -111,6 +113,7 @@ export const CreatesWithOverrides: Story = {
       expect(args.onCreate).toHaveBeenCalledWith('Apply a migration', '', 'build', 'main', {
         permissionMode: 'plan',
         model: 'claude-sonnet-4-6',
+        providerId: 'claude',
         effort: 'high',
         maxTurns: null,
         maxBudgetUsd: null,

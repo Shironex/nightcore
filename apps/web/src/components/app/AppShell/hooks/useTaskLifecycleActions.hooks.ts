@@ -277,6 +277,7 @@ export function useTaskLifecycleActions({ board, action, toast }: TaskLifecycleD
     [makeFieldUpdater],
   );
   const handleChangeModel = useMemo(() => makeFieldUpdater('model'), [makeFieldUpdater]);
+  const handleChangeProvider = useMemo(() => makeFieldUpdater('providerId'), [makeFieldUpdater]);
   const handleChangeEffort = useMemo(() => makeFieldUpdater('effort'), [makeFieldUpdater]);
   const handleChangeMaxTurns = useMemo(() => makeFieldUpdater('maxTurns'), [makeFieldUpdater]);
   const handleChangeMaxBudget = useMemo(
@@ -298,6 +299,7 @@ export function useTaskLifecycleActions({ board, action, toast }: TaskLifecycleD
     handleChangeRunMode,
     handleChangePermissionMode,
     handleChangeModel,
+    handleChangeProvider,
     handleChangeEffort,
     handleChangeMaxTurns,
     handleChangeMaxBudget,

@@ -3,8 +3,9 @@
 import {
   chipClass,
   InsightIcon,
-  ModelEffortPicker,
+  ModelSelectField,
   ScanConfigForm,
+  useShowCostLine,
 } from '@/components/ui';
 import { type AnalysisScope, PROVIDER_LABEL } from '@/lib/bridge';
 
@@ -24,15 +25,17 @@ const CHIPS = ALL_CATEGORIES.map((c) => ({
 export function RunControls({ config, isStarting, onAnalyze }: RunControlsProps) {
   const { scope, setScope, model } = config;
   const lensCount = config.orderedSelected.length;
+  const showCost = useShowCostLine();
 
   return (
     <ScanConfigForm
       picker={
-        <ModelEffortPicker
-          model={model}
-          effort={config.effort}
-          onChangeModel={config.setModel}
-          onChangeEffort={config.setEffort}
+        <ModelSelectField
+          value={{ model, effort: config.effort }}
+          onChange={(sel) => {
+            config.setModel(sel.model);
+            config.setEffort(sel.effort);
+          }}
         />
       }
       beforeChips={
@@ -71,8 +74,8 @@ export function RunControls({ config, isStarting, onAnalyze }: RunControlsProps)
       hint={
         <>
           Scans the whole {scope === 'diff' ? 'diff' : 'repo'} across {lensCount}{' '}
-          {lensCount === 1 ? 'lens' : 'lenses'} · ~{PROVIDER_LABEL} {model ?? 'default'} · cost
-          depends on repo size.
+          {lensCount === 1 ? 'lens' : 'lenses'} · ~{PROVIDER_LABEL} {model ?? 'default'}
+          {showCost && ' · cost depends on repo size'}.
         </>
       }
     />

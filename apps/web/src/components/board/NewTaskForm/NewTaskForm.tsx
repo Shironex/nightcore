@@ -6,7 +6,7 @@ import {
   ImageDropzone,
   Kbd,
   Modal,
-  ModelEffortPicker,
+  ModelSelectField,
   slideIn,
   Spinner,
 } from '@/components/ui';
@@ -35,6 +35,7 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
     branches,
     permissionMode,
     model,
+    providerId,
     effort,
     maxTurns,
     maxBudget,
@@ -51,6 +52,7 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
     setBaseBranch,
     setPermissionMode,
     setModel,
+    setProviderId,
     setEffort,
     setMaxTurns,
     setMaxBudget,
@@ -157,11 +159,13 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
             <span className={LABEL_CLASS}>Permission mode</span>
             <PermissionModePicker value={permissionMode} onChange={setPermissionMode} />
           </div>
-          <ModelEffortPicker
-            model={model}
-            effort={effort}
-            onChangeModel={setModel}
-            onChangeEffort={setEffort}
+          <ModelSelectField
+            value={{ model, effort, providerId }}
+            onChange={(sel) => {
+              setModel(sel.model);
+              setProviderId(sel.providerId);
+              setEffort(sel.effort);
+            }}
           />
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">

@@ -14,7 +14,7 @@ import {
   GithubIcon,
   HistoryIcon,
   Menu,
-  ModelEffortPicker,
+  ModelSelectField,
   MoveIcon,
   RefactorIcon,
   RetryIcon,
@@ -164,11 +164,12 @@ export function ReviewSection({
             </div>
           </div>
 
-          <ModelEffortPicker
-            model={config.model}
-            effort={config.effort}
-            onChangeModel={config.setModel}
-            onChangeEffort={config.setEffort}
+          <ModelSelectField
+            value={{ model: config.model, effort: config.effort }}
+            onChange={(sel) => {
+              config.setModel(sel.model);
+              config.setEffort(sel.effort);
+            }}
           />
 
           <div className="flex flex-col gap-2">

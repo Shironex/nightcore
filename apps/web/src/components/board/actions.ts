@@ -48,6 +48,9 @@ export interface TaskDetailActions {
   onChangePermissionMode?: (id: string, permissionMode: PermissionMode | null) => void;
   /** Edit the task's model override — `null` = inherit. Pre-run. */
   onChangeModel?: (id: string, model: string | null) => void;
+  /** Edit the task's model-provider stamp (B5) so an edited selection round-trips
+   *  its provider. `undefined` = absent/derive-from-id. Pre-run, set with the model. */
+  onChangeProvider?: (id: string, providerId: string | undefined) => void;
   /** Edit the task's reasoning-effort override — `null` = inherit. Pre-run. */
   onChangeEffort?: (id: string, effort: string | null) => void;
   /** Edit the task's max-turns ceiling (SDK guardrail) — `null` = inherit. Pre-run. */
