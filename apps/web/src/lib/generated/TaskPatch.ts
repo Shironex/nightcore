@@ -10,6 +10,12 @@ import type { TaskStatus } from "./TaskStatus";
  */
 export type TaskPatch = { title?: string, description?: string, status?: TaskStatus, dependencies?: Array<string>, model?: string | null, 
 /**
+ * B5: the provider the picked `model` belongs to, set from the model picker so
+ * an edited selection round-trips its provider. Same set-not-clear semantics as
+ * `model` (an absent/null value leaves it untouched).
+ */
+providerId?: string | null, 
+/**
  * M4.7 §E: per-task reasoning effort, set from the create/edit picker.
  */
 effort?: string | null, 

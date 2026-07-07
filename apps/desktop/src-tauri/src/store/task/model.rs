@@ -202,6 +202,14 @@ pub struct Task {
     pub dependencies: Vec<String>,
     /// `None` means "use the core/config default model".
     pub model: Option<String>,
+    /// B5 (issue #79/#80): the provider the picked `model` belongs to (`claude`,
+    /// `codex`, …), stamped on the selection so a saved model round-trips its
+    /// provider even when a model id is ambiguous across providers. `None` ⇒ derive
+    /// it from the model id (the web resolver's family fallback). Serde-additive: a
+    /// legacy task without the field loads as `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub provider_id: Option<String>,
     /// M4.7 §E: reasoning effort for this task's run (`low`/`medium`/`high`/
     /// `xhigh`/`max`). `None` ⇒ inherit the core/config default effort. Threaded
     /// into the `start-session` payload; the engine fixes it at session start.
@@ -374,6 +382,7 @@ impl Task {
             status: TaskStatus::Backlog,
             dependencies: Vec::new(),
             model: None,
+            provider_id: None,
             effort: None,
             permission_mode: None,
             branch: None,

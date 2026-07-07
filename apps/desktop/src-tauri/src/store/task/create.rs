@@ -19,6 +19,9 @@ pub(crate) struct CreateInputs {
     pub(crate) kind: Option<TaskKind>,
     pub(crate) run_mode: Option<RunMode>,
     pub(crate) model: Option<String>,
+    /// B5: the provider the picked model belongs to, carried alongside `model` so a
+    /// created task round-trips its selection's provider. `None` ⇒ derive from the id.
+    pub(crate) provider_id: Option<String>,
     pub(crate) effort: Option<String>,
     pub(crate) permission_mode: Option<String>,
     pub(crate) max_turns: Option<u32>,
@@ -88,6 +91,10 @@ pub(crate) fn build_new_task(
         let resolved = settings.default_model(pid);
         (!resolved.trim().is_empty()).then_some(resolved)
     });
+    // B5: carry the picker's provider stamp so a saved model round-trips its provider.
+    // Only set when the create call supplied one (an explicit model pick); a model
+    // inherited from Settings leaves this `None` (derive from the id at read time).
+    task.provider_id = inputs.provider_id;
     task.effort = Some(
         inputs
             .effort

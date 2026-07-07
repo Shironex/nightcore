@@ -17,6 +17,7 @@
 //! it leases a slot, allocates a worktree, and dispatches — exactly what the
 //! coordinator's `launch` does, just triggered by a click instead of a tick.
 
+mod capabilities;
 mod channels;
 mod commands;
 mod convert;
@@ -50,6 +51,9 @@ pub(crate) use provider_config::*;
 // The dynamic model-catalog command `list_models` (issue #80; glob so the
 // `#[tauri::command]` macro siblings resolve through `sidecar::*` for `generate_handler!`).
 pub(crate) use models::*;
+// The provider-capability command `get_capabilities` (issue #18, B5; glob so the
+// `#[tauri::command]` macro siblings resolve through `sidecar::*` for `generate_handler!`).
+pub(crate) use capabilities::*;
 // The Insight (codebase analysis) commands + the reader-side `analysis-*` handler
 // (glob so the `#[tauri::command]` macro siblings resolve through `sidecar::*`).
 pub(crate) use insight::*;

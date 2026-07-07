@@ -21,6 +21,14 @@ dependencies: Array<string>,
  */
 model: string | null, 
 /**
+ * B5 (issue #79/#80): the provider the picked `model` belongs to (`claude`,
+ * `codex`, …), stamped on the selection so a saved model round-trips its
+ * provider even when a model id is ambiguous across providers. `None` ⇒ derive
+ * it from the model id (the web resolver's family fallback). Serde-additive: a
+ * legacy task without the field loads as `None`.
+ */
+providerId?: string, 
+/**
  * M4.7 §E: reasoning effort for this task's run (`low`/`medium`/`high`/
  * `xhigh`/`max`). `None` ⇒ inherit the core/config default effort. Threaded
  * into the `start-session` payload; the engine fixes it at session start.

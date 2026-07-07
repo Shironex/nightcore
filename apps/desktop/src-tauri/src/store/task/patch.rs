@@ -44,6 +44,11 @@ pub struct TaskPatch {
     pub dependencies: Option<Vec<String>>,
     #[cfg_attr(test, ts(optional = nullable))]
     pub model: Option<String>,
+    /// B5: the provider the picked `model` belongs to, set from the model picker so
+    /// an edited selection round-trips its provider. Same set-not-clear semantics as
+    /// `model` (an absent/null value leaves it untouched).
+    #[cfg_attr(test, ts(optional = nullable))]
+    pub provider_id: Option<String>,
     /// M4.7 §E: per-task reasoning effort, set from the create/edit picker.
     #[cfg_attr(test, ts(optional = nullable))]
     pub effort: Option<String>,
@@ -97,6 +102,9 @@ impl TaskPatch {
         // left untouched (same semantics as `model`).
         if self.model.is_some() {
             task.model = self.model;
+        }
+        if self.provider_id.is_some() {
+            task.provider_id = self.provider_id;
         }
         if self.effort.is_some() {
             task.effort = self.effort;
@@ -211,6 +219,23 @@ mod tests {
         let patch: TaskPatch = serde_json::from_str(r#"{"model":"claude-opus-4-8"}"#).unwrap();
         patch.apply(&mut task);
         assert_eq!(task.model.as_deref(), Some("claude-opus-4-8"));
+    }
+
+    #[test]
+    fn patch_sets_provider_id_when_present() {
+        // B5: an edited model stamps its provider so a saved selection round-trips it.
+        let mut task = Task::new("t".into(), String::new());
+        assert!(task.provider_id.is_none());
+        let patch: TaskPatch =
+            serde_json::from_str(r#"{"model":"gpt-5-codex","providerId":"codex"}"#).unwrap();
+        patch.apply(&mut task);
+        assert_eq!(task.model.as_deref(), Some("gpt-5-codex"));
+        assert_eq!(task.provider_id.as_deref(), Some("codex"));
+
+        // Absent ⇒ untouched (same set-not-clear as `model`).
+        let absent: TaskPatch = serde_json::from_str(r#"{"title":"x"}"#).unwrap();
+        absent.apply(&mut task);
+        assert_eq!(task.provider_id.as_deref(), Some("codex"));
     }
 
     #[test]
