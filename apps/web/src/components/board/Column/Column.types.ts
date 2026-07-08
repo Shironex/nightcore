@@ -9,8 +9,6 @@ export interface ColumnProps {
   tasks: Task[];
   /** The column's status dot color (oklch). */
   dotColor: string;
-  /** Tag rendered beside the column title (a not-yet-built/future affordance). */
-  badge?: string;
   /** When true and the column is non-empty, render a "Clear" affordance. */
   clearable?: boolean;
   selectedId: string | null;

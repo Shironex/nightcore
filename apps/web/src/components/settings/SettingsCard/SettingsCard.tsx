@@ -1,15 +1,10 @@
 /** A presentational grouped settings card: header plus label/hint/control rows. */
-import { Badge } from '@/components/ui';
-
 import type { SettingsCardProps } from './SettingsCard.types';
 
-/** A grouped settings card: header (icon + title + optional badge) followed by
- *  label/hint/control rows. The badge marks a not-yet-built/future affordance. */
 export function SettingsCard({
   icon,
   title,
   subtitle,
-  badge,
   rows,
 }: SettingsCardProps) {
   return (
@@ -21,7 +16,6 @@ export function SettingsCard({
         <div className="min-w-0 flex-1 pt-0.5">
           <div className="flex items-center gap-2">
             <h2 className="text-lg font-semibold tracking-tight">{title}</h2>
-            {badge !== undefined && <Badge tone="roadmap">{badge}</Badge>}
           </div>
           {subtitle !== undefined && (
             <p className="mt-0.5 text-[12.5px] leading-snug text-muted-foreground">

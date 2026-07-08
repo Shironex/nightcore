@@ -330,7 +330,6 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
           icon: <LayersIcon size={18} />,
           title: 'Other providers',
           subtitle: 'The provider seam where Codex and others slot in.',
-          badge: 'later',
           rows: [
             {
               label: 'Codex',

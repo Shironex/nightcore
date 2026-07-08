@@ -13,8 +13,5 @@ export interface SettingsCardProps {
   icon: ReactNode;
   title: string;
   subtitle?: string;
-  /** A short tag rendered beside the title to mark a not-yet-built/future
-   *  affordance (e.g. "later"). */
-  badge?: string;
   rows: SettingsRow[];
 }

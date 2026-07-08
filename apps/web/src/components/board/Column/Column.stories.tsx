@@ -57,7 +57,6 @@ export const WaitingApproval: Story = {
   args: {
     title: 'Waiting Approval',
     dotColor: 'oklch(74% .13 248)',
-    badge: 'M3',
     tasks: [],
     emptyText: 'Nothing awaiting approval',
   },

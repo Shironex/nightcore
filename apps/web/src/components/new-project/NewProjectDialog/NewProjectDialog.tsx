@@ -1,6 +1,5 @@
 /** "New project" dialog: pick a git repo folder, name it, and create a project. */
 import {
-  Badge,
   Button,
   CloseIcon,
   FolderIcon,
@@ -155,10 +154,9 @@ export function NewProjectDialog({
             <div className="w-[120px]">
               <label
                 htmlFor="np-concurrency"
-                className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-muted-foreground"
+                className="mb-1.5 block text-[11.5px] font-semibold text-muted-foreground"
               >
                 Concurrency
-                <Badge tone="roadmap">M2</Badge>
               </label>
               <input
                 id="np-concurrency"

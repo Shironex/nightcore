@@ -36,7 +36,6 @@ interface NavItem {
   page: SettingsPage;
   label: string;
   icon: ReactNode;
-  badge?: string;
 }
 /** A labelled group of nav entries. */
 interface NavGroup {
@@ -50,7 +49,7 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'AGENTS',
     items: [
       { page: 'models', label: 'Models & runs', icon: <SlidersIcon size={16} /> },
-      { page: 'permissions', label: 'Permissions', icon: <LockIcon size={16} />, badge: 'M3' },
+      { page: 'permissions', label: 'Permissions', icon: <LockIcon size={16} /> },
       { page: 'constitution', label: 'Constitution', icon: <BookIcon size={16} /> },
     ],
   },
@@ -81,13 +80,12 @@ interface PageHeader {
   title: string;
   subtitle: string;
   icon: ReactNode;
-  badge?: string;
 }
 
 /** The header content per settings page. */
 const PAGE_HEADERS: Record<SettingsPage, PageHeader> = {
   models: { title: 'Models & runs', subtitle: 'AGENT DEFAULTS', icon: <SlidersIcon size={26} /> },
-  permissions: { title: 'Permissions', subtitle: 'TOOL ACCESS', icon: <LockIcon size={24} />, badge: 'M3' },
+  permissions: { title: 'Permissions', subtitle: 'TOOL ACCESS', icon: <LockIcon size={24} /> },
   constitution: { title: 'Project Constitution', subtitle: 'PRE-FLIGHT CONTEXT', icon: <BookIcon size={24} /> },
   worktrees: { title: 'Git worktrees', subtitle: 'ISOLATION', icon: <BranchIcon size={24} /> },
   providers: { title: 'Providers', subtitle: 'MODEL BACKENDS', icon: <BoltIcon size={24} /> },
@@ -104,8 +102,7 @@ const PAGE_NOTES: Partial<Record<SettingsPage, string>> = {
 
 /** The Settings surface: a grouped left nav, a page header with a scope toggle,
  *  and icon-tile cards per page. The run-shaping controls persist (global or
- *  per-project per the scope tab); the not-yet-built pages are presentational and
- *  badged. */
+ *  per-project per the scope tab). */
 export function SettingsView({
   settings,
   activeProjectId,
@@ -158,11 +155,6 @@ export function SettingsView({
               >
                 <span className="shrink-0">{item.icon}</span>
                 <span className="flex-1 text-[13px]">{item.label}</span>
-                {item.badge !== undefined && (
-                  <span className="rounded bg-primary/[0.18] px-1 py-px font-mono text-[8px] tracking-[0.04em] text-primary">
-                    {item.badge}
-                  </span>
-                )}
               </button>
             ))}
           </div>
@@ -176,11 +168,6 @@ export function SettingsView({
             <div className="min-w-[200px] flex-1 pt-0.5">
               <div className="flex items-center gap-2">
                 <h1 className="text-[25px] font-semibold tracking-tight">{header.title}</h1>
-                {header.badge !== undefined && (
-                  <span className="rounded bg-primary/[0.18] px-1.5 py-px font-mono text-[8.5px] text-primary">
-                    {header.badge}
-                  </span>
-                )}
               </div>
               <div className="mt-1 font-mono text-[10.5px] uppercase tracking-[0.16em] text-muted-foreground">
                 {header.subtitle}

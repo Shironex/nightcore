@@ -7,10 +7,10 @@ import { TaskCard } from '../TaskCard';
 import { useColumn } from './Column.hooks';
 import type { ColumnProps } from './Column.types';
 
-/** A board column: a colored status dot + label + count header (with an optional
- *  tag badge and a Clear affordance for Backlog/Done/Failed), over its task
- *  cards. Failed renders narrower than the rest. Presentational — all
- *  state and bridge actions are owned by the board.
+/** A board column: a colored status dot + label + count header (with a Clear
+ *  affordance for Backlog/Done/Failed), over its task cards. Failed renders
+ *  narrower than the rest. Presentational — all state and bridge actions are
+ *  owned by the board.
  *
  *  Drag-and-drop (@dnd-kit): the whole column shell is a droppable keyed on its
  *  primary status; the board's `<DndContext>` resolves a cross-column drop to a
@@ -27,7 +27,6 @@ function ColumnImpl({
   title,
   tasks,
   dotColor,
-  badge,
   clearable,
   selectedId,
   blockedIds,
@@ -62,11 +61,6 @@ function ColumnImpl({
         <span className="rounded-md bg-white/[0.05] px-1.5 py-px font-mono text-[11px] tabular-nums text-muted-foreground">
           {tasks.length}
         </span>
-        {badge !== undefined && (
-          <span className="rounded bg-primary/[0.18] px-1 py-px font-mono text-[8px] tracking-[0.04em] text-primary">
-            {badge}
-          </span>
-        )}
         {showClear && (
           <button
             type="button"

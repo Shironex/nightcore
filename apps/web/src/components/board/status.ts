@@ -3,15 +3,13 @@
 import type { PermissionMode, RunMode, TaskKind, TaskStatus } from '@/lib/bridge';
 
 /** A board column: its key, label, the statuses it groups, its status
- *  dot color, an optional tag badge, and whether it offers a "Clear". */
+ *  dot color, and whether it offers a "Clear". */
 export interface ColumnDef {
   key: string;
   title: string;
   statuses: TaskStatus[];
   /** oklch color for the column's status dot (and glow). */
   dotColor: string;
-  /** Tag rendered beside the column title (a not-yet-built/future affordance). */
-  badge?: string;
   /** Backlog/Done/Failed columns offer a "Clear" affordance when non-empty. */
   clearable?: boolean;
 }
@@ -37,14 +35,12 @@ export const COLUMNS: ColumnDef[] = [
     title: 'Verifying',
     statuses: ['verifying'],
     dotColor: 'oklch(74% .13 280)',
-    badge: 'M4',
   },
   {
     key: 'waiting_approval',
     title: 'Waiting Approval',
     statuses: ['waiting_approval'],
     dotColor: 'oklch(74% .13 248)',
-    badge: 'M3',
   },
   {
     key: 'done',
