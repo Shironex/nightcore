@@ -10,6 +10,7 @@ import path from 'node:path';
 import { Glob } from 'bun';
 
 import { serializeBaseline } from './baseline';
+import { normalizeText, toPosixRel } from './paths';
 import { META_RULES } from './registry';
 import type { IMetaCtx } from './types';
 
@@ -19,14 +20,15 @@ const ROOT = path.resolve(import.meta.dir, '..', '..');
 const ctx: IMetaCtx = {
   root: ROOT,
   read(rel) {
-    const abs = path.join(ROOT, rel);
-    return existsSync(abs) ? readFileSync(abs, 'utf8') : null;
+    const abs = path.join(ROOT, toPosixRel(rel));
+    if (!existsSync(abs)) return null;
+    return normalizeText(readFileSync(abs, 'utf8'));
   },
   exists(rel) {
-    return existsSync(path.join(ROOT, rel));
+    return existsSync(path.join(ROOT, toPosixRel(rel)));
   },
   glob(pattern) {
-    return Array.from(new Glob(pattern).scanSync({ cwd: ROOT }));
+    return Array.from(new Glob(pattern).scanSync({ cwd: ROOT })).map(toPosixRel);
   },
   exec(cmd) {
     try {

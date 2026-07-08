@@ -30,6 +30,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 
 ## Lint discipline
 - Always run `bun run lint` (it rebuilds `@nightcore/eslint-plugin` to `dist/` first) — never a bare `eslint .`.
+- **Git hooks (Husky):** after `bun install`, `pre-commit` runs `bun run lint` and `bun run build`; `pre-push` adds `bun run check:rust` (fmt, clippy, `test:rust`, ts-rs drift — the `rust-checks` CI job). Rust integration tests spawn nested `git worktree` calls and cannot run during `pre-commit` while Git holds the index lock; push is the right gate for them. On Windows, `check:rust` runs single-threaded `cargo test` plus the ts-rs drift diff but skips fmt/clippy (CRLF checkout and cfg-gated imports false-fail vs Linux CI). Skip hooks in an emergency with `HUSKY=0 git commit …` / `HUSKY=0 git push …`.
 - Architectural boundaries are lint rules, not docs. A new legitimate cross-layer need adds a named seam (façade method / bridge command), it does not relax a rule.
 - `.editorconfig` is the sole formatting authority for TS/JS (no Prettier/Biome; style beyond indent/EOL/final-newline is intentionally unenforced).
 - Import ordering is enforced by `simple-import-sort/imports` + `/exports` (error, autofixable): side-effect imports → node/bun builtins → third-party → `@nightcore/*` + `@/` → relative, blank-line separated. Run `eslint . --fix` rather than hand-sorting.

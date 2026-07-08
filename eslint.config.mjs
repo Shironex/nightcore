@@ -411,7 +411,7 @@ export default tseslint.config(
   //     tightening story for ALL web sources.
   // The two caps move together — never "fix" one without the other. Phase-in is
   // a freeze-at-worst carve-out block (below) + the committed ratchet baseline,
-  // NEVER 'warn' (`no-warn-severity` is ciCritical).
+  // NEVER warn severity (`no-warn-severity` is ciCritical).
   {
     files: ['apps/web/src/components/**/*.tsx'],
     ignores: ['apps/web/src/components/**/*.{stories,test}.tsx'],

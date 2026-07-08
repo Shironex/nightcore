@@ -16,8 +16,8 @@ export const noWarnSeverityRule: IMetaRule = {
     const config = ctx.read('eslint.config.mjs');
     if (config === null) return [];
     const violations: IViolation[] = [];
-    config.split('\n').forEach((line, i) => {
-      const code = line.replace(/\/\/.*$/, '');
+    config.split(/\r?\n/).forEach((line, i) => {
+      const code = line.replace(/\r$/, '').replace(/\/\/.*$/, '');
       if (/['"]warn['"]/.test(code)) {
         violations.push({
           file: 'eslint.config.mjs',
