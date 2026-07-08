@@ -5,11 +5,7 @@
  */
 
 import type { PrFixState, PrReviewRun } from '@/lib/bridge';
-
-/** Count OPEN findings across either finding source (both carry `status`). */
-function countOpen(findings: ReadonlyArray<{ status: string }>): number {
-  return findings.filter((f) => f.status === 'open').length;
-}
+import { countOpenItems } from '@/lib/scan-run/results';
 
 /** A review-arc timeline node's completion state — mapped to a dot glyph + tone
  *  by the {@link ../ReviewTimeline}. */
@@ -56,7 +52,7 @@ export function deriveReviewTimeline(
   if (posted) {
     steps.push({ id: 'posted', label: 'Posted to GitHub', state: 'done', at: latestRun.postedAt });
   } else {
-    const openCount = countOpen(latestRun.findings);
+    const openCount = countOpenItems(latestRun.findings);
     steps.push({
       id: 'posted',
       label: openCount > 0 ? 'Pending post' : 'Nothing to post',

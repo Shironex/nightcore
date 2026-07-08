@@ -14,6 +14,7 @@
  * and collapses into the `stale` lifecycle state.
  */
 import type { PrFixState, PrReviewRun, PrStatus } from '@/lib/bridge';
+import { countOpenItems } from '@/lib/scan-run/results';
 
 import type { ReviewStream } from './prreview-stream';
 
@@ -158,11 +159,6 @@ function isFixInFlight(fix: PrFixState | null): fix is PrFixState {
   );
 }
 
-/** Count OPEN findings across either finding source (both carry `status`). */
-function countOpen(findings: ReadonlyArray<{ status: string }>): number {
-  return findings.filter((f) => f.status === 'open').length;
-}
-
 /** A posted verdict's friendly noun for the description line. */
 function postedVerdictText(verdict: string): string {
   switch (verdict) {
@@ -297,7 +293,7 @@ export function deriveReviewLifecycle(input: LifecycleInputs): ReviewLifecycle {
 
   // 6. Reviewed, not posted — the natural resting place of a fresh review.
   const findings = latestRun?.findings ?? stream?.findings ?? [];
-  const open = countOpen(findings);
+  const open = countOpenItems(findings);
   return {
     state: 'reviewed_pending_post',
     label: 'Reviewed',

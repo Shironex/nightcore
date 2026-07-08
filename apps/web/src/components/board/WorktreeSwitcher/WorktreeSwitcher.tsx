@@ -1,13 +1,14 @@
 import { LayersIcon } from '@/components/ui';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
-import { partitionWorktreeTabs, useWorktreeTabs } from './WorktreeSwitcher.hooks';
+import { useWorktreeTabs } from './WorktreeSwitcher.hooks';
 import {
   WorktreeCollapsedSelect,
   WorktreeTabButton,
   WorktreeTabWithActions,
 } from './WorktreeSwitcher.parts';
 import type { WorktreeSwitcherProps } from './WorktreeSwitcher.types';
+import { partitionWorktreeTabs } from './WorktreeSwitcher.utils';
 
 /** The worktree switcher: a segment bar above the board with a Main
  *  tab plus one tab per live worktree. Selecting a tab sets the active worktree
