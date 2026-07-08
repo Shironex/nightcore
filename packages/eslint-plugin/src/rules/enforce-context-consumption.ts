@@ -8,7 +8,7 @@ import {
 } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'enforce-context-consumption';
+const RULE_NAME = 'enforce-context-consumption';
 
 /** One registered context: the hook that reads it, the feature it is enforced
  *  in, and the prop names it supplies. */

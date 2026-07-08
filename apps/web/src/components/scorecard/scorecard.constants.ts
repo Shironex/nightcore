@@ -17,10 +17,7 @@ import {
 import type {
   ScorecardDimension,
   ScorecardGrade,
-  ScorecardRun,
 } from '@/lib/bridge';
-
-import type { RunStatus } from './scorecard.types';
 
 /** Every dimension, in display order. */
 export const ALL_DIMENSIONS: ScorecardDimension[] = [
@@ -91,10 +88,4 @@ export const GRADE_META: Record<ScorecardGrade, GradeMeta> = {
   },
 };
 
-/** Map a persisted run's status string to the view's union. */
-export function runStatusOf(run: ScorecardRun | null): RunStatus {
-  if (run === null) return 'idle';
-  if (run.status === 'running') return 'running';
-  if (run.status === 'failed') return 'failed';
-  return 'completed';
-}
+

@@ -20,8 +20,8 @@ import {
   Segmented,
   SparkIcon,
   Toggle,
-  useModelCatalog,
 } from '@/components/ui';
+import { useModelCatalog } from '@/components/ui/ModelSelect';
 import {
   type AppInfo,
   PROVIDER_LABEL,

@@ -42,8 +42,6 @@ import type {
   RunStatus,
 } from './harness.types';
 
-export type { CategoryProgress } from './harness.types';
-
 /** The stable `reason` carried on the terminal `harness-scan-failed` event — lets
  *  RESULTS tell a user cancel (`aborted`) apart from a real failure. */
 export type HarnessFailureReason = Extract<

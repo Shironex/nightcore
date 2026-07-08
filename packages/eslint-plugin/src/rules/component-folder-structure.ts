@@ -11,7 +11,7 @@ import {
 } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'component-folder-structure';
+const RULE_NAME = 'component-folder-structure';
 
 export interface ComponentFolderStructureOptions {
   readonly ignorePaths?: readonly string[];

@@ -4,7 +4,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { getBasename } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'max-hook-return-surface';
+const RULE_NAME = 'max-hook-return-surface';
 
 export interface MaxHookReturnSurfaceOptions {
   readonly max?: number;

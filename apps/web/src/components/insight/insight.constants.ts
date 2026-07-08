@@ -17,10 +17,7 @@ import type {
   AnalysisScope,
   FindingCategory,
   FindingEffort,
-  InsightRun,
 } from '@/lib/bridge';
-
-import type { RunStatus } from './insight.types';
 
 /** Every category, in display order. */
 export const ALL_CATEGORIES: FindingCategory[] = [
@@ -72,10 +69,4 @@ export const SCOPE_META: Record<AnalysisScope, { label: string; hint: string }> 
   diff: { label: 'Changes', hint: 'Only files changed since the last commit' },
 };
 
-/** Map a persisted run's status string to the view's union. */
-export function runStatusOf(run: InsightRun | null): RunStatus {
-  if (run === null) return 'idle';
-  if (run.status === 'running') return 'running';
-  if (run.status === 'failed') return 'failed';
-  return 'completed';
-}
+

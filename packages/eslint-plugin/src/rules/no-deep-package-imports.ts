@@ -2,7 +2,7 @@ import type { TSESTree } from '@typescript-eslint/utils';
 
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'no-deep-package-imports';
+const RULE_NAME = 'no-deep-package-imports';
 
 type MessageIds = 'deepImport';
 

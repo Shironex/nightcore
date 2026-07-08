@@ -6,7 +6,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { getFeatureName } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'no-cross-feature-imports';
+const RULE_NAME = 'no-cross-feature-imports';
 
 export interface NoCrossFeatureImportsOptions {
   readonly sharedFeatures?: readonly string[];

@@ -1,5 +1,6 @@
 /** Barrel module re-exporting every shared UI primitive and its public types. */
 export { Badge } from './Badge';
+export type { BadgeProps, BadgeTone } from './Badge/Badge.types';
 export { BranchPicker } from './BranchPicker';
 export type { BranchPickerProps } from './BranchPicker/BranchPicker.types';
 export { BrandMark } from './BrandMark';
@@ -56,8 +57,8 @@ export { Markdown } from './Markdown';
 export type { MarkdownProps } from './Markdown/Markdown.types';
 export { Menu } from './Menu';
 export type { MenuItem, MenuProps } from './Menu/Menu.types';
-export type { ModalProps } from './Modal';
 export { Modal, useLastPresent, useModal } from './Modal';
+export type { ModalProps } from './Modal/Modal.types';
 /** @deprecated Migrated to `ModelSelectField` / `ModelSelect` (B5). This thin
  *  adapter re-exports the combobox picker for one deprecation cycle, then is
  *  deleted. Prefer `ModelSelectField` (live-wired) for new surfaces. */
@@ -69,7 +70,7 @@ export type {
   ModelSelection,
   ModelSelectProps,
 } from './ModelSelect';
-export { ModelSelect, STATIC_MODEL_CATALOG_DATA, useModelCatalog } from './ModelSelect';
+export { ModelSelect } from './ModelSelect';
 export type { ModelSelectFieldProps } from './ModelSelectField';
 export {
   LIVE_MODEL_CATALOG_DATA,
@@ -106,7 +107,6 @@ export {
   getProviderIconForModel,
   inferProviderFromModel,
   knownProviderFrom,
-  PROVIDER_GLYPHS,
   providerGlyphFor,
   ProviderIcon,
   providerLabel,
@@ -132,7 +132,7 @@ export type { Toast, ToastApi, ToastTone } from './Toast';
 export { ToastProvider, useToast } from './Toast';
 export { Toggle } from './Toggle';
 export type { ToggleProps } from './Toggle/Toggle.types';
-export type { ToolbarProps } from './Toolbar';
 export { Toolbar } from './Toolbar';
+export type { ToolbarProps } from './Toolbar/Toolbar.types';
 export type { ToolbarOptionProps } from './ToolbarOption';
 export { ToolbarOption } from './ToolbarOption';
