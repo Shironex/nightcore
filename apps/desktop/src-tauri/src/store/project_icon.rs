@@ -85,9 +85,7 @@ fn resolve_icon_path(project_path: &str, rel: &str) -> Result<PathBuf, String> {
             .ok_or_else(|| "invalid custom icon path".to_string())?,
     );
     let images = images_dir(project_path);
-    let images_canonical = images
-        .canonicalize()
-        .unwrap_or(images.clone());
+    let images_canonical = images.canonicalize().unwrap_or(images.clone());
     if !file.starts_with(&images_canonical) {
         return Err("custom icon path escapes images dir".to_string());
     }
@@ -140,7 +138,9 @@ pub fn persist(
     let dir = images_dir(project_path);
     std::fs::create_dir_all(&dir).map_err(|e| format!("cannot create images dir: {e}"))?;
 
-    let base = original_name.map(sanitize_base).unwrap_or_else(|| "icon".to_string());
+    let base = original_name
+        .map(sanitize_base)
+        .unwrap_or_else(|| "icon".to_string());
     let ts = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis())
@@ -148,8 +148,7 @@ pub fn persist(
     let filename = format!("{base}-{ts}.{}", ext_for(fmt));
     let rel = format!(".nightcore/images/{filename}");
     let abs = dir.join(&filename);
-    crate::store::write_atomic(&abs, &bytes)
-        .map_err(|e| format!("cannot write icon: {e}"))?;
+    crate::store::write_atomic(&abs, &bytes).map_err(|e| format!("cannot write icon: {e}"))?;
     Ok(rel)
 }
 

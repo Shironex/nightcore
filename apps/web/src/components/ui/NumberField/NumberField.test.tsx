@@ -30,6 +30,6 @@ test('blur commits typed value', async () => {
   );
   const input = screen.getByRole('spinbutton', { name: 'Token limit' });
   await input.fill('1024');
-  await input.element().blur();
+  (input.element() as HTMLInputElement).blur();
   expect(onCommit).toHaveBeenCalledWith(1024);
 });

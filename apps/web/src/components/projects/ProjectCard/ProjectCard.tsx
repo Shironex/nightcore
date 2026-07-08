@@ -66,7 +66,7 @@ export function ProjectCard({ project, onOpen, onEdit, onDelete }: ProjectCardPr
             }
             items={[
               ...(onEdit !== undefined
-                ? [{ label: 'Edit project', icon: <EditIcon size={14} />, onClick: onEdit }]
+                ? [{ label: 'Edit project', icon: <EditIcon size={14} />, onClick: () => onEdit(project.id) }]
                 : []),
               ...(onDelete !== undefined
                 ? [

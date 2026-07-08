@@ -1,15 +1,18 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fn } from 'storybook/test';
 
+import type { Project } from '@/lib/bridge';
+
 import type { NavItem } from '../AppShell/AppShell.types';
 import { Sidebar } from './Sidebar';
+import type { ProjectSwitcherSurface } from './Sidebar.types';
 
 const NAV: NavItem[] = [
   { view: 'board', label: 'Kanban Board', hint: 'K', icon: '▦', group: 'project' },
   { view: 'settings', label: 'Settings', hint: 'S', icon: '⚙', group: 'settings' },
 ];
 
-const PROJECTS = [
+const PROJECTS: Project[] = [
   {
     id: 'nightcore',
     name: 'nightcore',
@@ -32,9 +35,9 @@ const PROJECTS = [
   },
 ];
 
-const switcher = {
+const switcher: ProjectSwitcherSurface = {
   projects: PROJECTS,
-  active: PROJECTS[0],
+  active: PROJECTS[0] ?? null,
   switcherOpen: false,
   onToggleSwitcher: fn(),
   onPickProject: fn(),

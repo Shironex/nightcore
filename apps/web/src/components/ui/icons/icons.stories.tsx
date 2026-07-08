@@ -57,7 +57,7 @@ import {
   VerifiedIcon,
 } from './icons';
 
-const GLYPHS: { name: string; Icon: typeof CheckIcon }[] = [
+const GLYPHS: { name: string; Icon: typeof CheckIcon | typeof GithubIcon }[] = [
   { name: 'Agents', Icon: AgentsIcon },
   { name: 'Alert', Icon: AlertIcon },
   { name: 'Bell', Icon: BellIcon },

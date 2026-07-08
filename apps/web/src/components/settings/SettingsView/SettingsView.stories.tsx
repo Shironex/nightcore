@@ -20,6 +20,7 @@ const settings: Settings = {
   contextPackEnabled: true,
   autoCommitOnVerified: false,
   sandboxSessions: false,
+  sidebarStyle: 'unified',
   projectOverrides: {
     nightcore: { defaultModel: 'claude-haiku-4-5' },
   },
