@@ -4,9 +4,12 @@ import {
   CloseIcon,
   FolderIcon,
   IconButton,
+  IconPicker,
   IconTile,
   Modal,
+  ProjectIcon,
   Spinner,
+  UploadIcon,
 } from '@/components/ui';
 
 import { useNewProjectDialog } from './NewProjectDialog.hooks';
@@ -47,8 +50,18 @@ export function NewProjectDialog({
   gitState = 'unknown',
   onInitGit,
 }: NewProjectDialogProps) {
-  const { name, model, concurrency, canCreate, busy, setName, setModel, setConcurrency, create } =
-    useNewProjectDialog({ open, models, onCreate, folder, gitState });
+  const dialog = useNewProjectDialog({ open, models, onCreate, folder, gitState });
+  const {
+    name,
+    model,
+    concurrency,
+    canCreate,
+    busy,
+    setName,
+    setModel,
+    setConcurrency,
+    create,
+  } = dialog;
 
   // Esc / click-outside close — but never while a create is in flight, to guard
   // against double-submit. The shared Modal adds the focus trap + restore.
@@ -60,7 +73,7 @@ export function NewProjectDialog({
       label="New project"
       onClose={close}
       overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-      panelClassName="w-[480px] max-w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+      panelClassName="flex max-h-[calc(100vh-3rem)] w-[520px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
     >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
           <IconTile size="sm">
@@ -77,7 +90,7 @@ export function NewProjectDialog({
           </IconButton>
         </div>
 
-        <div className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-4 overflow-y-auto p-5">
           <div>
             <label className={FIELD_LABEL} htmlFor="np-folder">
               Repository folder
@@ -168,6 +181,68 @@ export function NewProjectDialog({
                 className={`${FIELD_INPUT} font-mono`}
               />
             </div>
+          </div>
+
+          <div className="flex flex-col gap-2">
+            <span className={FIELD_LABEL}>Project icon</span>
+            <div className="flex items-center gap-3">
+              <div className="flex h-12 w-12 items-center justify-center rounded-[10px] border border-border bg-white/[0.03]">
+                <ProjectIcon
+                  icon={dialog.pendingImage !== null ? null : dialog.icon}
+                  imageUrl={dialog.pendingImage?.preview ?? null}
+                  size={28}
+                />
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant="ghost"
+                  type="button"
+                  onClick={() => dialog.fileRef.current?.click()}
+                >
+                  <UploadIcon size={14} />
+                  Upload
+                </Button>
+                {dialog.pendingImage !== null && (
+                  <Button
+                    variant="ghost"
+                    type="button"
+                    onClick={() => {
+                      dialog.setPendingImage(null);
+                      if (dialog.fileRef.current) dialog.fileRef.current.value = '';
+                    }}
+                  >
+                    <CloseIcon size={14} />
+                    Remove image
+                  </Button>
+                )}
+              </div>
+              <input
+                ref={dialog.fileRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp,image/gif"
+                className="hidden"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) void dialog.handleUpload(file);
+                }}
+              />
+            </div>
+            <p className="text-[11px] text-muted-foreground">
+              {dialog.acceptedLabel} · max 5 MB
+            </p>
+            <IconPicker
+              selectedIcon={dialog.pendingImage !== null ? null : dialog.icon}
+              onSelectIcon={(next) => {
+                dialog.setIcon(next);
+                dialog.setPendingImage(null);
+                if (dialog.fileRef.current) dialog.fileRef.current.value = '';
+              }}
+            />
+            {dialog.error !== null && (
+              <p className="text-[12.5px] text-destructive" role="alert">
+                {dialog.error}
+              </p>
+            )}
           </div>
         </div>
 

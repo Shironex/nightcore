@@ -1,5 +1,5 @@
 import { composeStories } from '@storybook/react-vite';
-import { expect, test } from 'vitest';
+import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
 import * as stories from './ProjectRail.stories';
@@ -11,4 +11,16 @@ test('renders project rail landmark', async () => {
   await expect
     .element(screen.getByRole('complementary', { name: 'Projects' }))
     .toBeInTheDocument();
+});
+
+test('requests removal from a rail-project context menu', async () => {
+  const onRemoveProject = vi.fn();
+  const screen = render(<Default switcher={{ ...Default.args.switcher, onRemoveProject }} />);
+
+  screen.getByRole('button', { name: 'nightcore' }).element().dispatchEvent(
+    new MouseEvent('contextmenu', { bubbles: true, cancelable: true }),
+  );
+  await screen.getByRole('menuitem', { name: 'Remove from Nightcore' }).click();
+
+  expect(onRemoveProject).toHaveBeenCalledWith('p1');
 });

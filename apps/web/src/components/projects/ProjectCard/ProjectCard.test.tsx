@@ -26,14 +26,11 @@ test('the kebab opens a menu instead of deleting immediately', async () => {
   expect(onDelete).not.toHaveBeenCalled();
 });
 
-test('Remove routes through a confirmation before deleting', async () => {
+test('Remove requests the shared project confirmation', async () => {
   const onDelete = vi.fn();
   const screen = render(<Live onDelete={onDelete} />);
   await screen.getByRole('button', { name: 'Project menu' }).click();
   await screen.getByRole('menuitem', { name: 'Remove' }).click();
-  // The destructive action is not fired until the dialog is confirmed.
-  expect(onDelete).not.toHaveBeenCalled();
-  await screen.getByRole('button', { name: 'Remove' }).click();
   expect(onDelete).toHaveBeenCalledWith('nightcore');
 });
 

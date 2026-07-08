@@ -106,6 +106,7 @@ export function AppShell() {
     worktrees,
     confirm,
     editProject,
+    projectRemoval,
     onboarding,
     showSplash,
     isTauri,
@@ -143,7 +144,7 @@ export function AppShell() {
         onInitGit={newProject.initGit}
         onCreateProject={async (name) => {
           if (newProject.folder === null) return;
-          await newProject.create(newProject.folder, name);
+          await newProject.createDefault(name);
         }}
         onSkip={() => {
           onboarding.dismiss();
@@ -185,7 +186,7 @@ export function AppShell() {
           if (p !== undefined) editProject.openEdit(p);
         }}
         onRename={registry.rename}
-        onDelete={registry.remove}
+        onDelete={projectRemoval.request}
         onNewProject={routing.openNewProject}
       />
     </Suspense>
@@ -216,7 +217,7 @@ export function AppShell() {
               onPickProject: registry.activate,
               onNewProject: routing.openNewProject,
               onEditProject: editProject.openEdit,
-              onRemoveProject: registry.remove,
+              onRemoveProject: projectRemoval.request,
             }}
             view={view}
             nav={APP_SHELL_NAV}
@@ -419,10 +420,7 @@ export function AppShell() {
         gitState={newProject.gitState}
         onChooseFolder={newProject.pickFolder}
         onInitGit={newProject.initGit}
-        onCreate={(draft) => {
-          if (draft.folder === null) return;
-          void newProject.create(draft.folder, draft.name);
-        }}
+        onCreate={newProject.create}
         onClose={() => {
           routing.closeNewProject();
           newProject.reset();
@@ -443,7 +441,7 @@ export function AppShell() {
         </Suspense>
       )}
 
-      <AppShellOverlays confirm={confirm} editProject={editProject} />
+      <AppShellOverlays confirm={confirm} editProject={editProject} projectRemoval={projectRemoval} />
     </BoardChromeProvider>
     </WorktreesProvider>
     </TaskActionsProvider>

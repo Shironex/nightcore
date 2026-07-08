@@ -1,7 +1,6 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
-import { portaledSurface } from '../../../../.storybook/test-utils';
 import { ProjectCard } from './ProjectCard';
 import type { ProjectSummary } from './ProjectCard.types';
 
@@ -48,13 +47,13 @@ export const Menu: Story = {
   },
 };
 
-/** Play test: Remove opens a confirmation that clarifies files are kept. */
-export const ConfirmRemove: Story = {
-  play: async ({ canvasElement }) => {
+/** Play test: Remove delegates to the shell's shared confirmation controller. */
+export const RequestRemove: Story = {
+  play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Project menu' }));
     await userEvent.click(canvas.getByRole('menuitem', { name: /remove/i }));
-    await expect(portaledSurface().getByRole('alertdialog', { name: /remove project/i })).toBeInTheDocument();
+    await expect(args.onDelete).toHaveBeenCalledWith('nightcore');
   },
 };
 

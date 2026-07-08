@@ -42,10 +42,7 @@ export const CreatesProject: Story = {
   play: async ({ args }) => {
     const canvas = portaledSurface();
     const create = canvas.getByRole('button', { name: /create project/i });
-    // Folder present but name empty → still disabled.
-    await expect(create).toBeDisabled();
-
-    await userEvent.type(canvas.getByLabelText('Project name'), 'my-project');
+    await expect(canvas.getByLabelText('Project name')).toHaveValue('my-project');
     await expect(create).toBeEnabled();
     await userEvent.click(create);
 

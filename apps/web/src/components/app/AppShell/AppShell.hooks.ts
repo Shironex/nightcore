@@ -31,6 +31,7 @@ import { useOnboardingGate } from './hooks/useOnboardingGate.hooks';
 import { usePermissions, useQuestions } from './hooks/useParkedPrompts.hooks';
 import { usePrLifecycle } from './hooks/usePrLifecycle.hooks';
 import { useProjectRegistry } from './hooks/useProjectRegistry.hooks';
+import { useProjectRemoval } from './hooks/useProjectRemoval.hooks';
 import { useRouting } from './hooks/useRouting.hooks';
 import { useSettingsData } from './hooks/useSettingsData.hooks';
 import { useSplash } from './hooks/useSplash.hooks';
@@ -122,6 +123,7 @@ export interface AppShellState {
    *  rendered by AppShell as a single `ConfirmDialog`. */
   confirm: BoardActions['confirm'];
   editProject: ReturnType<typeof useEditProject>;
+  projectRemoval: ReturnType<typeof useProjectRemoval>;
   onboarding: ReturnType<typeof useOnboardingGate>;
   showSplash: boolean;
   isTauri: boolean;
@@ -149,6 +151,7 @@ export function useAppShell(): AppShellState {
   const showSplash = useSplash();
   const routing = useRouting();
   const registry = useProjectRegistry(toast);
+  const projectRemoval = useProjectRemoval(registry.projects, registry.remove);
   const onboarding = useOnboardingGate(registry.projects.length);
   const editProject = useEditProject(toast);
   const settings = useSettingsData(toast);
@@ -255,6 +258,7 @@ export function useAppShell(): AppShellState {
     worktrees,
     confirm: boardActions.confirm,
     editProject,
+    projectRemoval,
     onboarding,
     showSplash,
     isTauri: isTauri(),

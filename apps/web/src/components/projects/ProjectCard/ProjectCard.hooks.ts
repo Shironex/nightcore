@@ -1,38 +1,15 @@
-/** @file Local overlay state hook for a ProjectCard. */
-import { useCallback, useState } from 'react';
+import { useCallback } from 'react';
 
 import type { ProjectCardProps } from './ProjectCard.types';
 
-/** Which transient overlay (if any) the card has open. */
-type Overlay = 'none' | 'confirm-remove';
-
-/** State and actions returned by {@link useProjectCard}. */
-export interface ProjectCardState {
-  overlay: Overlay;
-  openRemove: () => void;
-  closeOverlay: () => void;
-  confirmRemove: () => void;
-}
-
-/** Local overlay state for a ProjectCard remove confirmation. */
+/** Stable adapter from the card's menu action to the shared removal request. */
 export function useProjectCard({
   project,
   onDelete,
-}: Pick<ProjectCardProps, 'project' | 'onDelete'>): ProjectCardState {
-  const [overlay, setOverlay] = useState<Overlay>('none');
-
-  const openRemove = useCallback(() => setOverlay('confirm-remove'), []);
-  const closeOverlay = useCallback(() => setOverlay('none'), []);
-
-  const confirmRemove = useCallback(() => {
+}: Pick<ProjectCardProps, 'project' | 'onDelete'>) {
+  const requestRemove = useCallback(() => {
     onDelete?.(project.id);
-    setOverlay('none');
-  }, [project.id, onDelete]);
+  }, [onDelete, project.id]);
 
-  return {
-    overlay,
-    openRemove,
-    closeOverlay,
-    confirmRemove,
-  };
+  return { requestRemove };
 }

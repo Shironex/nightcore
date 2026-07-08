@@ -3,7 +3,6 @@ import {
   Badge,
   Card,
   ClockIcon,
-  ConfirmDialog,
   DotsIcon,
   EditIcon,
   IconButton,
@@ -76,7 +75,7 @@ export function ProjectCard({ project, onOpen, onEdit, onDelete }: ProjectCardPr
                     {
                       label: 'Remove',
                       icon: <TrashIcon size={14} />,
-                      onClick: card.openRemove,
+                      onClick: card.requestRemove,
                       destructive: true,
                     },
                   ]
@@ -107,21 +106,6 @@ export function ProjectCard({ project, onOpen, onEdit, onDelete }: ProjectCardPr
         <span>{project.activity}</span>
       </div>
 
-      <ConfirmDialog
-        open={card.overlay === 'confirm-remove'}
-        title="Remove project?"
-        message={
-          <>
-            <span className="font-medium text-foreground">{project.name}</span> will be
-            removed from Nightcore. This does not delete the repository or any files on
-            disk — only its entry here.
-          </>
-        }
-        confirmLabel="Remove"
-        destructive
-        onConfirm={card.confirmRemove}
-        onCancel={card.closeOverlay}
-      />
     </Card>
   );
 }

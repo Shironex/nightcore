@@ -6,7 +6,8 @@ import type { AppShellState } from './AppShell.hooks';
 export function AppShellOverlays({
   confirm,
   editProject,
-}: Pick<AppShellState, 'confirm' | 'editProject'>) {
+  projectRemoval,
+}: Pick<AppShellState, 'confirm' | 'editProject' | 'projectRemoval'>) {
   return (
     <>
       <ConfirmDialog
@@ -42,6 +43,28 @@ export function AppShellOverlays({
         open={editProject.editOpen}
         onClose={editProject.closeEdit}
         onSave={editProject.saveEdit}
+      />
+
+      <ConfirmDialog
+        open={projectRemoval.pending !== null}
+        title="Remove project?"
+        message={
+          projectRemoval.pending === null ? (
+            ''
+          ) : (
+            <>
+              <span className="font-medium text-foreground">
+                {projectRemoval.pending.name}
+              </span>{' '}
+              will be removed from Nightcore. This does not delete the repository or
+              any files on disk — only its entry here.
+            </>
+          )
+        }
+        confirmLabel="Remove"
+        destructive
+        onConfirm={projectRemoval.confirm}
+        onCancel={projectRemoval.cancel}
       />
     </>
   );

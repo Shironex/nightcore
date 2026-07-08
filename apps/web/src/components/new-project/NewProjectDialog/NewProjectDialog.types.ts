@@ -6,6 +6,12 @@ export interface NewProjectDraft {
   name: string;
   model: string;
   concurrency: number;
+  icon: string | null;
+  customImage: {
+    format: string;
+    data: string;
+    filename: string;
+  } | null;
 }
 
 /** Git-repo status for the chosen folder. `create_project` requires `valid`. */
