@@ -12,10 +12,10 @@ import { useProjectIconProps } from '@/components/ui/ProjectIcon/ProjectIcon.hoo
 
 import type { ProjectSwitcherRowProps, SidebarUnifiedProps } from './SidebarUnified.types';
 
-function ProjectSwitcherRow({ project, onPick, onEdit }: ProjectSwitcherRowProps) {
+function ProjectSwitcherRow({ project, onPick, onEdit, onRemove }: ProjectSwitcherRowProps) {
   const iconProps = useProjectIconProps(project);
   return (
-    <ProjectContextMenu onEdit={onEdit}>
+    <ProjectContextMenu onEdit={onEdit} onRemove={onRemove}>
       <button
         type="button"
         onClick={onPick}
@@ -37,13 +37,24 @@ function ProjectSwitcherRow({ project, onPick, onEdit }: ProjectSwitcherRowProps
 
 /** Unified sidebar header: project dropdown with icons + context menu. */
 export function SidebarUnified({ switcher, collapsed }: SidebarUnifiedProps) {
-  const { projects, active, switcherOpen, onToggleSwitcher, onPickProject, onNewProject, onEditProject } =
-    switcher;
+  const {
+    projects,
+    active,
+    switcherOpen,
+    onToggleSwitcher,
+    onPickProject,
+    onNewProject,
+    onEditProject,
+    onRemoveProject,
+  } = switcher;
   const activeIcon = useProjectIconProps(active ?? { id: '', icon: null, customIconPath: null });
 
   return (
     <div className="relative px-3 pb-0 pt-2">
-      <ProjectContextMenu onEdit={() => active && onEditProject(active)}>
+      <ProjectContextMenu
+        onEdit={() => active && onEditProject(active)}
+        onRemove={active === null ? undefined : () => onRemoveProject(active.id)}
+      >
         <button
           type="button"
           onClick={onToggleSwitcher}
@@ -96,6 +107,7 @@ export function SidebarUnified({ switcher, collapsed }: SidebarUnifiedProps) {
                 project={p}
                 onPick={() => onPickProject(p.id)}
                 onEdit={() => onEditProject(p)}
+                onRemove={() => onRemoveProject(p.id)}
               />
             ))}
             <div className="my-1.5 mx-1 h-px bg-border" />

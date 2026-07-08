@@ -26,6 +26,7 @@ const meta = {
       onPickProject: fn(),
       onNewProject: fn(),
       onEditProject: fn(),
+      onRemoveProject: fn(),
     },
     collapsed: false,
   },

@@ -170,7 +170,7 @@ export function NavSidebar({
 
   return (
     <aside
-      className="relative flex flex-col border-r border-border bg-sidebar transition-[width] duration-150"
+      className="relative mt-1.5 flex flex-col border-r border-t border-border bg-sidebar transition-[width] duration-150"
       style={{ width: collapsed ? 66 : 244, flex: 'none' }}
     >
       <SidebarCollapseToggle collapsed={collapsed} onToggle={onToggleCollapsed} />

@@ -43,6 +43,7 @@ const switcher: ProjectSwitcherSurface = {
   onPickProject: fn(),
   onNewProject: fn(),
   onEditProject: fn(),
+  onRemoveProject: fn(),
 };
 
 const meta = {

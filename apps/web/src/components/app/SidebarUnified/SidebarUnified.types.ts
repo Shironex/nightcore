@@ -11,4 +11,5 @@ export interface ProjectSwitcherRowProps {
   project: import('@/lib/bridge').Project;
   onPick: () => void;
   onEdit: () => void;
+  onRemove: () => void;
 }

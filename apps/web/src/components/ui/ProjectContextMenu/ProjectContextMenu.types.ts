@@ -4,4 +4,5 @@ import type { ReactNode } from 'react';
 export interface ProjectContextMenuProps {
   children: ReactNode;
   onEdit: () => void;
+  onRemove?: () => void;
 }

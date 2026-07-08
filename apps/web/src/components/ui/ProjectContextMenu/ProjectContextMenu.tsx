@@ -1,9 +1,9 @@
-import { EditIcon } from '../icons/icons';
+import { EditIcon, TrashIcon } from '../icons/icons';
 import { useProjectContextMenu } from './ProjectContextMenu.hooks';
 import type { ProjectContextMenuProps } from './ProjectContextMenu.types';
 
-/** Right-click menu with a single "Edit name & icon" entry (v1 scope). */
-export function ProjectContextMenu({ children, onEdit }: ProjectContextMenuProps) {
+/** Right-click menu for project row actions. */
+export function ProjectContextMenu({ children, onEdit, onRemove }: ProjectContextMenuProps) {
   const menu = useProjectContextMenu();
 
   return (
@@ -34,6 +34,23 @@ export function ProjectContextMenu({ children, onEdit }: ProjectContextMenuProps
             <EditIcon size={14} />
             Edit name &amp; icon
           </button>
+          {onRemove !== undefined && (
+            <>
+              <div className="my-1 h-px bg-border" />
+              <button
+                type="button"
+                role="menuitem"
+                className="flex w-full items-center gap-2 px-3 py-2 text-left text-[12.5px] text-destructive hover:bg-destructive/10"
+                onClick={() => {
+                  menu.close();
+                  onRemove();
+                }}
+              >
+                <TrashIcon size={14} />
+                Remove from Nightcore
+              </button>
+            </>
+          )}
         </div>
       )}
     </div>

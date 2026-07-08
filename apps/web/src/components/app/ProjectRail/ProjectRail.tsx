@@ -15,15 +15,17 @@ function RailProjectButton({
   active,
   onPick,
   onEdit,
+  onRemove,
 }: {
   project: ProjectRailProps['switcher']['projects'][number];
   active: boolean;
   onPick: () => void;
   onEdit: () => void;
+  onRemove: () => void;
 }) {
   const iconProps = useProjectIconProps(project);
   return (
-    <ProjectContextMenu onEdit={onEdit}>
+    <ProjectContextMenu onEdit={onEdit} onRemove={onRemove}>
       <button
         type="button"
         title={project.name}
@@ -48,11 +50,12 @@ export function ProjectRail({
   runningCount,
   onGotoProjects,
 }: ProjectRailProps) {
-  const { projects, active, onPickProject, onNewProject, onEditProject } = switcher;
+  const { projects, active, onPickProject, onNewProject, onEditProject, onRemoveProject } =
+    switcher;
 
   return (
     <aside
-      className="flex w-16 flex-none flex-col items-center border-r border-border bg-sidebar py-3"
+      className="mt-1.5 flex w-16 flex-none flex-col items-center border-r border-t border-border bg-sidebar py-3"
       aria-label="Projects"
     >
       <button
@@ -65,7 +68,7 @@ export function ProjectRail({
         <BrandMark size={28} />
       </button>
 
-      <div className="flex min-h-0 flex-1 flex-col items-center gap-1.5 overflow-y-auto px-1.5">
+      <div className="flex min-h-0 flex-1 flex-col items-center gap-1.5 overflow-y-auto p-1.5">
         {projects.map((p) => (
           <RailProjectButton
             key={p.id}
@@ -73,6 +76,7 @@ export function ProjectRail({
             active={p.id === active?.id}
             onPick={() => onPickProject(p.id)}
             onEdit={() => onEditProject(p)}
+            onRemove={() => onRemoveProject(p.id)}
           />
         ))}
         <IconButton label="New project" onClick={onNewProject}>

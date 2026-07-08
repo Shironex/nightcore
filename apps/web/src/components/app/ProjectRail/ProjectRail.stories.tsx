@@ -28,6 +28,7 @@ const meta = {
       onPickProject: fn(),
       onNewProject: fn(),
       onEditProject: fn(),
+      onRemoveProject: fn(),
     },
     runningCount: 0,
     onGotoProjects: fn(),

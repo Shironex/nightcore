@@ -216,6 +216,7 @@ export function AppShell() {
               onPickProject: registry.activate,
               onNewProject: routing.openNewProject,
               onEditProject: editProject.openEdit,
+              onRemoveProject: registry.remove,
             }}
             view={view}
             nav={APP_SHELL_NAV}

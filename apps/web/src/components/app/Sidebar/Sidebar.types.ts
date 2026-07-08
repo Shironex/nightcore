@@ -13,6 +13,7 @@ export interface ProjectSwitcherSurface {
   onPickProject: (id: string) => void;
   onNewProject: () => void;
   onEditProject: (project: Project) => void;
+  onRemoveProject: (id: string) => void;
 }
 
 /** Props for the presentational {@link Sidebar}: the project list + active
