@@ -29,12 +29,12 @@ import { ALL_LENSES, LENS_META, VERDICT_META } from '../prreview.constants';
 import {
   FIX_RUNNING_TITLE,
   OWN_PR_TITLE,
-  sectionStatusMessage,
 } from '../prreview.constants';
 import type { ReviewVerdict } from '../prreview.types';
 import { ReviewFindings } from '../ReviewFindings';
 import { ReviewPosition } from '../ReviewPosition';
 import { ReviewTimeline } from '../ReviewTimeline';
+import { sectionStatusMessage } from './ReviewSection.hooks';
 import type { ReviewSectionProps } from './ReviewSection.types';
 
 /** The three post-review verdict buttons, in display order. */
