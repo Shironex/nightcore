@@ -43,7 +43,7 @@ import type { IMetaCtx, IMetaRule, IViolation } from '../types';
  * intentionally-whole files, not debt to pay down.
  */
 
-const HARD_CAP = 400;
+const HARD_CAP = 400; // cross-ref: 500 in eslint.config.mjs max-lines; 400 in web-file-size-ratchet.ts
 const ADVISORY_CAP = 350;
 
 /**

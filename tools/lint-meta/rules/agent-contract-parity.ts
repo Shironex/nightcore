@@ -1,4 +1,5 @@
 // @ts-check
+// Enforcement implementation detail (not core agent contract prose; self-exempt by design).
 import type { IMetaRule } from '../types';
 
 /**

@@ -1,4 +1,5 @@
 // @ts-check
+// Enforcement implementation detail (not core agent contract prose).
 import type { IMetaRule, IViolation } from '../types';
 
 /**
