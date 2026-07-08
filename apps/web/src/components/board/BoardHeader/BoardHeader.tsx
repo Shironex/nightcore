@@ -150,7 +150,7 @@ export function BoardHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex min-w-[220px] max-w-[420px] flex-1 items-center gap-2.5 rounded-[9px] border border-border bg-white/[0.02] px-3 py-2">
+          <div className="nc-focus-ring-host flex min-w-[220px] max-w-[420px] flex-1 items-center gap-2.5 rounded-[9px] border border-border bg-white/[0.02] px-3 py-2">
             <SearchIcon size={15} className="text-muted-foreground" />
             <input
               value={search}
