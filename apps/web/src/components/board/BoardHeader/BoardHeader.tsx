@@ -11,6 +11,7 @@ import {
   SearchIcon,
   SlidersIcon,
   Toolbar,
+  ToolbarOption,
 } from '@/components/ui';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
@@ -97,37 +98,24 @@ export function BoardHeader({
               />
               <span className="w-2.5 font-mono text-xs font-semibold">{concurrency}</span>
             </div>
-            <button
-              type="button"
-              onClick={onToggleAutoMode}
-              aria-pressed={autoMode}
-              title={autoMode ? 'Stop Auto Mode' : 'Start Auto Mode'}
-              className={`flex items-center gap-2.5 rounded-[9px] border px-3.5 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors ${
-                autoMode
-                  ? 'border-primary/55 bg-primary/[0.12]'
-                  : 'border-border bg-white/[0.02] hover:border-white/20'
-              }`}
-            >
-              <BoltIcon
-                size={14}
-                className={autoMode ? 'text-primary' : 'text-muted-foreground'}
-              />
-              <span>Auto Mode</span>
-              <span
-                className={`relative h-[17px] w-[30px] rounded-full transition-colors ${
-                  autoMode ? 'bg-primary' : 'bg-white/[0.12]'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 h-[13px] w-[13px] rounded-full bg-white transition-transform ${
-                    autoMode ? 'left-[14px]' : 'left-0.5'
-                  }`}
+            <ToolbarOption
+              label="Auto Mode"
+              icon={
+                <BoltIcon
+                  size={14}
+                  className={autoMode ? 'text-primary' : 'text-muted-foreground'}
                 />
-              </span>
-            </button>
-            <AutoModeOptions
-              autoCommitOnVerified={autoCommitOnVerified}
-              onAutoCommitChange={onAutoCommitChange}
+              }
+              on={autoMode}
+              onToggle={onToggleAutoMode}
+              title={autoMode ? 'Stop Auto Mode' : 'Start Auto Mode'}
+              settingsLabel="Auto Mode options"
+              settings={
+                <AutoModeOptions
+                  autoCommitOnVerified={autoCommitOnVerified}
+                  onAutoCommitChange={onAutoCommitChange}
+                />
+              }
             />
             <IconButton
               label="Refresh board & worktrees"

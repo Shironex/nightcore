@@ -112,3 +112,5 @@ export type { ToggleProps } from './Toggle';
 export { Toggle } from './Toggle';
 export type { ToolbarProps } from './Toolbar';
 export { Toolbar } from './Toolbar';
+export type { ToolbarOptionProps } from './ToolbarOption';
+export { ToolbarOption } from './ToolbarOption';
