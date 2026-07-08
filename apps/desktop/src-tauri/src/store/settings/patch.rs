@@ -9,7 +9,9 @@ use crate::task::RunMode;
 #[cfg(test)]
 use ts_rs::TS;
 
-use super::model::{resolve_sidebar_style, BoardAppearance, BoardBackgroundRef, McpServerEntry, Settings};
+use super::model::{
+    resolve_sidebar_style, BoardAppearance, BoardBackgroundRef, McpServerEntry, Settings,
+};
 
 /// A per-project override: any subset of the run-shaping fields. Absent fields
 /// fall back to the global value.
