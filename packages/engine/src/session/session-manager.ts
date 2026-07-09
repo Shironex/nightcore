@@ -95,6 +95,7 @@ export class SessionManager {
       config,
       apiKeyFallback: this.apiKeyFallback,
       emit: (event) => this.emit(event),
+      providers: this.providers,
       ...(logger !== undefined ? { logger } : {}),
     });
     // Seed the id counter past the highest persisted id so a restart never

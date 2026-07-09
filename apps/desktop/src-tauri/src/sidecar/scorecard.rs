@@ -53,6 +53,7 @@ pub async fn start_scorecard(
     dimensions: Vec<ScorecardDimension>,
     model: Option<String>,
     effort: Option<EffortLevel>,
+    provider_id: Option<String>,
 ) -> Result<String, String> {
     let ScanRunInit {
         project_path,
@@ -94,6 +95,7 @@ pub async fn start_scorecard(
     let command = SurfaceCommand::StartScorecard {
         run_id: run_id.clone(),
         project_path,
+        provider_id,
         dimensions,
         model,
         effort,

@@ -137,6 +137,7 @@ pub async fn start_issue_validation(
     linked_prs: Vec<IssueLinkedPrContext>,
     model: Option<String>,
     effort: Option<EffortLevel>,
+    provider_id: Option<String>,
 ) -> Result<String, String> {
     if issue_number == 0 {
         return Err("enter a valid issue number (a positive integer)".to_string());
@@ -226,6 +227,7 @@ pub async fn start_issue_validation(
     let command = SurfaceCommand::StartIssueValidation {
         run_id: run_id.clone(),
         project_path,
+        provider_id,
         issue_number,
         issue_title,
         issue_body,

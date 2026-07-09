@@ -78,6 +78,8 @@ pub enum SurfaceCommand {
     StartAnalysis {
         run_id: String,
         project_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         scope: AnalysisScope,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         changed_files: Option<Vec<String>>,
@@ -99,6 +101,8 @@ pub enum SurfaceCommand {
     StartHarnessScan {
         run_id: String,
         project_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         categories: Vec<ConventionCategory>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
@@ -117,6 +121,8 @@ pub enum SurfaceCommand {
     StartScorecard {
         run_id: String,
         project_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         dimensions: Vec<ScorecardDimension>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         model: Option<String>,
@@ -135,6 +141,8 @@ pub enum SurfaceCommand {
     StartPrReview {
         run_id: String,
         project_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         pr_number: u64,
         diff: String,
         changed_files: Vec<String>,
@@ -152,6 +160,8 @@ pub enum SurfaceCommand {
     StartIssueValidation {
         run_id: String,
         project_path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        provider_id: Option<String>,
         issue_number: u64,
         issue_title: String,
         issue_body: String,

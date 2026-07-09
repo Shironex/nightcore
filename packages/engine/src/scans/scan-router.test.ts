@@ -11,7 +11,18 @@ import {
   type SurfaceCommand,
 } from '@nightcore/contracts';
 
+import type { ProviderRegistry } from '../providers/provider-factory.js';
 import { ScanRouter } from './scan-router.js';
+
+const DUMMY_PROVIDERS: ProviderRegistry = {
+  forSession: () => ({
+    startSession: () => ({ run: async () => {}, interrupt: async () => {} }),
+    createProbeSession: () => ({}),
+    capabilities: () => ({}),
+    preflight: () => {},
+  }),
+  all: () => [],
+} as ProviderRegistry;
 
 /**
  * Pins that the ScanRouter OWNS the `runId`-keyed `issue-validation` family — that
@@ -64,6 +75,7 @@ describe('ScanRouter — issue-validation routing', () => {
       config: BASE_CONFIG,
       apiKeyFallback: false,
       emit: () => {},
+      providers: DUMMY_PROVIDERS,
     });
     expect(router.handles(startIssueValidation())).toBe(true);
     expect(router.handles(cancelIssueValidation)).toBe(true);
@@ -78,6 +90,7 @@ describe('ScanRouter — issue-validation routing', () => {
       config: BASE_CONFIG,
       apiKeyFallback: false,
       emit: (e) => events.push(e),
+      providers: DUMMY_PROVIDERS,
     });
 
     // The manager emits `issue-validation-started` synchronously at the top of its run,

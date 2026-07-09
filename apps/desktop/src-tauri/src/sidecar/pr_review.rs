@@ -121,6 +121,7 @@ pub async fn start_pr_review(
     lenses: Vec<ReviewLens>,
     model: Option<String>,
     effort: Option<EffortLevel>,
+    provider_id: Option<String>,
 ) -> Result<String, String> {
     // Reject an invalid PR number before doing any work (it arrives as a u64).
     if pr_number == 0 {
@@ -219,6 +220,7 @@ pub async fn start_pr_review(
     let command = SurfaceCommand::StartPrReview {
         run_id: run_id.clone(),
         project_path,
+        provider_id,
         pr_number,
         diff,
         changed_files,

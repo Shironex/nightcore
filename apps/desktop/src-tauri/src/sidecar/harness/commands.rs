@@ -85,6 +85,7 @@ pub async fn start_harness_scan(
     categories: Vec<ConventionCategory>,
     model: Option<String>,
     effort: Option<EffortLevel>,
+    provider_id: Option<String>,
 ) -> Result<String, String> {
     let ScanRunInit {
         project_path,
@@ -130,6 +131,7 @@ pub async fn start_harness_scan(
     let command = SurfaceCommand::StartHarnessScan {
         run_id: run_id.clone(),
         project_path,
+        provider_id,
         categories,
         model,
         effort,

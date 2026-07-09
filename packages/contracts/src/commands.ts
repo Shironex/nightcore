@@ -200,6 +200,8 @@ export const StartAnalysisCommand = z.object({
   runId: z.string(),
   /** Absolute project root the passes run in (read-only). */
   projectPath: z.string(),
+  /** Provider to run the analysis passes on. Absent ⇒ engine default (currently scans are Claude-only). */
+  providerId: z.string().optional(),
   scope: AnalysisScopeSchema,
   /** Repo-relative files to focus on in `diff` scope (resolved by the Rust core).
    *  Ignored in `repo` scope. */
@@ -238,6 +240,8 @@ export const StartHarnessScanCommand = z.object({
   runId: z.string(),
   /** Absolute project root the passes run in (read-only). */
   projectPath: z.string(),
+  /** Provider to run the scan passes on. Absent ⇒ engine default (scans are Claude-only until Codex/other providers grow read-only structured runners). */
+  providerId: z.string().optional(),
   /** The convention lenses to run (a subset of the 8). */
   categories: z.array(ConventionCategorySchema),
   /** Model override for the passes; absent ⇒ inherit the resolved config. */
@@ -271,6 +275,8 @@ export const StartScorecardCommand = z.object({
   runId: z.string(),
   /** Absolute project root the passes run in (read-only). */
   projectPath: z.string(),
+  /** Provider to run the grading passes on. Absent ⇒ engine default (scans are Claude-only until other providers implement read-only structured output). */
+  providerId: z.string().optional(),
   /** The dimensions to grade (a subset of the 10). */
   dimensions: z.array(ScorecardDimensionSchema),
   /** Model override for the passes; absent ⇒ inherit the resolved config. */
@@ -306,6 +312,8 @@ export const StartPrReviewCommand = z.object({
   runId: z.string(),
   /** Absolute project root the review sessions run in (read-only). */
   projectPath: z.string(),
+  /** Provider to run the review passes on. Absent ⇒ engine default (scans are Claude-only). */
+  providerId: z.string().optional(),
   /** The pull-request number to review (a positive integer). */
   prNumber: z.number().int().positive(),
   /** The `gh pr diff <n>` output, resolved + capped by the Rust core (the sidecar is
@@ -349,6 +357,8 @@ export const StartIssueValidationCommand = z.object({
    *  enforced at RUNTIME by the engine's PreToolUse workspace-confinement gate (the
    *  same bypass-proof seam the scan siblings rely on), not here. */
   projectPath: z.string(),
+  /** Provider to run the validation on. Absent ⇒ engine default (scans are Claude-only). */
+  providerId: z.string().optional(),
   /** The issue number being validated (a positive integer). */
   issueNumber: z.number().int().positive(),
   /** The issue title (GitHub-sourced, untrusted; length-capped). */

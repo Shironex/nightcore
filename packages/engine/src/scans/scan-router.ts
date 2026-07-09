@@ -18,6 +18,7 @@ import type {
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
+import type { ProviderRegistry } from '../providers/provider-factory.js';
 import { HarnessManager } from './harness/manager.js';
 import { AnalysisManager } from './insight/manager.js';
 import { IssueTriageScanManager } from './issue-triage/manager.js';
@@ -58,6 +59,8 @@ export interface ScanRouterOptions {
   emit: (event: NightcoreEvent) => void;
   /** Parent logger; each manager gets a named child (`analysis`, `harness`, …). */
   logger?: Logger;
+  /** Provider registry so scans can use the selected provider (claude or codex) instead of hardcoding the Claude runner. */
+  providers: ProviderRegistry;
 }
 
 export class ScanRouter {
@@ -68,35 +71,31 @@ export class ScanRouter {
   private readonly issueTriage: IssueTriageScanManager;
 
   constructor(options: ScanRouterOptions) {
-    const { config, apiKeyFallback, emit, logger } = options;
-    this.analysis = new AnalysisManager({
+    const { config, apiKeyFallback, emit, logger, providers } = options;
+    const baseDeps = {
       config,
       apiKeyFallback,
       emit,
+      providers,
+    };
+    this.analysis = new AnalysisManager({
+      ...baseDeps,
       ...(logger !== undefined ? { logger: logger.child('analysis') } : {}),
     });
     this.harness = new HarnessManager({
-      config,
-      apiKeyFallback,
-      emit,
+      ...baseDeps,
       ...(logger !== undefined ? { logger: logger.child('harness') } : {}),
     });
     this.scorecard = new ScorecardManager({
-      config,
-      apiKeyFallback,
-      emit,
+      ...baseDeps,
       ...(logger !== undefined ? { logger: logger.child('scorecard') } : {}),
     });
     this.prReview = new PrReviewScanManager({
-      config,
-      apiKeyFallback,
-      emit,
+      ...baseDeps,
       ...(logger !== undefined ? { logger: logger.child('pr-review') } : {}),
     });
     this.issueTriage = new IssueTriageScanManager({
-      config,
-      apiKeyFallback,
-      emit,
+      ...baseDeps,
       ...(logger !== undefined ? { logger: logger.child('issue-triage') } : {}),
     });
   }

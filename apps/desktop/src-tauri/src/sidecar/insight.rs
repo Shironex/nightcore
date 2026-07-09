@@ -53,6 +53,7 @@ pub async fn start_analysis(
     categories: Vec<FindingCategory>,
     model: Option<String>,
     effort: Option<EffortLevel>,
+    provider_id: Option<String>,
 ) -> Result<String, String> {
     let ScanRunInit {
         project_path,
@@ -108,6 +109,7 @@ pub async fn start_analysis(
     let command = SurfaceCommand::StartAnalysis {
         run_id: run_id.clone(),
         project_path,
+        provider_id,
         scope,
         changed_files: changed,
         categories,

@@ -3,12 +3,13 @@
  * (Insight, Readiness Scorecard, Harness).
  *
  * Every scan follows the SAME shape: emit a `*-started`, optionally derive some
- * deterministic pre-fanout context, fan out one READ-ONLY Claude pass per item
- * (category / dimension / lens) bounded-concurrent, parse+ground each pass with one
- * corrective retry, stream `*-item` progress events, accumulate usage/cost, then
- * finalize (dedup? synthesize? emit `*-completed`). Cancellation aborts every live
- * pass and surfaces a `*-failed` with reason `aborted`; any crash degrades to a
- * `*-failed` with reason `runner-crash` — never a rejected promise.
+ * deterministic pre-fanout context, fan out one READ-ONLY pass per item
+ * (category / dimension / lens) using the selected provider (Claude or Codex etc),
+ * bounded-concurrent, parse+ground each pass with one corrective retry, stream
+ * `*-item` progress events, accumulate usage/cost, then finalize (dedup? synthesize?
+ * emit `*-completed`). Cancellation aborts every live pass and surfaces a `*-failed`
+ * with reason `aborted`; any crash degrades to a `*-failed` with reason `runner-crash`
+ * — never a rejected promise.
  *
  * [`ScanManager`] owns that whole mechanism ONCE — the active-run registry, the
  * bounded pool, the per-item retry, the single `runOneSession` runner spin, the
@@ -32,6 +33,7 @@ import {
   SessionRunner,
   type SessionRunnerConfig,
 } from '../../providers/claude/session-runner.js';
+import type { ProviderRegistry } from '../../providers/provider-factory.js';
 import { buildRepoInventory } from './inventory.js';
 import { makeHeartbeat } from './observability.js';
 import { runPool } from './pool.js';
@@ -82,8 +84,9 @@ export interface ScanSessionRunner {
   interrupt(): Promise<void>;
 }
 
-/** Constructs the runner for one pass. Defaults to the real {@link SessionRunner};
- *  overridable in tests. */
+/** Constructs the runner for one pass. For Claude (and tests) this is typically the
+ *  real {@link SessionRunner}; for Codex and future providers the manager routes
+ *  via the ProviderRegistry instead. Overridable in tests. */
 export type ScanRunnerFactory = (
   config: SessionRunnerConfig,
   emit: (event: NightcoreEvent) => void,
@@ -99,6 +102,9 @@ export interface ScanManagerDeps {
   apiKeyFallback: boolean;
   emit: (event: NightcoreEvent) => void;
   logger?: Logger;
+  /** Provider registry (claude / codex etc). Used to create the correct read-only
+   *  session runner instead of always hardcoding the Claude one. */
+  providers?: ProviderRegistry;
   /** Override the per-pass runner construction (tests inject a fake). Defaults to
    *  the real `SessionRunner` so the production call site needs no change. */
   runnerFactory?: ScanRunnerFactory;
@@ -109,6 +115,7 @@ export interface ScanManagerDeps {
 export interface BaseScanCommand {
   runId: string;
   projectPath: string;
+  providerId?: string;
   model?: string;
   effort?: EffortLevel;
   maxConcurrency?: number;
@@ -423,40 +430,91 @@ export abstract class ScanManager<
 
     const parts = this.sessionConfig(command, preset);
     const effort = command.effort ?? this.deps.config.effort;
-    const runner = this.runnerFactory(
-      {
-        sessionId: -1,
-        prompt,
-        model: command.model ?? this.deps.config.model,
-        ...(effort ? { effort } : {}),
-        permissionMode: 'dontAsk',
-        permissionPolicy: this.deps.config.permissions,
-        cwd: command.projectPath,
-        apiKeyFallback: this.deps.apiKeyFallback,
-        settingSources: this.deps.config.settingSources,
-        todoFeatureEnabled: false,
-        appendSystemPrompt: parts.appendSystemPrompt,
-        allowedTools: parts.allowedTools,
-        disallowedTools: parts.disallowedTools,
-        maxTurns: parts.maxTurns,
-        ...(parts.maxBudgetUsd !== undefined
-          ? { maxBudgetUsd: parts.maxBudgetUsd }
-          : {}),
-      },
-      (event) => {
-        if (event.type === 'session-completed') {
-          result = event.result;
-          costUsd = event.costUsd ?? 0;
-          if (event.usage !== undefined) usage = event.usage;
-        } else if (event.type === 'session-failed') {
-          error = event.message;
-          reason = event.reason;
-        } else {
-          heartbeat(event);
-        }
-      },
-      this.deps.logger?.child(this.heartbeatLabel(preset)),
-    );
+    const providerId = command.providerId ?? this.deps.config.provider;
+    const hasProviders = !!this.deps.providers;
+    const isCodexProvider = providerId === 'codex' && hasProviders;
+
+    let runner: ScanSessionRunner;
+
+    if (this.deps.runnerFactory || !isCodexProvider) {
+      // Claude path (or test runnerFactory override): use the direct config that
+      // wires appendSystemPrompt + exact allowed/disallowed tools into the runner.
+      const factory = this.deps.runnerFactory ?? defaultRunnerFactory;
+      runner = factory(
+        {
+          sessionId: -1,
+          prompt,
+          model: command.model ?? this.deps.config.model,
+          ...(effort ? { effort } : {}),
+          permissionMode: 'dontAsk',
+          permissionPolicy: this.deps.config.permissions,
+          cwd: command.projectPath,
+          apiKeyFallback: this.deps.apiKeyFallback,
+          settingSources: this.deps.config.settingSources,
+          todoFeatureEnabled: false,
+          appendSystemPrompt: parts.appendSystemPrompt,
+          allowedTools: parts.allowedTools,
+          disallowedTools: parts.disallowedTools,
+          maxTurns: parts.maxTurns,
+          ...(parts.maxBudgetUsd !== undefined
+            ? { maxBudgetUsd: parts.maxBudgetUsd }
+            : {}),
+        },
+        (event) => {
+          if (event.type === 'session-completed') {
+            result = event.result;
+            costUsd = event.costUsd ?? 0;
+            if (event.usage !== undefined) usage = event.usage;
+          } else if (event.type === 'session-failed') {
+            error = event.message;
+            reason = event.reason;
+          } else {
+            heartbeat(event);
+          }
+        },
+        this.deps.logger?.child(this.heartbeatLabel(preset)),
+      );
+    } else {
+      // Codex (or other future providers): route through the provider so it can
+      // use its own SDK / structured output support. We compose the system
+      // instructions into the prompt.
+      const providers = this.deps.providers!;
+      const provider = providers.forSession(providerId);
+      const fullPrompt = [parts.appendSystemPrompt, prompt].filter(Boolean).join('\n\n');
+      const session = provider.startSession(
+        {
+          sessionId: -1,
+          prompt: fullPrompt,
+          model: command.model ?? this.deps.config.model,
+          ...(effort ? { effort } : {}),
+          cwd: command.projectPath,
+          // Scans are trusted internal read-only analysis; give the model the
+          // tools the persona says it can use.
+          autonomyOverride: 'bypass',
+          maxTurns: parts.maxTurns,
+          ...(parts.maxBudgetUsd !== undefined
+            ? { maxBudgetUsd: parts.maxBudgetUsd }
+            : {}),
+        },
+        (event) => {
+          if (event.type === 'session-completed') {
+            result = event.result;
+            costUsd = event.costUsd ?? 0;
+            if (event.usage !== undefined) usage = event.usage;
+          } else if (event.type === 'session-failed') {
+            error = event.message;
+            reason = event.reason;
+          } else {
+            heartbeat(event);
+          }
+        },
+        this.deps.logger?.child(this.heartbeatLabel(preset)),
+      );
+      runner = {
+        run: () => session.run(),
+        interrupt: () => (session as { interrupt?: () => Promise<void> }).interrupt?.() ?? Promise.resolve(),
+      };
+    }
 
     run.runners.add(runner);
     try {
