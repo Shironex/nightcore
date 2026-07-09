@@ -38,7 +38,7 @@ test('exposes the friendly full path through an accessible tooltip', async () =>
 
   expect(trigger.element()).toHaveAttribute('type', 'button');
   expect(trigger.element()).toHaveAttribute('aria-describedby', tooltip.element().id);
-  trigger.element().focus();
+  (trigger.element() as HTMLElement).focus();
   await expect.element(tooltip).toBeVisible();
 });
 
@@ -50,6 +50,6 @@ test('shows the tooltip when a containing project button receives focus', async 
     </button>,
   );
 
-  screen.getByRole('button', { name: /project/i }).element().focus();
+  (screen.getByRole('button', { name: /project/i }).element() as HTMLElement).focus();
   await expect.element(screen.getByRole('tooltip')).toBeVisible();
 });
