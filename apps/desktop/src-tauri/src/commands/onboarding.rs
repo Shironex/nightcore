@@ -16,6 +16,7 @@ const CHECK_TIMEOUT: Duration = Duration::from_secs(6);
 #[serde(rename_all = "camelCase")]
 pub struct OnboardingPrerequisites {
     pub claude: ToolCheck,
+    pub codex: ToolCheck,
     pub gh: ToolCheck,
     pub git: ToolCheck,
 }
@@ -50,6 +51,7 @@ fn check_onboarding_prerequisites_blocking() -> OnboardingPrerequisites {
             "Install Claude Code, then authenticate it.",
             "claude auth login",
         ),
+        codex: check_codex_tool(),
         gh: check_auth_tool(
             "gh",
             "GitHub CLI",
@@ -186,8 +188,77 @@ fn tool_version(binary: &str) -> Option<String> {
     }
 }
 
+fn check_codex_tool() -> ToolCheck {
+    const LABEL: &str = "Codex CLI";
+    const INSTALL_HINT: &str = "Install Codex CLI, then authenticate it.";
+    const INSTALL_COMMAND: &str = "npm install -g @openai/codex";
+    const LOGIN_COMMAND: &str = "codex login";
+
+    let Some(path) = which::which("codex").ok() else {
+        return ToolCheck {
+            id: "codex".to_string(),
+            label: LABEL.to_string(),
+            installed: false,
+            authenticated: Some(false),
+            path: None,
+            version: None,
+            detail: "not installed".to_string(),
+            fix_hint: INSTALL_HINT.to_string(),
+            fix_command: INSTALL_COMMAND.to_string(),
+        };
+    };
+
+    let version = tool_version("codex");
+    match run_probe("codex", &["login", "status"]) {
+        ProbeResult::Success(text) => ToolCheck {
+            id: "codex".to_string(),
+            label: LABEL.to_string(),
+            installed: true,
+            authenticated: Some(true),
+            path: Some(path.display().to_string()),
+            version,
+            detail: auth_detail("codex", true, &text),
+            fix_hint: INSTALL_HINT.to_string(),
+            fix_command: LOGIN_COMMAND.to_string(),
+        },
+        ProbeResult::Failure(text) => ToolCheck {
+            id: "codex".to_string(),
+            label: LABEL.to_string(),
+            installed: true,
+            authenticated: Some(false),
+            path: Some(path.display().to_string()),
+            version,
+            detail: auth_detail("codex", false, &text),
+            fix_hint: INSTALL_HINT.to_string(),
+            fix_command: LOGIN_COMMAND.to_string(),
+        },
+        ProbeResult::TimedOut => ToolCheck {
+            id: "codex".to_string(),
+            label: LABEL.to_string(),
+            installed: true,
+            authenticated: Some(false),
+            path: Some(path.display().to_string()),
+            version,
+            detail: "auth check timed out".to_string(),
+            fix_hint: INSTALL_HINT.to_string(),
+            fix_command: LOGIN_COMMAND.to_string(),
+        },
+        ProbeResult::CouldNotLaunch(text) => ToolCheck {
+            id: "codex".to_string(),
+            label: LABEL.to_string(),
+            installed: true,
+            authenticated: Some(false),
+            path: Some(path.display().to_string()),
+            version,
+            detail: text,
+            fix_hint: INSTALL_HINT.to_string(),
+            fix_command: LOGIN_COMMAND.to_string(),
+        },
+    }
+}
+
 fn auth_detail(binary: &str, authenticated: bool, text: &str) -> String {
-    if binary == "claude" {
+    if binary == "claude" || binary == "codex" {
         return if authenticated {
             "authenticated".to_string()
         } else {
@@ -294,4 +365,5 @@ mod tests {
     fn first_line_uses_fallback_for_empty_output() {
         assert_eq!(first_line_or(" \n\t", "fallback"), "fallback");
     }
+
 }

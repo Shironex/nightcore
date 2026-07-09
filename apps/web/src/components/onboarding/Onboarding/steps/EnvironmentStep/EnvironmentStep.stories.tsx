@@ -16,6 +16,17 @@ const checks: NonNullable<OnboardingViewState['checks']> = {
     fixHint: 'Install Claude Code, then authenticate it.',
     fixCommand: 'claude auth login',
   },
+  codex: {
+    id: 'codex',
+    label: 'Codex CLI',
+    installed: true,
+    authenticated: true,
+    path: '/usr/local/bin/codex',
+    version: 'codex 0.42.0',
+    detail: 'authenticated',
+    fixHint: 'Install Codex CLI, then authenticate it.',
+    fixCommand: 'codex login',
+  },
   gh: {
     id: 'gh',
     label: 'GitHub CLI',
@@ -86,6 +97,23 @@ export const ClaudeAuthMissing: Story = {
         ...checks,
         claude: {
           ...checks.claude,
+          authenticated: false,
+          detail: 'not logged in on this machine',
+        },
+      },
+    },
+  },
+};
+
+export const CodexAuthMissing: Story = {
+  args: {
+    view: {
+      ...readyView,
+      envReady: false,
+      checks: {
+        ...checks,
+        codex: {
+          ...checks.codex,
           authenticated: false,
           detail: 'not logged in on this machine',
         },

@@ -72,6 +72,8 @@ function rowsFromChecks(view: OnboardingViewState): readonly EnvironmentRowModel
     return [
       pendingRow('claude-install', 'Claude Code CLI', 'terminal'),
       pendingRow('claude-auth', 'Claude authenticated', 'key'),
+      pendingRow('codex-install', 'Codex CLI', 'terminal'),
+      pendingRow('codex-auth', 'Codex authenticated', 'key'),
       pendingRow('gh-install', 'GitHub CLI', 'github'),
       pendingRow('gh-auth', 'GitHub authenticated', 'github', true),
       pendingRow('git-install', 'Git', 'checks'),
@@ -80,6 +82,8 @@ function rowsFromChecks(view: OnboardingViewState): readonly EnvironmentRowModel
   return [
     installRow(checks.claude, 'Claude Code CLI', 'terminal'),
     authRow(checks.claude, 'Claude authenticated', 'key'),
+    installRow(checks.codex, 'Codex CLI', 'terminal'),
+    authRow(checks.codex, 'Codex authenticated', 'key'),
     installRow(checks.gh, 'GitHub CLI', 'github'),
     authRow(checks.gh, 'GitHub authenticated', 'github', true),
     installRow(checks.git, 'Git', 'checks'),

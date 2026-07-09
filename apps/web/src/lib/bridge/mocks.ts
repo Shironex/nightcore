@@ -110,6 +110,17 @@ export const MOCK_ONBOARDING_PREREQUISITES: OnboardingPrerequisites = {
     fixHint: 'Install Claude Code, then authenticate it.',
     fixCommand: 'claude auth login',
   },
+  codex: {
+    id: 'codex',
+    label: 'Codex CLI',
+    installed: true,
+    authenticated: true,
+    path: '/usr/local/bin/codex',
+    version: 'codex 0.42.0',
+    detail: 'authenticated',
+    fixHint: 'Install Codex CLI, then authenticate it.',
+    fixCommand: 'codex login',
+  },
   gh: {
     id: 'gh',
     label: 'GitHub CLI',

@@ -29,6 +29,7 @@ test('requires auth when a tool reports an auth state', () => {
   };
   expect(toolReady(base)).toBe(true);
   expect(toolReady({ ...base, authenticated: false })).toBe(false);
+  expect(toolReady({ ...base, id: 'codex', label: 'Codex CLI' })).toBe(true);
   expect(toolReady({ ...base, id: 'git', authenticated: null })).toBe(true);
   expect(toolReady({ ...base, installed: false })).toBe(false);
 });

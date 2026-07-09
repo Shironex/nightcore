@@ -22,6 +22,7 @@ export interface ToolCheck {
 
 export interface OnboardingPrerequisites {
   claude: ToolCheck;
+  codex: ToolCheck;
   gh: ToolCheck;
   git: ToolCheck;
 }

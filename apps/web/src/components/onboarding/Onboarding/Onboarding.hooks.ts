@@ -22,7 +22,13 @@ export function toolReady(tool: ToolCheck): boolean {
 }
 
 export function prerequisitesReady(checks: OnboardingPrerequisites | null): boolean {
-  return checks !== null && toolReady(checks.claude) && toolReady(checks.gh) && toolReady(checks.git);
+  return (
+    checks !== null &&
+    toolReady(checks.claude) &&
+    toolReady(checks.codex) &&
+    toolReady(checks.gh) &&
+    toolReady(checks.git)
+  );
 }
 
 export function useOnboarding({
