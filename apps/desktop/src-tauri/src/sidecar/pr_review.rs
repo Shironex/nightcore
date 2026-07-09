@@ -113,6 +113,7 @@ fn check_still_running_before_dispatch(status: Option<&str>) -> Result<(), Strin
 /// review sessions stay read-only), dispatches the `start-pr-review` command with the
 /// diff inline, and returns the `runId` the `pr-review-*` events correlate by.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_pr_review(
     app: AppHandle,
     projects: State<'_, ProjectStore>,

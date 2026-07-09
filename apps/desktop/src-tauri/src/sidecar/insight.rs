@@ -45,6 +45,7 @@ scan_lifecycle_commands! {
 /// (status `running`), dispatches the `start-analysis` command, and returns the
 /// `runId` the `analysis-*` events correlate by.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn start_analysis(
     app: AppHandle,
     projects: State<'_, ProjectStore>,
