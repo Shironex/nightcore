@@ -410,9 +410,10 @@ export default tseslint.config(
   //   * lint-meta `web-file-size-ratchet` at 400 (ciCritical, baselined) = the
   //     tightening story for ALL web sources.
   // Cross-ref: rust-module-shape.ts (HARD_CAP=400) and web-file-size-ratchet.ts (CAP=400) use matching 400.
-  // The two caps move together — never "fix" one without the other. Phase-in is
-  // a freeze-at-worst carve-out block (below) + the committed ratchet baseline,
-  // NEVER warn severity (`no-warn-severity` is ciCritical).
+  // The two caps move together — never "fix" one without the other. Severity is
+  // NEVER warn (`no-warn-severity` is ciCritical). Every web source now sits under
+  // the 400 ratchet, so the freeze-at-worst carve-out block is gone and the ratchet
+  // baseline is empty; a new offender fails outright rather than joining either.
   {
     files: ['apps/web/src/components/**/*.tsx'],
     ignores: ['apps/web/src/components/**/*.{stories,test}.tsx'],
@@ -429,26 +430,6 @@ export default tseslint.config(
       'max-lines': [
         'error',
         { max: 500, skipBlankLines: false, skipComments: false },
-      ],
-    },
-  },
-  // Freeze-at-worst carve-out over the core `max-lines` 500 cap. Five refactored
-  // offenders (AppShell.hooks.ts 254, HarnessView.hooks.ts 291,
-  // InsightView.hooks.ts 430, PrReviewView.hooks.ts 230, SettingsView.tsx 254)
-  // dropped under 500 and were removed from this list (issue #57). Two remain
-  // over 500 and may not grow past 1400: TaskDetail.tsx (526) and
-  // IssueTriageView.hooks.ts (506). The list only shrinks. (Note: the separate
-  // 400-line web-file-size ratchet baseline is a distinct cap — InsightView.hooks.ts
-  // and IssueTriageView.hooks.ts still hold ratchet baseline entries at >400.)
-  {
-    files: [
-      'apps/web/src/components/board/TaskDetail/TaskDetail.tsx',
-      'apps/web/src/components/issues/IssueTriageView/IssueTriageView.hooks.ts',
-    ],
-    rules: {
-      'max-lines': [
-        'error',
-        { max: 1400, skipBlankLines: false, skipComments: false },
       ],
     },
   },
