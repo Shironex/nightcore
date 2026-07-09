@@ -20,13 +20,13 @@ import {
   suggestedTaskKind,
 } from '../issue-triage.constants';
 import type { IssueValidationBadge } from '../IssueList/IssueList.types';
+import { computeIssueValidationBadges, useModelSelection } from '../useModelSelection';
 import {
   type ConvertDialogState,
   type PostDialogState,
   useIssueActionDialogs,
 } from './hooks/useIssueActionDialogs.hooks';
 import { useIssueTriage } from './hooks/useIssueTriage.hooks';
-import { computeIssueValidationBadges, useModelSelection } from '../useModelSelection';
 import type { IssueTriageViewProps } from './IssueTriageView.types';
 import { errMessage, matchesFilter } from './IssueTriageView.utils';
 
