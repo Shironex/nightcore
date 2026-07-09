@@ -5,10 +5,11 @@ import type { Project } from '@/lib/bridge';
 
 import type { NavItem } from '../AppShell/AppShell.types';
 import { Sidebar } from './Sidebar';
+import type { ProjectSwitcherSurface } from './Sidebar.types';
 
 const NAV: NavItem[] = [
-  { view: 'board', label: 'Kanban Board', hint: 'K', icon: '▦' },
-  { view: 'settings', label: 'Settings', hint: 'S', icon: '⚙' },
+  { view: 'board', label: 'Kanban Board', hint: 'K', icon: '▦', group: 'project' },
+  { view: 'settings', label: 'Settings', hint: 'S', icon: '⚙', group: 'settings' },
 ];
 
 const PROJECTS: Project[] = [
@@ -19,6 +20,8 @@ const PROJECTS: Project[] = [
     branch: 'main',
     createdAt: '2026-06-21T00:00:00Z',
     lastActiveAt: '2026-06-21T00:00:00Z',
+    icon: 'FolderCode' as string | null,
+    customIconPath: null as string | null,
   },
   {
     id: 'automaker',
@@ -27,8 +30,21 @@ const PROJECTS: Project[] = [
     branch: 'main',
     createdAt: '2026-06-20T00:00:00Z',
     lastActiveAt: null,
+    icon: null,
+    customIconPath: null,
   },
 ];
+
+const switcher: ProjectSwitcherSurface = {
+  projects: PROJECTS,
+  active: PROJECTS[0] ?? null,
+  switcherOpen: false,
+  onToggleSwitcher: fn(),
+  onPickProject: fn(),
+  onNewProject: fn(),
+  onEditProject: fn(),
+  onRemoveProject: fn(),
+};
 
 const meta = {
   title: 'App/Sidebar',
@@ -42,21 +58,17 @@ const meta = {
     ),
   ],
   args: {
-    projects: PROJECTS,
-    active: PROJECTS[0],
+    switcher,
     view: 'board',
     nav: NAV,
     collapsed: false,
-    switcherOpen: false,
+    sidebarStyle: 'unified' as const,
     runningCount: 0,
     awaitingInputCount: 0,
     version: 'v0.1.0',
     onToggleCollapsed: fn(),
-    onToggleSwitcher: fn(),
     onNavigate: fn(),
     onGotoProjects: fn(),
-    onPickProject: fn(),
-    onNewProject: fn(),
     onGotoAwaitingInput: fn(),
   },
 } satisfies Meta<typeof Sidebar>;
@@ -64,10 +76,14 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-export const Default: Story = {};
+export const Unified: Story = {};
+
+export const Classic: Story = {
+  args: { sidebarStyle: 'classic' },
+};
 
 export const SwitcherOpen: Story = {
-  args: { switcherOpen: true },
+  args: { switcher: { ...switcher, switcherOpen: true } },
 };
 
 export const Running: Story = {

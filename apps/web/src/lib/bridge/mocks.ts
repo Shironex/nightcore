@@ -15,6 +15,7 @@ import type {
   HarnessPolicyFile,
   InjectionFlag,
   ModelDescriptor,
+  OnboardingPrerequisites,
   Project,
   ProviderCapabilities,
   ProviderConfigSnapshot,
@@ -91,6 +92,46 @@ export const MOCK_PROJECT: Project = {
   branch: 'main',
   createdAt: '2026-06-21T00:00:00Z',
   lastActiveAt: '2026-06-21T00:00:00Z',
+  icon: null,
+  customIconPath: null,
+};
+
+/** Browser-preview onboarding diagnostics: mark local tools ready so the first-run
+ *  wizard remains navigable in Storybook/preview without spawning real CLIs. */
+export const MOCK_ONBOARDING_PREREQUISITES: OnboardingPrerequisites = {
+  claude: {
+    id: 'claude',
+    label: 'Claude Code',
+    installed: true,
+    authenticated: true,
+    path: '/usr/local/bin/claude',
+    version: 'claude 3.9.2',
+    detail: 'authenticated',
+    fixHint: 'Install Claude Code, then authenticate it.',
+    fixCommand: 'claude auth login',
+  },
+  gh: {
+    id: 'gh',
+    label: 'GitHub CLI',
+    installed: true,
+    authenticated: true,
+    path: '/usr/local/bin/gh',
+    version: 'gh version 2.86.0',
+    detail: 'Logged in to github.com',
+    fixHint: 'Install GitHub CLI, then authenticate it.',
+    fixCommand: 'gh auth login',
+  },
+  git: {
+    id: 'git',
+    label: 'Git',
+    installed: true,
+    authenticated: null,
+    path: '/usr/bin/git',
+    version: 'git version 2.50.0',
+    detail: 'git version 2.50.0',
+    fixHint: 'Install Git and make sure it is available on PATH.',
+    fixCommand: 'git --version',
+  },
 };
 
 /** The default settings used outside Tauri (browser preview). */
@@ -109,6 +150,7 @@ export const MOCK_SETTINGS: Settings = {
   contextPackEnabled: true,
   autoCommitOnVerified: false,
   sandboxSessions: false,
+  sidebarStyle: null,
   projectOverrides: {},
 };
 

@@ -11,6 +11,7 @@ export type SettingsPage =
   | 'permissions'
   | 'constitution'
   | 'worktrees'
+  | 'interface'
   | 'providers'
   | 'hooks'
   | 'paths'
@@ -26,4 +27,6 @@ export interface SettingsViewProps {
   activeProjectPath?: string | null;
   /** Apply a settings patch. The view sets `projectId` when scope is 'project'. */
   onUpdate: (patch: SettingsPatch) => void;
+  /** Reopen the first-run setup flow from the About page. */
+  onRestartOnboarding: () => void;
 }

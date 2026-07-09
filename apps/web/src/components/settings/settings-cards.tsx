@@ -7,22 +7,18 @@ import {
   AgentsIcon,
   BellIcon,
   BoltIcon,
-  BookIcon,
   BranchIcon,
   FieldValue,
   FolderIcon,
   GearIcon,
   LockIcon,
   NumberField,
-  Pill,
-  RepoLink,
   Segmented,
   SparkIcon,
   Toggle,
 } from '@/components/ui';
 import {
   type AppInfo,
-  DEFAULT_REPO_URL,
   PROVIDER_LABEL,
   type Settings,
   type SettingsPatch,
@@ -31,6 +27,8 @@ import {
   isEffortSupported,
 } from '@/lib/models';
 
+import { buildAboutCards } from './settings-about-cards';
+import { buildInterfaceCards } from './settings-interface-cards';
 import {
   DefaultModelControl,
   defaultModelForProvider,
@@ -70,13 +68,22 @@ export interface CardContext {
   patchGlobal: (patch: SettingsPatch) => void;
   activeProjectPath: string | null;
   appInfo: AppInfo | null;
+  onRestartOnboarding: () => void;
 }
 
 /** Build the card set for a settings page. The run-shaping controls (model,
  *  effort, concurrency, permission mode) are live; everything else is
  *  presentational (a not-yet-built page or a light scaffold). */
 export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardProps[] {
-  const { effective, settings, patchScoped, patchGlobal, activeProjectPath, appInfo } = ctx;
+  const {
+    effective,
+    settings,
+    patchScoped,
+    patchGlobal,
+    activeProjectPath,
+    appInfo,
+    onRestartOnboarding,
+  } = ctx;
   switch (page) {
     case 'models':
       return [
@@ -245,6 +252,8 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
           ],
         },
       ];
+    case 'interface':
+      return buildInterfaceCards(settings, patchGlobal);
     case 'providers':
       return [
         {
@@ -329,21 +338,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
           ],
         },
       ];
-    case 'about': {
-      const version = appInfo?.version ?? '—';
-      const repo = appInfo?.repository ?? DEFAULT_REPO_URL;
-      const repoLabel = repo.replace(/^https?:\/\//, '');
-      return [
-        {
-          icon: <BookIcon size={18} />,
-          title: 'Nightcore',
-          subtitle: 'Autonomous Claude dev studio — a rewrite of AutoMaker.',
-          rows: [
-            { label: 'Version', control: <Pill>v{version}</Pill> },
-            { label: 'Repository', hint: repoLabel, control: <RepoLink href={repo} /> },
-          ],
-        },
-      ];
-    }
+    case 'about':
+      return buildAboutCards(appInfo, onRestartOnboarding);
   }
 }

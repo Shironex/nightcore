@@ -201,9 +201,9 @@ export function usePrReviewGates({
         // reload failure must NOT turn a SUCCESSFUL post into an error — swallow
         // it (the registry self-heals on the next interaction).
         if (runId !== null) {
-          await selectRun(runId).catch((e: unknown) =>
-            console.error('selectRun after post failed (non-fatal)', e),
-          );
+          await selectRun(runId).catch(() => {
+            // Swallow: non-fatal; registry self-heals; toast/state cover success path.
+          });
           void refreshRuns();
         }
         toast.push({ tone: 'success', title: `Review posted to PR #${prNumber}` });
@@ -214,7 +214,6 @@ export function usePrReviewGates({
       } catch (err) {
         // Surface BOTH inline (kept dialog) and via toast (the useToast
         // discipline), and keep the verdict open so the user can retry/cancel.
-        console.error('postReviewToGithub failed', err);
         setPostError(err instanceof Error ? err.message : String(err));
         toast.error('Could not post the review', err);
       } finally {
@@ -304,7 +303,6 @@ export function usePrReviewGates({
       } catch (err) {
         // Surface BOTH inline (kept dialog) and via toast (the useToast
         // discipline), and keep the gate open so the user can retry/cancel.
-        console.error('push_pr_fix failed', err);
         setPushError(err instanceof Error ? err.message : String(err));
         toast.error('Could not push the fix', err);
       } finally {

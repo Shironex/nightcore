@@ -27,7 +27,7 @@
     "dogfood:ui": "node scripts/dogfood-ui.mjs",
     "dogfood:engine": "bun run scripts/headless-harness.ts",
     "test": "bun run test:node && bun run test:web && bun run test:plugin && echo '⚠️  Rust suite skipped — run: bun run test:all (includes test:rust) for the full gate'",
-    "test:node": "bun test apps/sidecar packages/config packages/contracts packages/engine packages/session-fold packages/shared packages/storage tools/codegen",
+    "test:node": "bun test apps/sidecar packages/config packages/contracts packages/engine packages/session-fold packages/shared packages/storage tools/codegen tools/lint-meta",
     "test:node:coverage": "bun run tools/coverage/check-node-coverage.ts",
     "test:web": "bun run --filter @nightcore/web test",
     "test:web:coverage": "bun run --filter @nightcore/web test:coverage",
@@ -37,6 +37,8 @@
     "lint": "bun run lint:plugin && eslint . && bun run lint:meta",
     "lint:plugin": "bun run --filter @nightcore/eslint-plugin build",
     "lint:meta": "bun run tools/lint-meta/cli.ts",
+    "check:rust": "bun run scripts/check-rust.ts",
+    "prepare": "husky",
     "audit": "bun audit --audit-level=moderate",
     "audit:rust": "cd apps/desktop/src-tauri && cargo audit",
     "audit:all": "bun run audit && bun run audit:rust"
@@ -49,6 +51,7 @@
     "eslint": "^9.0.0",
     "eslint-plugin-jsx-a11y": "^6.10.2",
     "eslint-plugin-simple-import-sort": "^13.0.0",
+    "husky": "^9.1.7",
     "typescript": "^5.6.0",
     "typescript-eslint": "^8.0.0",
     "zod": "4.4.3"

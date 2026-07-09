@@ -2,7 +2,7 @@ import type { TSESTree } from '@typescript-eslint/utils';
 
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'wire-message-naming';
+const RULE_NAME = 'wire-message-naming';
 
 type MessageIds = 'typeMismatch';
 

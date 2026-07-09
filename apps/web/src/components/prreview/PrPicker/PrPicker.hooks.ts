@@ -12,7 +12,7 @@ import type { ReviewLifecycle, ReviewLifecycleState } from '../prreview-lifecycl
 import type { PrPickerRow } from './PrPicker.types';
 
 /** The list's default order — newest first (the order gh already returns). */
-export const DEFAULT_PR_SORT: PrSortOption = 'newest';
+const DEFAULT_PR_SORT: PrSortOption = 'newest';
 
 /** Total churn (additions + deletions) — the `largest` sort key. */
 function churn(pr: PrSummary): number {
@@ -36,7 +36,7 @@ function comparePrs(a: PrSummary, b: PrSummary, sort: PrSortOption): number {
 /** Parse a raw PR-number input into a positive integer, or `null` when the input
  *  is empty / non-numeric / not > 0. Digits-only so `1e3`, `-1`, `1.5`, and
  *  whitespace all reject. */
-export function parsePrNumber(raw: string): number | null {
+function parsePrNumber(raw: string): number | null {
   const trimmed = raw.trim();
   if (!/^\d+$/.test(trimmed)) return null;
   const n = Number(trimmed);

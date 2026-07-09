@@ -115,7 +115,6 @@ function BoardImpl({
               title={def.title}
               tasks={colTasks}
               dotColor={def.dotColor}
-              badge={def.badge}
               clearable={def.clearable}
               selectedId={selectedId}
               blockedIds={blockedIds}

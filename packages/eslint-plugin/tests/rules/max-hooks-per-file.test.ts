@@ -59,9 +59,10 @@ ruleTester.run('max-hooks-per-file', maxHooksPerFileRule, {
     // .hooks.ts is also a bucket file but four is within the limit.
     { code: fourHooks, filename: HOOKS },
     // Non-bucket files are not constrained even with many hooks.
+    // .utils.ts (pure helpers) is explicitly a non-bucket (positive case for dotted-role grammar).
     {
       code: fiveHooks,
-      filename: 'apps/web/src/components/board/Board/Board.util.ts',
+      filename: 'apps/web/src/components/board/Board/Board.utils.ts',
     },
     // .hooks.tsx is NOT a bucket file — JSX extension is excluded by convention.
     {

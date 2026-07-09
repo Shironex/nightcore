@@ -27,6 +27,7 @@ function settingsWith(projectId: string, appearance: BoardAppearance): Settings 
     contextPackEnabled: true,
     autoCommitOnVerified: false,
     sandboxSessions: false,
+    sidebarStyle: 'unified',
     projectOverrides: { [projectId]: { boardAppearance: appearance } },
   };
 }

@@ -273,8 +273,8 @@ export function useHarness(
       // notices already drive authoritative state; the run-list reconcile is
       // best-effort, so a `listHarnessRuns` failure here must NOT re-open the dialog.
       setStream(streamFromRun(run));
-      await refreshRuns().catch((err) => {
-        console.error('listHarnessRuns failed', err);
+      await refreshRuns().catch(() => {
+        // best-effort reconcile; authoritative state already updated via events; swallow.
       });
     },
     [stream.runId, setStream, refreshRuns],
@@ -303,10 +303,10 @@ export function useHarness(
       // The post-write run-list reconcile is best-effort (the `artifact-applied`
       // listener already drives authoritative state), so a `listHarnessRuns`
       // failure here must NOT surface as a write failure and re-open the confirm
-      // dialog. Isolate it in its own catch and log rather than rethrow.
+      // dialog. Isolate it in its own catch and swallow rather than rethrow.
       setStream(streamFromRun(run));
-      await refreshRuns().catch((err) => {
-        console.error('listHarnessRuns failed', err);
+      await refreshRuns().catch(() => {
+        // best-effort reconcile; authoritative state already updated via events; swallow.
       });
     },
     [stream.runId, setStream, refreshRuns],

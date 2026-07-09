@@ -6,22 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { PrStatus } from '@/lib/bridge';
 import { prStatusByNumber } from '@/lib/bridge';
 
-/** Everything the status block renders from. */
-export interface PrNumberStatusView {
-  /** The last fetched status (kept across a failed refresh), or null. */
-  status: PrStatus | null;
-  /** True while a fetch is in flight (the Refresh control disables). */
-  fetching: boolean;
-  /** The last fetch failure, shown inline; a later refresh clears it. */
-  error: string | null;
-  /** True when the command resolved its outside-Tauri sentinel (browser
-   *  preview) — the block shows a quiet unavailable note instead of lying. */
-  unavailable: boolean;
-  /** Web-side receive timestamp of the last successful fetch. */
-  refreshedAt: number | null;
-  /** Re-fetch the status (the manual refresh affordance). */
-  refresh: () => void;
-}
+import type { PrNumberStatusView } from './PrStatusBlock.types';
 
 /** Coerce a thrown value (Tauri rejections are commonly plain strings) into a
  *  readable inline-error line. */
@@ -87,8 +72,7 @@ export function usePrStatusByNumber(
       },
       (err: unknown) => {
         if (stale) return;
-        console.error('pr_status_by_number failed', err);
-        // Keep the last good status visible; the error line rides beside it.
+        // Error surfaced via returned `error` state (UI displays it); no direct console.
         setError(errorText(err));
         setFetching(false);
       },

@@ -8,6 +8,8 @@ const base: ProjectSummary = {
   id: 'nightcore',
   name: 'nightcore',
   path: '~/dev/nightcore',
+  icon: 'FolderCode',
+  customIconPath: null,
   running: true,
   stats: [
     { label: 'tasks', value: 12, tone: 'neutral' },
@@ -27,7 +29,7 @@ const meta = {
       </div>
     ),
   ],
-  args: { project: base, onOpen: fn(), onRename: fn(), onDelete: fn() },
+  args: { project: base, onOpen: fn(), onEdit: fn(), onDelete: fn() },
 } satisfies Meta<typeof ProjectCard>;
 
 export default meta;
@@ -40,18 +42,18 @@ export const Menu: Story = {
   play: async ({ canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Project menu' }));
-    await expect(canvas.getByRole('menuitem', { name: /rename/i })).toBeInTheDocument();
+    await expect(canvas.getByRole('menuitem', { name: /edit project/i })).toBeInTheDocument();
     await expect(canvas.getByRole('menuitem', { name: /remove/i })).toBeInTheDocument();
   },
 };
 
-/** Play test: Remove opens a confirmation that clarifies files are kept. */
-export const ConfirmRemove: Story = {
-  play: async ({ canvasElement }) => {
+/** Play test: Remove delegates to the shell's shared confirmation controller. */
+export const RequestRemove: Story = {
+  play: async ({ args, canvasElement }) => {
     const canvas = within(canvasElement);
     await userEvent.click(canvas.getByRole('button', { name: 'Project menu' }));
     await userEvent.click(canvas.getByRole('menuitem', { name: /remove/i }));
-    await expect(canvas.getByRole('alertdialog', { name: /remove project/i })).toBeInTheDocument();
+    await expect(args.onDelete).toHaveBeenCalledWith('nightcore');
   },
 };
 

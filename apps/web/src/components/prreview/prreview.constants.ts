@@ -14,9 +14,19 @@ import {
   TagIcon,
   VerifiedIcon,
 } from '@/components/ui';
-import type { PrReviewRun, ReviewLens } from '@/lib/bridge';
+import type { ReviewLens } from '@/lib/bridge';
 
-import type { ReviewVerdict, RunStatus } from './prreview.types';
+import type { ReviewVerdict } from './prreview.types';
+
+/** The disabled-verdict explanation for the own-PR guard. GitHub rejects
+ *  approve/request-changes reviews on the viewer's own pull request. */
+export const OWN_PR_TITLE =
+  "GitHub doesn't allow approve/request-changes on your own pull request — post as comment instead";
+
+/** The disabled-Address explanation while this PR already has a fix in flight
+ *  (one running fix per PR — the Rust registry refuses a second anyway). */
+export const FIX_RUNNING_TITLE =
+  'A fix agent is already running for this PR — wait for it to finish';
 
 /** Every lens, in display order (matches the contract's `ReviewLensSchema`). */
 export const ALL_LENSES: ReviewLens[] = [
@@ -88,13 +98,7 @@ export const VERDICT_META: Record<ReviewVerdict, VerdictMeta> = {
   },
 };
 
-/** Map a persisted run's status string to the view's union. */
-export function runStatusOf(run: PrReviewRun | null): RunStatus {
-  if (run === null) return 'idle';
-  if (run.status === 'running') return 'running';
-  if (run.status === 'failed') return 'failed';
-  return 'completed';
-}
+
 
 /** The synthesis pass's overall merge recommendation, in the wire `MergeVerdict`
  *  form (distinct from the POST {@link ReviewVerdict} — this is the AI's read on

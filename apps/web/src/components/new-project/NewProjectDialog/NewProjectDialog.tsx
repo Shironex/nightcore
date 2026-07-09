@@ -1,12 +1,12 @@
 /** "New project" dialog: pick a git repo folder, name it, and create a project. */
 import {
-  Badge,
   Button,
   CloseIcon,
   FolderIcon,
   IconButton,
   IconTile,
   Modal,
+  ProjectIconEditor,
   Spinner,
 } from '@/components/ui';
 
@@ -33,14 +33,12 @@ const GIT_TEXT: Record<'valid' | 'invalid' | 'checking', string> = {
 
 /**
  * Modal for creating a project from a git repository. Lets the user choose a
- * folder, name the project, pick a default model, and set concurrency. Create is
+ * folder, name the project, and optionally choose an icon. Create is
  * gated until a folder is chosen, a name is entered, and the folder is a valid
- * git repo; when it isn't, a `git init` action is offered. Concurrency is
- * collected here but badged as a not-yet-built affordance.
+ * git repo; when it isn't, a `git init` action is offered.
  */
 export function NewProjectDialog({
   open,
-  models,
   onChooseFolder,
   onCreate,
   onClose,
@@ -48,8 +46,8 @@ export function NewProjectDialog({
   gitState = 'unknown',
   onInitGit,
 }: NewProjectDialogProps) {
-  const { name, model, concurrency, canCreate, busy, setName, setModel, setConcurrency, create } =
-    useNewProjectDialog({ open, models, onCreate, folder, gitState });
+  const dialog = useNewProjectDialog({ open, onCreate, folder, gitState });
+  const { name, canCreate, busy, setName, create } = dialog;
 
   // Esc / click-outside close — but never while a create is in flight, to guard
   // against double-submit. The shared Modal adds the focus trap + restore.
@@ -61,7 +59,7 @@ export function NewProjectDialog({
       label="New project"
       onClose={close}
       overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-      panelClassName="w-[480px] max-w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+      panelClassName="flex max-h-[calc(100vh-3rem)] w-[520px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
     >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
           <IconTile size="sm">
@@ -78,7 +76,7 @@ export function NewProjectDialog({
           </IconButton>
         </div>
 
-        <div className="flex flex-col gap-4 p-5">
+        <div className="flex flex-col gap-4 overflow-y-auto p-5">
           <div>
             <label className={FIELD_LABEL} htmlFor="np-folder">
               Repository folder
@@ -134,43 +132,21 @@ export function NewProjectDialog({
             />
           </div>
 
-          <div className="flex gap-3">
-            <div className="flex-1">
-              <label className={FIELD_LABEL} htmlFor="np-model">
-                Default model
-              </label>
-              <select
-                id="np-model"
-                value={model}
-                onChange={(e) => setModel(e.target.value)}
-                className={`${FIELD_INPUT} cursor-pointer appearance-none`}
-              >
-                {models.map((m) => (
-                  <option key={m} value={m}>
-                    {m}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="w-[120px]">
-              <label
-                htmlFor="np-concurrency"
-                className="mb-1.5 flex items-center gap-1.5 text-[11.5px] font-semibold text-muted-foreground"
-              >
-                Concurrency
-                <Badge tone="roadmap">M2</Badge>
-              </label>
-              <input
-                id="np-concurrency"
-                type="number"
-                min={1}
-                max={6}
-                value={concurrency}
-                onChange={(e) => setConcurrency(Number(e.target.value))}
-                className={`${FIELD_INPUT} font-mono`}
-              />
-            </div>
-          </div>
+          <ProjectIconEditor
+            label="Project icon"
+            icon={dialog.icon}
+            imageUrl={dialog.pendingImage?.preview ?? null}
+            hasCustomImage={dialog.pendingImage !== null}
+            onIconChange={(next) => {
+              dialog.setIcon(next);
+              dialog.setPendingImage(null);
+            }}
+            onImageChange={(image) => {
+              dialog.setPendingImage(image);
+              dialog.setIcon(null);
+            }}
+            onRemoveImage={() => dialog.setPendingImage(null)}
+          />
         </div>
 
         <div className="flex justify-end gap-2.5 border-t border-border bg-black/15 px-5 py-3.5">

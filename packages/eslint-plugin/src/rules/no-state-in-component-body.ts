@@ -4,7 +4,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { isComponentEntryFile } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'no-state-in-component-body';
+const RULE_NAME = 'no-state-in-component-body';
 
 export interface NoStateInComponentBodyOptions {
   readonly allowedHooks?: readonly string[];

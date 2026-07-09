@@ -4,7 +4,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { isComponentEntryFile } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'no-prop-drilling';
+const RULE_NAME = 'no-prop-drilling';
 
 export interface NoPropDrillingOptions {
   readonly maxForwarded?: number;

@@ -15,10 +15,9 @@ import type {
   ConventionCategory,
   ConventionKind,
   HarnessProposalKind,
-  HarnessRun,
 } from '@/lib/bridge';
 
-import type { RunStatus } from './harness.types';
+
 
 /** Every convention lens, in display order. */
 export const ALL_CATEGORIES: ConventionCategory[] = [
@@ -137,10 +136,4 @@ export const WRITE_MODE_META: Record<string, { label: string; hint: string }> = 
   },
 };
 
-/** Map a persisted run's status string to the view's union. */
-export function runStatusOf(run: HarnessRun | null): RunStatus {
-  if (run === null) return 'idle';
-  if (run.status === 'running') return 'running';
-  if (run.status === 'failed') return 'failed';
-  return 'completed';
-}
+

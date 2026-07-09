@@ -185,7 +185,6 @@ export function usePrReviewNavigation({
   const onCancelRun = useCallback(() => {
     if (runningRunId === null) return;
     void cancel(runningRunId).catch((err: unknown) => {
-      console.error('cancel_pr_review failed', err);
       toast.error('Could not cancel the review', err);
     });
   }, [runningRunId, cancel, toast]);

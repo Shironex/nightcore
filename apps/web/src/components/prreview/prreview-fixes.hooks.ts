@@ -7,7 +7,7 @@
  * The runs sibling is `prreview-runs.hooks.ts`; the PR-workspace view model
  * (`usePrReviewView`) drives both.
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useRef, useState } from 'react';
 
 import {
   addressReviewFindings,
@@ -20,6 +20,7 @@ import {
   pushPrFix,
   resolvePrConflicts,
 } from '@/lib/bridge';
+import { useLiveRegistry } from '@/lib/useLiveRegistry';
 
 /** One fix-start outcome (`address` / `fixCi` / `resolveConflicts`): `fixId`
  *  set on success; `error` carries a rejection message (also recorded per-PR in
@@ -95,81 +96,26 @@ export interface UsePrFixesResult {
  * reconcile against the Rust in-memory registry on mount / project arrival.
  */
 export function usePrFixes(hasProject: boolean): UsePrFixesResult {
-  const [fixes, setFixes] = useState<ReadonlyMap<string, PrFixState>>(
-    () => new Map(),
-  );
-  const [fixErrors, setFixErrors] = useState<ReadonlyMap<number, string>>(
-    () => new Map(),
-  );
   /** Locally-hidden failed fixes (the card's "dismiss"); never sent to Rust. */
   const [dismissedIds, setDismissedIds] = useState<ReadonlySet<string>>(
     () => new Set(),
   );
 
-  // Synchronous per-PR re-entrancy guard, mirroring the runs hook: a second
-  // `address` for the SAME PR in the render-timing gap (before the running
-  // snapshot lands and the UI disables its button) is a no-op instead of a
-  // second paid run. A ref — not state — so the check can't race a pending
-  // render. Distinct PRs are never blocked by each other.
-  const addressingPrs = useRef<Set<number>>(new Set());
+  const live = useLiveRegistry<PrFixState, number>({
+    hasProject,
+    list: listPrFixes,
+    subscribe: onPrFixEvent,
+    getId: (f) => f.id,
+    getUpdatedAt: (f) => f.updatedAt,
+    getStatusRank: (f) => fixStatusRank(f.status),
+  });
+  const fixes = live.items;
+  const fixErrors = live.errors;
+
   // The latest rendered map, for synchronous already-running checks in
-  // `address` (state reads inside a callback can be a render behind).
+  // start (state reads inside a callback can be a render behind).
   const fixesRef = useRef(fixes);
   fixesRef.current = fixes;
-
-  /** Fold one snapshot in: replace unless the held entry is strictly newer (a
-   *  stale list read racing a live event must not win). On an EQUAL
-   *  `updatedAt` the further-along lifecycle status wins — the lifecycle is
-   *  one-way, and same-ms transition pairs exist (the Rust dispatch-failure
-   *  path), so a late-arriving earlier status must not undo a terminal one. */
-  const upsert = useCallback((incoming: PrFixState) => {
-    setFixes((prev) => {
-      const existing = prev.get(incoming.id);
-      if (existing !== undefined) {
-        if (existing.updatedAt > incoming.updatedAt) return prev;
-        if (
-          existing.updatedAt === incoming.updatedAt &&
-          fixStatusRank(existing.status) >= fixStatusRank(incoming.status)
-        ) {
-          return prev;
-        }
-      }
-      const next = new Map(prev);
-      next.set(incoming.id, incoming);
-      return next;
-    });
-  }, []);
-
-  // Mount (and project-arrival) reconcile against the Rust in-memory registry.
-  // Defensive `Array.isArray`: the browser fallback is `[]`, but mocked seams
-  // may resolve `undefined` for unhandled commands.
-  useEffect(() => {
-    let cancelled = false;
-    void (async () => {
-      const list = await listPrFixes();
-      if (cancelled || !Array.isArray(list)) return;
-      for (const state of list) upsert(state);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [hasProject, upsert]);
-
-  // Subscribe ONCE to the live channel. Every snapshot folds into its own fix's
-  // entry — `upsert` is identity-stable, so this installs once.
-  useEffect(() => {
-    let unlisten: (() => void) | undefined;
-    let disposed = false;
-    void (async () => {
-      const fn = await onPrFixEvent(upsert);
-      if (disposed) fn();
-      else unlisten = fn;
-    })();
-    return () => {
-      disposed = true;
-      unlisten?.();
-    };
-  }, [upsert]);
 
   const fixForPr = useCallback(
     (prNumber: number): PrFixState | null => {
@@ -179,49 +125,31 @@ export function usePrFixes(hasProject: boolean): UsePrFixesResult {
         if (best === null || fix.updatedAt > best.updatedAt) best = fix;
       }
       if (best === null) return null;
-      // A dismissed latest hides the strip entirely — an OLDER fix must not
-      // resurface behind it (that would read as time going backwards).
       return dismissedIds.has(best.id) ? null : best;
     },
     [fixes, dismissedIds],
   );
 
-  /** The shared start discipline every fix kind runs through. Guard the SAME
-   *  PR against a double-start: synchronously via the in-flight ref (the
-   *  double-click window), and against the rendered map (a fix already
-   *  running). The backend additionally refuses a second running fix per PR
-   *  atomically in its registry. */
   const startFix = useCallback(
     async (
       prNumber: number,
       invoke: () => Promise<string>,
     ): Promise<AddressOutcome> => {
-      if (!hasProject) return { fixId: null, error: null };
-      if (addressingPrs.current.has(prNumber)) return { fixId: null, error: null };
-      for (const fix of fixesRef.current.values()) {
-        if (fix.prNumber === prNumber && fix.status === 'running') {
-          return { fixId: null, error: null };
-        }
-      }
-      addressingPrs.current.add(prNumber);
-      try {
-        const fixId = await invoke();
-        setFixErrors((prev) => {
-          if (!prev.has(prNumber)) return prev;
-          const next = new Map(prev);
-          next.delete(prNumber);
-          return next;
-        });
-        return { fixId, error: null };
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setFixErrors((prev) => new Map(prev).set(prNumber, message));
-        return { fixId: null, error: message };
-      } finally {
-        addressingPrs.current.delete(prNumber);
-      }
+      const { value: fixId, error } = await live.start(
+        prNumber,
+        invoke,
+        () => {
+          for (const fix of fixesRef.current.values()) {
+            if (fix.prNumber === prNumber && fix.status === 'running') {
+              return true;
+            }
+          }
+          return false;
+        },
+      );
+      return { fixId, error };
     },
-    [hasProject],
+    [live.start],
   );
 
   const address = useCallback(

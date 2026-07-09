@@ -1834,6 +1834,11 @@ function renderFixtures(fixtures: Fixtures): string {
   return `${JSON.stringify(fixtures, null, 2)}\n`;
 }
 
+/** LF-normalize text read from disk so `--check` matches CI on CRLF checkouts. */
+function normalizeFileText(text: string): string {
+  return text.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+}
+
 function generate(): { rust: string; fixtures: string } {
   const rust = formatRust(emitRust());
   const fixtures = renderFixtures(buildFixtures());
@@ -1850,7 +1855,9 @@ function main(): void {
       [RUST_OUT, rust],
       [FIXTURES_OUT, fixtures],
     ] as const) {
-      const current = fs.existsSync(file) ? fs.readFileSync(file, 'utf8') : '';
+      const current = fs.existsSync(file)
+        ? normalizeFileText(fs.readFileSync(file, 'utf8'))
+        : '';
       if (current !== next) {
         drift = true;
         process.stderr.write(

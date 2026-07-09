@@ -1,10 +1,4 @@
 export { WorktreeSwitcher } from './WorktreeSwitcher';
-export {
-  COLLAPSE_THRESHOLD,
-  filterTasksByWorktree,
-  partitionWorktreeTabs,
-  summarizeCollapsed,
-} from './WorktreeSwitcher.hooks';
 export type {
   ActiveWorktree,
   CollapsedSummary,
@@ -12,3 +6,9 @@ export type {
   WorktreeSwitcherProps,
   WorktreeTab,
 } from './WorktreeSwitcher.types';
+export {
+  COLLAPSE_THRESHOLD,
+  filterTasksByWorktree,
+  partitionWorktreeTabs,
+  summarizeCollapsed,
+} from './WorktreeSwitcher.utils';

@@ -4,7 +4,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { isHookBucketFile } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'max-hooks-per-file';
+const RULE_NAME = 'max-hooks-per-file';
 
 export interface MaxHooksPerFileOptions {
   readonly max?: number;

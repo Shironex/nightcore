@@ -30,7 +30,7 @@ import type { IMetaCtx, IMetaRule, IViolation } from '../types';
  * are captured and the frozen debt can only shrink.
  */
 
-const CAP = 400;
+const CAP = 400; // cross-ref: 500 in eslint.config.mjs (max-lines carve-outs); 400 here + rust-module-shape.ts (HARD_CAP)
 const WEB_SRC = 'apps/web/src';
 /** An entry whose file shrank >=15% below its frozen value must be tightened. */
 const TIGHTEN_RATIO = 0.85;

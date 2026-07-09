@@ -7,7 +7,7 @@ import { TaskActionsProvider } from '../actions';
 import { Column } from './Column';
 import * as stories from './Column.stories';
 
-const { Empty, InProgress, WaitingApproval, Verified } = composeStories(stories);
+const { Empty, InProgress, Verified } = composeStories(stories);
 
 test('shows the custom empty placeholder when a column has no tasks', async () => {
   const screen = render(<Empty />);
@@ -17,11 +17,6 @@ test('shows the custom empty placeholder when a column has no tasks', async () =
 test('renders the task title for a populated column', async () => {
   const screen = render(<InProgress />);
   await expect.element(screen.getByText('Generate API client')).toBeInTheDocument();
-});
-
-test('renders the roadmap badge beside the column title', async () => {
-  const screen = render(<WaitingApproval />);
-  await expect.element(screen.getByText('M3')).toBeInTheDocument();
 });
 
 test('fires onClear from a clearable, non-empty column', async () => {

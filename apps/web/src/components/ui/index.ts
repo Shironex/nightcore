@@ -1,5 +1,6 @@
 /** Barrel module re-exporting every shared UI primitive and its public types. */
 export { Badge } from './Badge';
+export type { BadgeProps, BadgeTone } from './Badge/Badge.types';
 export { BranchPicker } from './BranchPicker';
 export type { BranchPickerProps } from './BranchPicker/BranchPicker.types';
 export { BrandMark } from './BrandMark';
@@ -10,16 +11,21 @@ export type {
   CategoryTabsShellProps,
 } from './CategoryTabsShell';
 export { CategoryTabsShell } from './CategoryTabsShell';
-export type { CheckboxProps } from './Checkbox';
 export { Checkbox } from './Checkbox';
+export type { CheckboxProps } from './Checkbox/Checkbox.types';
 export type { CodeBlockProps } from './CodeBlock';
 export { CodeBlock } from './CodeBlock';
-export type { ConfirmDialogProps } from './ConfirmDialog';
 export { ConfirmDialog } from './ConfirmDialog';
+export type { ConfirmDialogProps } from './ConfirmDialog/ConfirmDialog.types';
 export type { DetailCardGridProps, DetailCardProps } from './DetailCardGrid';
 export { DetailCard, DetailCardGrid } from './DetailCardGrid';
 export type { DetailPanelShellProps } from './DetailPanelShell';
 export { DetailLocation, DetailPanelShell, DetailSection } from './DetailPanelShell';
+export { EditProjectDialog } from './EditProjectDialog';
+export type {
+  EditProjectDialogProps,
+  EditProjectSaveArgs,
+} from './EditProjectDialog/EditProjectDialog.types';
 export { EmptyState } from './EmptyState';
 export { FieldValue } from './FieldValue';
 export type {
@@ -34,6 +40,8 @@ export {
   inferLanguageFromFile,
 } from './GroundedFindingBody';
 export { IconButton } from './IconButton';
+export { IconPicker } from './IconPicker';
+export type { IconPickerProps } from './IconPicker/IconPicker.types';
 export * from './icons';
 export { IconTile } from './IconTile';
 export type { ImageDropzoneItem, ImageDropzoneProps } from './ImageDropzone';
@@ -45,12 +53,12 @@ export type {
   ScanConfigFormProps,
 } from './LensChipGrid';
 export { chipClass, LensChipGrid, ScanConfigForm } from './LensChipGrid';
-export type { MarkdownProps } from './Markdown';
 export { Markdown } from './Markdown';
-export type { MenuItem, MenuProps } from './Menu';
+export type { MarkdownProps } from './Markdown/Markdown.types';
 export { Menu } from './Menu';
-export type { ModalProps } from './Modal';
+export type { MenuItem, MenuProps } from './Menu/Menu.types';
 export { Modal, useLastPresent, useModal } from './Modal';
+export type { ModalProps } from './Modal/Modal.types';
 /** @deprecated Migrated to `ModelSelectField` / `ModelSelect` (B5). This thin
  *  adapter re-exports the combobox picker for one deprecation cycle, then is
  *  deleted. Prefer `ModelSelectField` (live-wired) for new surfaces. */
@@ -62,7 +70,7 @@ export type {
   ModelSelection,
   ModelSelectProps,
 } from './ModelSelect';
-export { ModelSelect, STATIC_MODEL_CATALOG_DATA, useModelCatalog } from './ModelSelect';
+export { ModelSelect } from './ModelSelect';
 export type { ModelSelectFieldProps } from './ModelSelectField';
 export {
   LIVE_MODEL_CATALOG_DATA,
@@ -71,9 +79,24 @@ export {
   useShowCostLine,
 } from './ModelSelectField';
 export * from './motion';
-export type { NumberFieldProps } from './NumberField';
 export { NumberField } from './NumberField';
+export type { NumberFieldProps } from './NumberField/NumberField.types';
 export { Pill } from './Pill';
+export { ProjectContextMenu } from './ProjectContextMenu';
+export type { ProjectContextMenuProps } from './ProjectContextMenu/ProjectContextMenu.types';
+export { ProjectIcon } from './ProjectIcon';
+export type { ProjectIconProps } from './ProjectIcon/ProjectIcon.types';
+export { ProjectIconEditor } from './ProjectIconEditor';
+export type {
+  ProjectIconEditorProps,
+  ProjectIconImageDraft,
+} from './ProjectIconEditor/ProjectIconEditor.types';
+export type { ProjectPathLabelProps } from './ProjectPathLabel';
+export {
+  compactProjectPath,
+  friendlyProjectPath,
+  ProjectPathLabel,
+} from './ProjectPathLabel';
 export type {
   KnownProviderId,
   ProviderGlyph,
@@ -84,7 +107,6 @@ export {
   getProviderIconForModel,
   inferProviderFromModel,
   knownProviderFrom,
-  PROVIDER_GLYPHS,
   providerGlyphFor,
   ProviderIcon,
   providerLabel,
@@ -101,14 +123,16 @@ export type {
   RunProgressUsage,
 } from './RunProgress';
 export { RunProgress } from './RunProgress';
-export type { SegmentedProps } from './Segmented';
 export { Segmented } from './Segmented';
+export type { SegmentedProps } from './Segmented/Segmented.types';
 export { Skeleton } from './Skeleton';
 export { Spinner } from './Spinner';
 export { StatusDot } from './StatusDot';
 export type { Toast, ToastApi, ToastTone } from './Toast';
 export { ToastProvider, useToast } from './Toast';
-export type { ToggleProps } from './Toggle';
 export { Toggle } from './Toggle';
-export type { ToolbarProps } from './Toolbar';
+export type { ToggleProps } from './Toggle/Toggle.types';
 export { Toolbar } from './Toolbar';
+export type { ToolbarProps } from './Toolbar/Toolbar.types';
+export type { ToolbarOptionProps } from './ToolbarOption';
+export { ToolbarOption } from './ToolbarOption';

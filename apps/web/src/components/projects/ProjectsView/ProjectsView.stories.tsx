@@ -13,6 +13,8 @@ const projects: Project[] = [
     branch: 'main',
     createdAt: '2026-06-21T00:00:00Z',
     lastActiveAt: new Date(Date.now() - 3 * 60_000).toISOString(),
+    icon: 'FolderCode',
+    customIconPath: null,
   },
   {
     id: 'automaker',
@@ -21,6 +23,8 @@ const projects: Project[] = [
     branch: 'main',
     createdAt: '2026-06-20T00:00:00Z',
     lastActiveAt: null,
+    icon: null,
+    customIconPath: null,
   },
 ];
 
@@ -109,6 +113,7 @@ const meta = {
     activeTasks: tasks,
     runningProjectIds: ['nightcore'],
     onOpen: fn(),
+    onEdit: fn(),
     onRename: fn(),
     onDelete: fn(),
     onNewProject: fn(),

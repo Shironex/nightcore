@@ -4,7 +4,7 @@ import type { JSONSchema4 } from '@typescript-eslint/utils/json-schema';
 import { getFeatureName } from '../utils/component-architecture';
 import { createRule } from '../utils/createRule';
 
-export const RULE_NAME = 'max-props-per-component';
+const RULE_NAME = 'max-props-per-component';
 
 export interface MaxPropsPerComponentOptions {
   readonly max?: number;

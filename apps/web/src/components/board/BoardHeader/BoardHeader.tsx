@@ -7,10 +7,12 @@ import {
   ImageIcon,
   Kbd,
   PlusIcon,
+  ProjectPathLabel,
   RefreshIcon,
   SearchIcon,
   SlidersIcon,
   Toolbar,
+  ToolbarOption,
 } from '@/components/ui';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
@@ -69,7 +71,7 @@ export function BoardHeader({
               </span>
             </div>
             <div className="mt-1.5 flex items-center gap-2 font-mono text-[11.5px] text-muted-foreground">
-              <span className="truncate">{projectPath}</span>
+              <ProjectPathLabel path={projectPath} />
               {projectBranch !== null && (
                 <>
                   <span className="opacity-40">·</span>
@@ -97,37 +99,24 @@ export function BoardHeader({
               />
               <span className="w-2.5 font-mono text-xs font-semibold">{concurrency}</span>
             </div>
-            <button
-              type="button"
-              onClick={onToggleAutoMode}
-              aria-pressed={autoMode}
-              title={autoMode ? 'Stop Auto Mode' : 'Start Auto Mode'}
-              className={`flex items-center gap-2.5 rounded-[9px] border px-3.5 py-1.5 text-[12.5px] font-semibold text-foreground transition-colors ${
-                autoMode
-                  ? 'border-primary/55 bg-primary/[0.12]'
-                  : 'border-border bg-white/[0.02] hover:border-white/20'
-              }`}
-            >
-              <BoltIcon
-                size={14}
-                className={autoMode ? 'text-primary' : 'text-muted-foreground'}
-              />
-              <span>Auto Mode</span>
-              <span
-                className={`relative h-[17px] w-[30px] rounded-full transition-colors ${
-                  autoMode ? 'bg-primary' : 'bg-white/[0.12]'
-                }`}
-              >
-                <span
-                  className={`absolute top-0.5 h-[13px] w-[13px] rounded-full bg-white transition-transform ${
-                    autoMode ? 'left-[14px]' : 'left-0.5'
-                  }`}
+            <ToolbarOption
+              label="Auto Mode"
+              icon={
+                <BoltIcon
+                  size={14}
+                  className={autoMode ? 'text-primary' : 'text-muted-foreground'}
                 />
-              </span>
-            </button>
-            <AutoModeOptions
-              autoCommitOnVerified={autoCommitOnVerified}
-              onAutoCommitChange={onAutoCommitChange}
+              }
+              on={autoMode}
+              onToggle={onToggleAutoMode}
+              title={autoMode ? 'Stop Auto Mode' : 'Start Auto Mode'}
+              settingsLabel="Auto Mode options"
+              settings={
+                <AutoModeOptions
+                  autoCommitOnVerified={autoCommitOnVerified}
+                  onAutoCommitChange={onAutoCommitChange}
+                />
+              }
             />
             <IconButton
               label="Refresh board & worktrees"
@@ -162,7 +151,7 @@ export function BoardHeader({
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex min-w-[220px] max-w-[420px] flex-1 items-center gap-2.5 rounded-[9px] border border-border bg-white/[0.02] px-3 py-2">
+          <div className="nc-focus-ring-host flex min-w-[220px] max-w-[420px] flex-1 items-center gap-2.5 rounded-[9px] border border-border bg-white/[0.02] px-3 py-2">
             <SearchIcon size={15} className="text-muted-foreground" />
             <input
               value={search}

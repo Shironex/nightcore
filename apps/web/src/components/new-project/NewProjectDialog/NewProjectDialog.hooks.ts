@@ -1,49 +1,69 @@
 /** Form state and create logic for the new-project dialog. */
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+import type { ProjectIconImageDraft } from '@/components/ui';
 
 import type { NewProjectDialogProps } from './NewProjectDialog.types';
+
+/** Derive a repository display name from either Windows or POSIX paths. */
+export function projectNameFromPath(path: string): string {
+  const segments = path.split(/[\\/]+/).filter(Boolean);
+  if (segments.at(-1)?.toLowerCase() === '.git') segments.pop();
+  return segments.at(-1) ?? '';
+}
 
 /** Form values, derived flags, and setters returned by `useNewProjectDialog`. */
 export interface NewProjectDialogState {
   name: string;
-  model: string;
-  concurrency: number;
+  icon: string | null;
+  pendingImage: ProjectIconImageDraft | null;
   canCreate: boolean;
   /** True while a create is in flight — disables the button to block double-submit. */
   busy: boolean;
   setName: (value: string) => void;
-  setModel: (value: string) => void;
-  setConcurrency: (value: number) => void;
+  setIcon: (value: string | null) => void;
+  setPendingImage: (value: NewProjectDialogState['pendingImage']) => void;
   create: () => void;
 }
 
 type UseNewProjectDialogArgs = Pick<
   NewProjectDialogProps,
-  'open' | 'models' | 'onCreate' | 'folder' | 'gitState'
+  'open' | 'onCreate' | 'folder' | 'gitState'
 >;
 
 /** Form state and the create handler for the new-project dialog. Creation is
  *  gated on a chosen folder, a non-empty name, and a valid git repo. */
 export function useNewProjectDialog({
   open,
-  models,
   onCreate,
   folder = null,
   gitState = 'unknown',
 }: UseNewProjectDialogArgs): NewProjectDialogState {
   const [name, setName] = useState('');
-  const [model, setModel] = useState(models[0] ?? '');
-  const [concurrency, setConcurrency] = useState(3);
+  const [icon, setIcon] = useState<string | null>(null);
+  const [pendingImage, setPendingImage] = useState<ProjectIconImageDraft | null>(null);
   const [busy, setBusy] = useState(false);
+  const nameEditedRef = useRef(false);
 
   // The dialog now stays mounted across close so its exit can animate — reset the
   // form each time it opens, otherwise a cancelled draft would reappear on reopen.
   useEffect(() => {
     if (!open) return;
     setName('');
-    setModel(models[0] ?? '');
-    setConcurrency(3);
-  }, [open, models]);
+    nameEditedRef.current = false;
+    setIcon(null);
+    setPendingImage(null);
+  }, [open]);
+
+  useEffect(() => {
+    if (!open || folder === null || nameEditedRef.current) return;
+    setName(projectNameFromPath(folder));
+  }, [folder, open]);
+
+  const updateName = useCallback((value: string) => {
+    nameEditedRef.current = true;
+    setName(value);
+  }, []);
 
   // Esc / click-outside (suppressed while busy) and the focus trap live in the
   // shared `<Modal>` the dialog renders through — the double-submit guard is
@@ -56,20 +76,25 @@ export function useNewProjectDialog({
     // is a no-op (the second click would register a duplicate project).
     if (!canCreate || busy) return;
     setBusy(true);
-    void Promise.resolve(onCreate({ folder, name: name.trim(), model, concurrency })).finally(
-      () => setBusy(false),
-    );
-  }, [canCreate, busy, folder, name, model, concurrency, onCreate]);
+    void Promise.resolve(
+      onCreate({
+        folder,
+        name: name.trim(),
+        icon: pendingImage === null ? icon : null,
+        customImage: pendingImage,
+      }),
+    ).finally(() => setBusy(false));
+  }, [canCreate, busy, folder, name, icon, pendingImage, onCreate]);
 
   return {
     name,
-    model,
-    concurrency,
+    icon,
+    pendingImage,
     canCreate,
     busy,
-    setName,
-    setModel,
-    setConcurrency,
+    setName: updateName,
+    setIcon,
+    setPendingImage,
     create,
   };
 }

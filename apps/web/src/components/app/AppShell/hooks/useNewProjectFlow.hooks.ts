@@ -1,7 +1,16 @@
 import { useCallback, useState } from 'react';
 
+import type { NewProjectDraft } from '@/components/new-project/NewProjectDialog/NewProjectDialog.types';
 import type { ToastApi } from '@/components/ui';
-import { chooseFolder, createProject, gitInit, isGitRepo } from '@/lib/bridge';
+import {
+  chooseFolder,
+  createProject,
+  gitInit,
+  isGitRepo,
+  saveProjectIcon,
+  setProjectIcon,
+} from '@/lib/bridge';
+import { invalidateProjectIconCache } from '@/lib/useProjectIconUrl';
 
 /** Git-repo status for the folder chosen in the New Project dialog. */
 type GitState = 'unknown' | 'checking' | 'valid' | 'invalid';
@@ -38,17 +47,46 @@ export function useNewProjectFlow(onClose: () => void, toast: ToastApi) {
   }, [folder, toast]);
 
   const create = useCallback(
-    async (path: string, name: string) => {
-      await createProject(path, name).catch((err) => {
+    async (draft: NewProjectDraft) => {
+      if (draft.folder === null) return;
+      const project = await createProject(draft.folder, draft.name).catch((err) => {
         console.error('create_project failed', err);
         toast.error('Could not create project', err);
         throw err;
       });
+
+      try {
+        if (draft.customImage !== null) {
+          await saveProjectIcon(project.id, {
+            format: draft.customImage.format as 'png' | 'jpeg' | 'webp' | 'gif',
+            data: draft.customImage.data,
+            filename: draft.customImage.filename,
+          });
+        } else if (draft.icon !== null) {
+          await setProjectIcon(project.id, draft.icon);
+        }
+        invalidateProjectIconCache(project.id);
+      } catch (err) {
+        console.error('save new project icon failed', err);
+        toast.error('Project created, but its icon could not be saved', err);
+      }
+
       reset();
       onClose();
     },
     [onClose, reset, toast],
   );
 
-  return { folder, gitState, pickFolder, initGit, create, reset };
+  const createDefault = useCallback(
+    (name: string) =>
+      create({
+        folder,
+        name,
+        icon: null,
+        customImage: null,
+      }),
+    [create, folder],
+  );
+
+  return { folder, gitState, pickFolder, initGit, create, createDefault, reset };
 }

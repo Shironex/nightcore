@@ -166,7 +166,6 @@ export function usePrFindingSelection({
       try {
         await fn();
       } catch (err) {
-        console.error(`${label} finding failed`, err);
         toast.error(`Could not ${label} finding`, err);
       } finally {
         setPending(false);

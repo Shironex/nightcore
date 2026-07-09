@@ -19,6 +19,7 @@ import {
   startPrReview,
 } from '@/lib/bridge';
 import { seedStepState } from '@/lib/scan-run';
+import { usePerPrStart } from '@/lib/useLiveRegistry';
 
 import {
   EMPTY_RUN_REGISTRY,
@@ -90,16 +91,9 @@ export function usePrReviewRuns(hasProject: boolean): UsePrReviewRunsResult {
   const [registry, setRegistry] =
     useState<PrReviewRunRegistry>(EMPTY_RUN_REGISTRY);
   const [runs, setRuns] = useState<PrReviewRun[]>([]);
-  const [startErrors, setStartErrors] = useState<ReadonlyMap<number, string>>(
-    () => new Map(),
-  );
+  const guard = usePerPrStart<number>(hasProject);
+  const startErrors = guard.errors;
 
-  // Synchronous per-PR re-entrancy guard: a second `start` for the SAME PR in
-  // the render-timing gap (before the optimistic running entry lands and the
-  // UI disables its button) is a no-op instead of a second paid run. A ref —
-  // not state — so the check can't race a pending render. Distinct PRs are
-  // never blocked by each other.
-  const startingPrs = useRef<Set<number>>(new Set());
   // The latest rendered registry, for synchronous already-running checks in
   // `start` (state reads inside a callback can be a render behind).
   const registryRef = useRef(registry);
@@ -153,7 +147,6 @@ export function usePrReviewRuns(hasProject: boolean): UsePrReviewRunsResult {
       const fn = await onPrReviewEvent((event) => {
         setRegistry((prev) => foldRegistry(prev, event));
         if (event.type === 'pr-review-finding-converted') {
-          // The lifecycle mark is folded above; the persisted run changed too.
           void refreshRuns();
           return;
         }
@@ -180,59 +173,46 @@ export function usePrReviewRuns(hasProject: boolean): UsePrReviewRunsResult {
       options: StartPrReviewOptions = {},
     ): Promise<string | null> => {
       if (!hasProject || lenses.length === 0 || prNumber <= 0) return null;
-      // Guard the SAME PR against a double-start: synchronously via the
-      // in-flight ref (the double-click window), and against the rendered
-      // registry (a run already streaming). The backend additionally rejects
-      // deeper races on its own in-flight guard.
-      if (startingPrs.current.has(prNumber)) return null;
-      if (latestRunForPr(registryRef.current, prNumber)?.status === 'running') {
+      const { value: runId, error } = await guard.start(
+        prNumber,
+        () =>
+          startPrReview(prNumber, lenses, {
+            model: options.model ?? null,
+            effort: options.effort ?? null,
+          }),
+        () =>
+          latestRunForPr(registryRef.current, prNumber)?.status === 'running',
+      );
+      if (error !== null) {
         return null;
       }
-      startingPrs.current.add(prNumber);
-      try {
-        const model = options.model ?? null;
-        const runId = await startPrReview(prNumber, lenses, {
-          model,
-          effort: options.effort ?? null,
-        });
-        // Optimistic running entry until `pr-review-started` lands. Carries the
-        // PR number (the started event omits it; the per-run fold preserves it
-        // across the started reset) so per-PR selectors see the run immediately.
-        const optimistic: ReviewStream = {
-          ...EMPTY_REVIEW_STREAM,
-          runId,
-          status: 'running',
-          prNumber,
-          model,
-          requestedLenses: lenses,
-          lensState: seedStepState(lenses),
-        };
-        setRegistry((prev) => {
-          // Live events can race ahead of the command resolution and create
-          // (and advance) this run's entry inside the IPC window — the
-          // optimistic seed must never overwrite that folded progress.
-          if (prev.has(runId)) return prev;
-          const next = new Map(prev);
-          next.set(runId, { stream: optimistic, startedAt: Date.now() });
-          return next;
-        });
-        setStartErrors((prev) => {
-          if (!prev.has(prNumber)) return prev;
-          const next = new Map(prev);
-          next.delete(prNumber);
-          return next;
-        });
-        void refreshRuns();
-        return runId;
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        setStartErrors((prev) => new Map(prev).set(prNumber, message));
+      if (runId === null) {
         return null;
-      } finally {
-        startingPrs.current.delete(prNumber);
       }
+      // Optimistic running entry until `pr-review-started` lands. Carries the
+      // PR number so per-PR selectors see the run immediately.
+      const optimistic: ReviewStream = {
+        ...EMPTY_REVIEW_STREAM,
+        runId,
+        status: 'running',
+        prNumber,
+        model: options.model ?? null,
+        requestedLenses: lenses,
+        lensState: seedStepState(lenses),
+      };
+      setRegistry((prev) => {
+        // Live events can race ahead of the command resolution and create
+        // (and advance) this run's entry inside the IPC window — the
+        // optimistic seed must never overwrite that folded progress.
+        if (prev.has(runId)) return prev;
+        const next = new Map(prev);
+        next.set(runId, { stream: optimistic, startedAt: Date.now() });
+        return next;
+      });
+      void refreshRuns();
+      return runId;
     },
-    [hasProject, refreshRuns],
+    [hasProject, refreshRuns, guard.start],
   );
 
   const cancel = useCallback(async (runId: string) => {
