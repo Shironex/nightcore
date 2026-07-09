@@ -10,8 +10,10 @@ import type { IMetaRule, IViolation } from '../types';
  * family could be built as a fresh clone and lint would stay green. This rule
  * makes divergence a CI failure:
  *
- *   (a) every enrolled single-run family's `<View>.hooks.ts` must build on
- *       `@/lib/useScanRun`;
+ *   (a) every enrolled single-run family must own a `<View>.hooks.ts` and build
+ *       on `@/lib/useScanRun` — from that entry file or from a colocated
+ *       `<View>/hooks/*.hooks.ts` sub-hook, since a large controller splits into
+ *       one-hook-per-file (the AppShell shape) without leaving the folder;
  *   (b) every enrolled family's `components/<family>/*-stream.ts` must import
  *       from `@/lib/scan-run` (board/session-stream.ts is the task-session
  *       activity fold, NOT a scan family, so it is exempt by not being
@@ -54,11 +56,13 @@ export const scanFamilyParityRule: IMetaRule = {
   run(ctx) {
     const violations: IViolation[] = [];
 
-    // (a) each single-run family's view hooks must use the shared lifecycle.
+    // (a) each single-run family's view hooks must use the shared lifecycle —
+    // in the entry file or in a colocated `hooks/*.hooks.ts` sub-hook. The
+    // re-clone tripwire is (c), not this import check.
     for (const [family, view] of SINGLE_RUN_FAMILIES) {
-      const hooks = `${WEB_COMPONENTS}/${family}/${view}/${view}.hooks.ts`;
-      const content = ctx.read(hooks);
-      if (content === null) {
+      const dir = `${WEB_COMPONENTS}/${family}/${view}`;
+      const hooks = `${dir}/${view}.hooks.ts`;
+      if (ctx.read(hooks) === null) {
         violations.push({
           file: hooks,
           rule: 'scan-family-parity',
@@ -66,11 +70,15 @@ export const scanFamilyParityRule: IMetaRule = {
         });
         continue;
       }
-      if (!content.includes("from '@/lib/useScanRun'")) {
+      const hookFiles = [hooks, ...ctx.glob(`${dir}/hooks/*.hooks.ts`)];
+      const usesShared = hookFiles.some((file) =>
+        (ctx.read(file) ?? '').includes("from '@/lib/useScanRun'"),
+      );
+      if (!usesShared) {
         violations.push({
           file: hooks,
           rule: 'scan-family-parity',
-          message: `Scan family '${family}' must drive its run lifecycle through the shared '@/lib/useScanRun' hook — do not re-clone the run state machine.`,
+          message: `Scan family '${family}' must drive its run lifecycle through the shared '@/lib/useScanRun' hook — in ${view}.hooks.ts or a colocated hooks/*.hooks.ts sub-hook. Do not re-clone the run state machine.`,
         });
       }
     }
