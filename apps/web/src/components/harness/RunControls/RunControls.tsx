@@ -38,7 +38,11 @@ export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
       scrollable={false}
       picker={
         <ModelSelectField
-          value={{ model: config.model, effort: config.effort, providerId: config.providerId }}
+          value={{
+            model: config.model,
+            effort: config.effort,
+            providerId: config.providerId ?? undefined,
+          }}
           onChange={(sel) => {
             config.setModel(sel.model);
             config.setEffort(sel.effort);

@@ -23,7 +23,7 @@ export function RunControls({ config, isStarting, onGrade }: RunControlsProps) {
     <ScanConfigForm
       picker={
         <ModelSelectField
-          value={{ model, effort: config.effort, providerId: config.providerId }}
+          value={{ model, effort: config.effort, providerId: config.providerId ?? undefined }}
           onChange={(sel) => {
             config.setModel(sel.model);
             config.setEffort(sel.effort);

@@ -74,7 +74,7 @@ export function ValidateControls({
           classifies the issue, grounds the related files, and proposes a plan.
         </p>
         <ModelSelectField
-          value={{ model, effort, providerId }}
+          value={{ model, effort, providerId: providerId ?? undefined }}
           onChange={(sel) => {
             onChangeModel(sel.model);
             onChangeEffort(sel.effort);
