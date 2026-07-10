@@ -105,26 +105,7 @@ impl PtySession {
         // the user's rc files for prompt/aliases without a full login profile.
         let args = interactive_args(&shell);
 
-        let mut cmd = if opts.confined {
-            // Confinement is opt-in + macOS-only + fail-closed (see `confine`).
-            let launch = confine::prepare(&opts.cwd)?;
-            let mut c = CommandBuilder::new(&launch.program);
-            c.args(&launch.prefix_args);
-            c.arg(&shell);
-            for arg in &args {
-                c.arg(arg);
-            }
-            c
-        } else {
-            let mut c = CommandBuilder::new(&shell);
-            for arg in &args {
-                c.arg(arg);
-            }
-            c
-        };
-        cmd.cwd(&opts.cwd);
-        cmd.env("TERM", "xterm-256color");
-        cmd.env("COLORTERM", "truecolor");
+        let cmd = build_command(&shell, &args, &opts)?;
 
         let size = PtySize {
             rows: opts.rows.max(1),
@@ -248,6 +229,42 @@ impl Drop for PtySession {
         // reap, discard). A double-kill is harmless.
         self.kill();
     }
+}
+
+/// Assemble the `CommandBuilder` for a spawn: the shell (bare, or wrapped by the
+/// macOS confinement launcher) with its interactive args, the cwd, and the base
+/// terminal env. A CONFINED spawn additionally inherits the launcher's shell-state
+/// env redirect (history / cache / compdump → temp; see `confine`), so a first run
+/// doesn't spam `$HOME` write denials; an UNCONFINED spawn gets none of that — a
+/// normal shell keeps normal history in `$HOME`. Split out from [`PtySession::spawn`]
+/// so the env assembly is unit-testable without opening a pty. FAIL-CLOSED: a
+/// confined spawn whose Seatbelt profile can't be assembled returns an error.
+fn build_command(shell: &str, args: &[&str], opts: &SpawnOpts) -> Result<CommandBuilder, String> {
+    let mut cmd = if opts.confined {
+        // Confinement is opt-in + macOS-only + fail-closed (see `confine`).
+        let launch = confine::prepare(&opts.cwd)?;
+        let mut c = CommandBuilder::new(&launch.program);
+        c.args(&launch.prefix_args);
+        c.arg(shell);
+        for arg in args {
+            c.arg(arg);
+        }
+        // Redirect shell housekeeping into the writable temp state dir (see `confine`).
+        for (key, value) in &launch.env {
+            c.env(key, value);
+        }
+        c
+    } else {
+        let mut c = CommandBuilder::new(shell);
+        for arg in args {
+            c.arg(arg);
+        }
+        c
+    };
+    cmd.cwd(&opts.cwd);
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+    Ok(cmd)
 }
 
 /// The blocking reader loop: read → forward raw chunks to the coalescer → on
@@ -385,6 +402,58 @@ mod tests {
             }
         }
         acc
+    }
+
+    #[test]
+    fn unconfined_command_sets_no_shell_state_redirect() {
+        // A normal shell keeps normal history: the confined redirect vars must be
+        // absent, but the base terminal env is still applied.
+        let tmp = TempDir::new().unwrap();
+        let opts = SpawnOpts {
+            cwd: tmp.path().to_path_buf(),
+            confined: false,
+            cols: 80,
+            rows: 24,
+        };
+        let cmd = build_command("/bin/sh", &["-i"], &opts).expect("unconfined command");
+        assert!(cmd.get_env("HISTFILE").is_none());
+        assert!(cmd.get_env("XDG_CACHE_HOME").is_none());
+        assert!(cmd.get_env("ZSH_COMPDUMP").is_none());
+        assert_eq!(
+            cmd.get_env("TERM").unwrap().to_string_lossy(),
+            "xterm-256color"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn confined_command_redirects_shell_state_into_a_created_temp_dir() {
+        // A confined spawn threads the launcher's env onto the command: the three
+        // redirect vars must be present, share one per-session state dir, and that dir
+        // must already exist (pre-created) — all under the temp tree, never $HOME.
+        let tmp = TempDir::new().unwrap();
+        let opts = SpawnOpts {
+            cwd: tmp.path().to_path_buf(),
+            confined: true,
+            cols: 80,
+            rows: 24,
+        };
+        let cmd = build_command("/bin/zsh", &["-i"], &opts).expect("confined command");
+        let read = |key: &str| {
+            cmd.get_env(key)
+                .unwrap_or_else(|| panic!("{key} is set"))
+                .to_string_lossy()
+                .into_owned()
+        };
+        let histfile = read("HISTFILE");
+        let cache = read("XDG_CACHE_HOME");
+        let compdump = read("ZSH_COMPDUMP");
+        let state_dir = std::path::Path::new(&histfile).parent().unwrap();
+        assert!(state_dir.is_dir(), "the shell-state dir was pre-created");
+        assert_eq!(std::path::Path::new(&cache).parent().unwrap(), state_dir);
+        assert_eq!(std::path::Path::new(&compdump).parent().unwrap(), state_dir);
+        assert!(histfile.contains("nightcore-term-sandbox"));
+        assert!(histfile.ends_with("zsh_history"));
     }
 
     #[test]
