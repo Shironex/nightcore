@@ -5,6 +5,7 @@ export * from './commands.js';
 export * from './config.js';
 export * from './events.js';
 export * from './harness.js';
+export * from './harness-enforce.js';
 export * from './insight.js';
 export * from './issue-triage.js';
 export * from './models.js';
