@@ -5,7 +5,6 @@
  *  Tauri webview (browser preview / stories) they resolve quiet sentinels so the
  *  Trust band degrades to its unavailable note instead of rejecting. */
 import { invoke } from '@tauri-apps/api/core';
-import { save } from '@tauri-apps/plugin-dialog';
 
 import { isTauri, tauriInvoke } from '../internal';
 import type { TrustReport } from '../types';
@@ -47,6 +46,12 @@ export async function exportTrustReport(
   suggestedName: string,
 ): Promise<TrustExportResult> {
   if (!isTauri()) return { saved: false, path: null };
+  // Dynamic import inside the isTauri() branch (the bridge idiom): a static
+  // `import { save }` at module scope breaks every sibling test whose
+  // `vi.mock('@tauri-apps/plugin-dialog')` factory predates this export — the
+  // barrel pulls this module into their graph and the named import fails to
+  // resolve against the narrower mock.
+  const { save } = await import('@tauri-apps/plugin-dialog');
   const dest = await save({
     title: 'Export Trust Report',
     defaultPath: `${suggestedName}.md`,
