@@ -5,7 +5,9 @@ import {
   GearIcon,
   GithubIcon,
   InsightIcon,
+  LockIcon,
   PerfIcon,
+  RefineIcon,
   VerifiedIcon,
 } from '@/components/ui';
 
@@ -56,6 +58,23 @@ export const APP_SHELL_NAV: NavItem[] = [
     label: 'Harness',
     hint: 'H',
     icon: <VerifiedIcon size={16} />,
+    group: 'tools',
+  },
+  // Temporary Harden / Enforce rows (Phase-1 PR 2). They coexist with the unified
+  // `harness` row until PR 3 removes it and regroups the sidebar into stages;
+  // hints D / E stay clear of the existing set (K W I R H P T S).
+  {
+    view: 'harden',
+    label: 'Harden',
+    hint: 'D',
+    icon: <RefineIcon size={16} />,
+    group: 'tools',
+  },
+  {
+    view: 'enforce',
+    label: 'Enforce',
+    hint: 'E',
+    icon: <LockIcon size={16} />,
     group: 'tools',
   },
   {

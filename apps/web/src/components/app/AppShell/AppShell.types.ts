@@ -7,6 +7,11 @@ export type AppView =
   | 'insight'
   | 'scorecard'
   | 'harness'
+  // The Harden / Enforce destinations (Phase-1 view rethink, PR 2): two view
+  // filters over the ONE HarnessView run/store. Added additively alongside the
+  // unified `harness` route, which PR 3 removes when the nav regroups.
+  | 'harden'
+  | 'enforce'
   | 'prreview'
   | 'issuetriage'
   | 'projects'
