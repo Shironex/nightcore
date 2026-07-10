@@ -94,6 +94,10 @@ export type { TrustReport } from '../generated/TrustReport';
 export type { PersistedTerminalInfo } from '../generated/PersistedTerminalInfo';
 export type { PersistedTerminalScrollback } from '../generated/PersistedTerminalScrollback';
 export type { TerminalSessionInfo } from '../generated/TerminalSessionInfo';
+// Terminal folder browser (open a shell in ANY directory): the one-level directory
+// listing + its dir entries, from the read-only `list_directory` command.
+export type { DirectoryEntry } from '../generated/DirectoryEntry';
+export type { DirectoryListing } from '../generated/DirectoryListing';
 export type { WorktreeDiff } from '../generated/WorktreeDiff';
 export type { WorktreeDiffFile } from '../generated/WorktreeDiffFile';
 export type { WorktreeInfo } from '../generated/WorktreeInfo';

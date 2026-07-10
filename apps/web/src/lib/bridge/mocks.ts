@@ -286,3 +286,96 @@ export function echoWriteTerminal(id: string, bytes: Uint8Array): void {
 export function echoKillTerminal(id: string): void {
   echoHandlers.delete(id);
 }
+
+// --- Folder browser (terminal "open a shell in ANY directory") -------------
+//
+// A small synthetic POSIX filesystem so the FolderBrowserDialog is fully
+// navigable in Storybook / component tests / `dogfood:ui` without a real backend.
+// The Tauri `list_directory` / `directory_exists` commands replace these inside the
+// webview; here we walk a fixed tree rooted at a fake home.
+
+/** The fake home directory the mock browser opens at (matches `list_directory`'s
+ *  "no path → home" default). */
+export const MOCK_HOME_DIR = '/Users/you';
+
+/** name → optional flags for one mock directory's children. */
+interface MockDir {
+  name: string;
+  isGitRepo?: boolean;
+  hidden?: boolean;
+}
+
+/** The synthetic tree: absolute dir → its child directories. Unlisted dirs read as
+ *  empty (a valid, navigable leaf). */
+const MOCK_FS: Record<string, MockDir[]> = {
+  '/Users/you': [
+    { name: 'projects' },
+    { name: 'Documents' },
+    { name: 'Downloads' },
+    { name: 'Desktop' },
+    { name: '.config', hidden: true },
+  ],
+  '/Users/you/projects': [
+    { name: 'nightcore', isGitRepo: true },
+    { name: 'automaker', isGitRepo: true },
+    { name: 'experiments' },
+    { name: 'archive' },
+  ],
+  '/Users/you/projects/nightcore': [
+    { name: 'apps' },
+    { name: 'docs' },
+    { name: 'tools' },
+    { name: '.nightcore', hidden: true },
+  ],
+  '/Users/you/projects/nightcore/apps': [
+    { name: 'web' },
+    { name: 'desktop' },
+    { name: 'sidecar' },
+  ],
+  '/Users/you/Documents': [{ name: 'notes' }, { name: 'receipts' }],
+};
+
+/** The set of every valid directory path in the mock tree (keys + their children),
+ *  so `directory_exists` can answer truthfully offline. */
+const MOCK_FS_PATHS: Set<string> = (() => {
+  const paths = new Set<string>();
+  for (const [dir, children] of Object.entries(MOCK_FS)) {
+    paths.add(dir);
+    for (const child of children) paths.add(`${dir}/${child.name}`);
+  }
+  return paths;
+})();
+
+/** The parent path of an absolute POSIX dir, or `null` at a top-level root. */
+function mockParent(path: string): string | null {
+  const idx = path.lastIndexOf('/');
+  if (idx <= 0) return null;
+  return path.slice(0, idx);
+}
+
+/** Offline `list_directory`: walk the synthetic tree one level deep. `null` path →
+ *  the fake home. Hidden dirs are filtered unless `includeHidden`. */
+export function echoListDirectory(
+  path: string | null,
+  includeHidden: boolean,
+): {
+  currentPath: string;
+  parentPath: string | null;
+  entries: { name: string; path: string; isGitRepo: boolean }[];
+} {
+  const current = path ?? MOCK_HOME_DIR;
+  const children = MOCK_FS[current] ?? [];
+  const entries = children
+    .filter((c) => includeHidden || !c.hidden)
+    .map((c) => ({
+      name: c.name,
+      path: `${current}/${c.name}`,
+      isGitRepo: c.isGitRepo ?? false,
+    }));
+  return { currentPath: current, parentPath: mockParent(current), entries };
+}
+
+/** Offline `directory_exists`: true for any path in the synthetic tree. */
+export function echoDirectoryExists(path: string): boolean {
+  return MOCK_FS_PATHS.has(path);
+}
