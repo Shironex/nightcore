@@ -33,6 +33,8 @@ export type {
 } from './EditProjectDialog/EditProjectDialog.types';
 export { EmptyState } from './EmptyState';
 export { FieldValue } from './FieldValue';
+export { FolderBrowserDialog } from './FolderBrowserDialog';
+export type { FolderBrowserDialogProps } from './FolderBrowserDialog/FolderBrowserDialog.types';
 export type {
   GroundedFindingBodyProps,
   GroundedFindingSections,

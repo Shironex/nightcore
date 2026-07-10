@@ -5,6 +5,7 @@
  * from `../mocks`). Event subscriptions live in `./events`; shared types in
  * `./types`. Call sites import from `@/lib/bridge` unchanged.
  */
+export * from './commands/fs';
 export * from './commands/harness';
 export * from './commands/insight';
 export * from './commands/issue-map';

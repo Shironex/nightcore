@@ -5,6 +5,12 @@
  * identity chrome strings — no duplication across the component folders.
  */
 import type { TerminalSessionInfo } from '@/lib/bridge';
+import { pathLeaf } from '@/lib/path-display';
+
+// Re-exported so the terminal feature's existing `displayPath` call sites keep a
+// single import surface; the implementation now lives in `@/lib/path-display` so the
+// shared folder-browser primitive can display paths without a cross-feature import.
+export { displayPath } from '@/lib/path-display';
 
 /** Server-enforced max live sessions (mirrors the Rust registry cap). Used to
  *  DISABLE the new-tab affordance client-side; the authoritative guard is the
@@ -33,31 +39,12 @@ export const TERMINAL_RENDER_OPTIONS = {
   },
 } as const;
 
-/** Strip a Windows extended-length "verbatim" prefix from a path, for DISPLAY only.
- *  `std::fs::canonicalize` emits `\\?\C:\…` on Windows, and the project store
- *  canonicalizes on registration, so those paths reach the terminal UI (the picker
- *  cwd label, the tab labels, the identity headers). Maps `\\?\C:\x` → `C:\x` and
- *  `\\?\UNC\server\share` → `\\server\share`; every non-verbatim string (all POSIX
- *  paths, and already-clean Windows paths) passes through untouched.
- *
- *  DISPLAY ONLY: callers keep the canonical string for spawn cwds and membership /
- *  restore checks (the server re-canonicalizes any cwd it receives), so this never
- *  weakens the cwd-confinement or fresh-shell-restore comparisons. */
-export function displayPath(path: string): string {
-  const VERBATIM_UNC = '\\\\?\\UNC\\';
-  const VERBATIM = '\\\\?\\';
-  if (path.startsWith(VERBATIM_UNC)) return `\\\\${path.slice(VERBATIM_UNC.length)}`;
-  if (path.startsWith(VERBATIM)) return path.slice(VERBATIM.length);
-  return path;
-}
-
 /** The last segment of a cwd — a tab's short label. Strips the Windows verbatim
  *  prefix and splits on BOTH separators, so `\\?\X:\dev\nightcore` and
- *  `/home/x/nightcore` both label as `nightcore`. */
+ *  `/home/x/nightcore` both label as `nightcore`. Thin alias over the shared
+ *  {@link pathLeaf} so the terminal keeps its domain-named helper. */
 export function terminalLabel(cwd: string): string {
-  const pretty = displayPath(cwd);
-  const parts = pretty.split(/[/\\]+/).filter((seg) => seg.length > 0);
-  return parts[parts.length - 1] ?? pretty;
+  return pathLeaf(cwd);
 }
 
 /** Identity chrome copy (decision 1): the user terminal runs OUTSIDE the agent
