@@ -220,7 +220,7 @@ Ranked by roadmap impact within each bucket.
   AI-merge, memory layer, Linear, Queue-v2; 3.0 cloud rebuild / PRs paused.
 - `docs/research/2026-07-05-worktree-capability-gap-automaker-vs-nightcore.md` —
   the granular worktree/branch operation matrix (feeds opportunities 6, 8).
-- `docs/research/2026-06-26-control-panel-roadmap.md` — existing north-star (align
+- The 2026-06-26 control-panel north-star (planning memory; never committed as a repo doc) — (align
   the "guardrails-as-product" positioning with the keystone TaskKind→skill registry).
 
 ## Risks & Gotchas

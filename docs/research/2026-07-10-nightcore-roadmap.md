@@ -3,8 +3,10 @@
 **Synthesized from:**
 - `docs/research/2026-07-10-competitive-landscape.md` (AutoMaker, Aperant, Vibe Kanban, Conductor, Sculptor, OpenHands + cloud-SaaS category)
 - `docs/research/2026-07-10-scan-views-rethink.md` (Insight/Scorecard/Harness/PR-Review/Issue-Triage flow analysis + Harness split evaluation)
-- Aligns with, and does not replace, the north star in `docs/research/2026-06-26-control-panel-roadmap.md`
-  (keystone: open TaskKind enum → skill registry; locked decisions stand).
+- Aligns with, and does not replace, the 2026-06-26 control-panel north star
+  (keystone: open TaskKind enum → skill registry; locked decisions stand — that
+  analysis was never committed as a repo doc; its decisions are recorded in the
+  project planning memory).
 
 ## The strategic moment
 
