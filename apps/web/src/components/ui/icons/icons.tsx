@@ -38,6 +38,7 @@ export {
   Folder as FolderIcon,
   Settings as GearIcon,
   History as HistoryIcon,
+  House as HomeIcon,
   Image as ImageIcon,
   Lightbulb as InsightIcon,
   KeyRound as KeyIcon,
