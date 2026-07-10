@@ -21,6 +21,7 @@ import type { HarnessMode } from '../harness-sections';
 import { HarnessProposalList } from '../HarnessProposalList';
 import { PolicySection } from '../PolicySection';
 import { ProfileBanner } from '../ProfileBanner';
+import { RuleCoverageGaps } from '../RuleCoverageGaps';
 import { RunControls } from '../RunControls';
 import { TaskProposalList } from '../TaskProposalList';
 import { HarnessOverlays } from './HarnessOverlays';
@@ -201,7 +202,9 @@ function ResultsScreen({
             skeletonCount={view.skeletonCount}
             emptyMessage={view.emptyMessage}
             onOpen={view.openFinding}
+            coverageByFingerprint={view.showCoverage ? view.coverageByFingerprint : undefined}
           />
+          {view.showCoverage && <RuleCoverageGaps gaps={view.coverage} />}
         </>
       )}
       {view.section === 'proposals' && (

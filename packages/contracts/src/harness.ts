@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { runTotals, scanFailure, TokenUsageSchema } from './event-fragments.js';
+import { RuleCoverageGapSchema } from './harness-enforce.js';
 import { FindingLocationSchema, FindingSeveritySchema } from './insight.js';
 
 /**
@@ -405,6 +406,11 @@ export const HarnessScanCompletedEvent = z.object({
   /** The task-shaped proposals the user converts to board tasks. Additive
    *  (`.default([])`) so an older on-disk run loads with an empty set — zero risk. */
   proposals: z.array(HarnessProposalSchema).default([]),
+  /** ENFORCE-lite rule coverage: one {@link RuleCoverageGapSchema} per convention —
+   *  `enforced` / `documented-only` / `unenforced`. Additive (`.default([])`) so an
+   *  older, pre-coverage on-disk run loads with an empty set (mirrors `proposals`
+   *  above). Coverage, not conformance — it never claims a convention is FOLLOWED. */
+  coverage: z.array(RuleCoverageGapSchema).default([]),
   categoriesRun: z.array(ConventionCategorySchema),
   ...runTotals,
   /** Set when the synthesis pass could not produce proposals (parse/session failure):

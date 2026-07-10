@@ -14,6 +14,7 @@ import type {
   ArtifactKind,
   ConventionCategory,
   ConventionKind,
+  CoverageStatus,
   HarnessProposalKind,
 } from '@/lib/bridge';
 
@@ -78,6 +79,41 @@ export const KIND_META: Record<ConventionKind, KindMeta> = {
  *  feature (`no-cross-feature-imports` forbids reaching into a sibling feature,
  *  so `lib/` is the one import-legal shared home). See {@link ../../lib/severity}. */
 export { SEVERITY_META, SEVERITY_ORDER, severityRankValue } from '@/lib/severity';
+
+interface CoverageStatusMeta {
+  label: string;
+  /** Tailwind text tone for the badge. */
+  tone: string;
+  /** Tailwind bg/border tone for the badge chip. */
+  chip: string;
+  /** One-line description for the panel legend / row hover. */
+  hint: string;
+}
+
+/** ENFORCE-lite coverage status palette + copy. `enforced` reads as the green
+ *  "has teeth" state; `documented-only` is the amber "claimed but unenforced"
+ *  (the agent-contract-parity insight inverted); `unenforced` is the muted gap.
+ *  Copy anchors on COVERAGE, not conformance — never "followed". */
+export const COVERAGE_STATUS_META: Record<CoverageStatus, CoverageStatusMeta> = {
+  enforced: {
+    label: 'Enforced',
+    tone: 'text-success',
+    chip: 'bg-success/[0.12] border-success/40',
+    hint: 'A lint/meta rule (or armed gauntlet check) covers this convention.',
+  },
+  'documented-only': {
+    label: 'Documented only',
+    tone: 'text-warning',
+    chip: 'bg-warning/[0.12] border-warning/40',
+    hint: 'An agent doc claims it, but no rule enforces it — a guardrail without teeth.',
+  },
+  unenforced: {
+    label: 'Unenforced',
+    tone: 'text-muted-foreground',
+    chip: 'bg-white/[0.05] border-border',
+    hint: 'Neither a rule nor an agent doc covers this convention.',
+  },
+};
 
 /** Per-artifact-kind label for the proposal list + detail panel. */
 export const ARTIFACT_KIND_META: Record<ArtifactKind, { label: string }> = {

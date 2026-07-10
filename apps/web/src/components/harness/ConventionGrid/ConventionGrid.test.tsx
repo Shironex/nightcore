@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-react';
 
 import * as stories from './ConventionGrid.stories';
 
-const { WithFindings, Empty, Streaming } = composeStories(stories);
+const { WithFindings, Empty, Streaming, WithCoverage } = composeStories(stories);
 
 test('renders a card per convention finding', async () => {
   const screen = render(<WithFindings />);
@@ -34,4 +34,17 @@ test('shows the empty message when there is nothing to render', async () => {
 test('marks the grid busy while streaming skeleton cards', async () => {
   const screen = render(<Streaming />);
   expect(screen.container.querySelector('[aria-busy="true"]')).not.toBeNull();
+});
+
+test('renders a coverage badge per row when coverage is supplied (Enforce)', async () => {
+  const screen = render(<WithCoverage />);
+  await expect
+    .element(screen.getByText('Enforced', { exact: true }))
+    .toBeInTheDocument();
+  await expect.element(screen.getByText('Unenforced')).toBeInTheDocument();
+});
+
+test('shows no coverage badge when coverage is not supplied', async () => {
+  const screen = render(<WithFindings />);
+  expect(screen.container.textContent).not.toContain('Enforced');
 });

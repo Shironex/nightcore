@@ -230,6 +230,7 @@ describe('foldHarness', () => {
       findings: [],
       artifacts: [],
       proposals: [],
+      coverage: [],
       categoriesRun: [],
       costUsd: 0,
       durationMs: 1,
@@ -260,6 +261,7 @@ describe('foldHarness', () => {
       findings: [wireFinding()],
       artifacts: [wireArtifact()],
       proposals: [],
+      coverage: [],
       categoriesRun: ['folder-structure', 'naming'],
       costUsd: 0.12,
       durationMs: 45000,
@@ -445,6 +447,7 @@ describe('normalizers', () => {
       findings: [],
       artifacts: [],
       proposals: [],
+      coverage: [],
       synthesizing: false,
       error: null,
     };
@@ -484,6 +487,7 @@ describe('normalizers', () => {
       findings: [],
       artifacts: [],
       proposals: [],
+      coverage: [],
       synthesizing: true,
       error: null,
     };

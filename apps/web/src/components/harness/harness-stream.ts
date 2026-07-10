@@ -39,8 +39,10 @@ import type {
   ProposalStatus,
   ProposedArtifactVM,
   RepoProfileVM,
+  RuleCoverageGapVM,
   RunStatus,
 } from './harness.types';
+import { storedToCoverageGap, wireToCoverageGap } from './harness-coverage';
 
 /** The stable `reason` carried on the terminal `harness-scan-failed` event — lets
  *  RESULTS tell a user cancel (`aborted`) apart from a real failure. */
@@ -61,17 +63,17 @@ export interface HarnessStream {
   artifacts: ProposedArtifactVM[];
   /** The task-shaped proposals synthesis produced (the convert-to-task units). */
   proposals: HarnessProposalVM[];
-  /** True between `harness-synthesis-started` and the proposals/terminal event —
-   *  the dead-zone after every lens reads "done" but the synthesis tail is still
-   *  running. Drives the RunProgress synthesis row + indeterminate bar shimmer. */
+  /** ENFORCE-lite coverage — one per convention; empty until the run completes. */
+  coverage: RuleCoverageGapVM[];
+  /** True between `harness-synthesis-started` and the terminal event — the dead-zone
+   *  after every lens reads "done" but synthesis still runs (drives the shimmer). */
   synthesizing: boolean;
   costUsd: number;
   usage: { inputTokens: number; outputTokens: number };
   durationMs: number;
   error: string | null;
-  /** The terminal failure `reason` once `harness-scan-failed` lands (else `null`).
-   *  Lets RESULTS render a user `aborted` cancel as a neutral notice rather than a
-   *  red failure banner. Not persisted on the run, so a reloaded cancel is `null`. */
+  /** The terminal failure `reason` once `harness-scan-failed` lands (else `null`) —
+   *  lets RESULTS show a user `aborted` cancel neutrally. Not persisted. */
   failureReason: HarnessFailureReason | null;
 }
 
@@ -85,6 +87,7 @@ export const EMPTY_HARNESS_STREAM: HarnessStream = {
   findings: [],
   artifacts: [],
   proposals: [],
+  coverage: [],
   synthesizing: false,
   costUsd: 0,
   usage: { inputTokens: 0, outputTokens: 0 },
@@ -284,6 +287,7 @@ export function streamFromRun(run: HarnessRun): HarnessStream {
     findings: run.findings.map(storedToConventionFinding),
     artifacts: run.artifacts.map(storedToArtifact),
     proposals: run.proposals.map(storedToProposal),
+    coverage: run.coverage.map(storedToCoverageGap),
     // Persisted on the run (set on harness-synthesis-started, cleared on
     // proposals-ready/terminal), so a run reloaded during the multi-minute serial
     // synthesis tail still shows the "Synthesizing…" state instead of a frozen
@@ -380,6 +384,7 @@ export const foldHarness = makeScanFold<
             profile: wireToProfile(event.profile),
             artifacts: event.artifacts.map(wireToArtifact),
             proposals: event.proposals.map(wireToProposal),
+            coverage: event.coverage.map(wireToCoverageGap),
           },
         };
       case 'harness-scan-failed':

@@ -11,7 +11,7 @@ import { useCallback, useMemo, useState } from 'react';
 
 import type { MenuItem, RunPhase, RunProgressCategory } from '@/components/ui';
 import { useToast } from '@/components/ui';
-import type { ConventionCategory } from '@/lib/bridge';
+import type { ConventionCategory, CoverageStatus } from '@/lib/bridge';
 import { EFFORT_OPTIONS, MODEL_OPTIONS } from '@/lib/models';
 import {
   buildLensTabs,
@@ -230,6 +230,18 @@ export function useHarnessView({
     [mode, stream.findings, proposals.proposalCount, apply.artifactCount],
   );
 
+  // ENFORCE-lite coverage: the per-convention `enforced/documented-only/unenforced`
+  // status, keyed by `fingerprint` so the ConventionGrid can badge each row. Only the
+  // Enforce destination surfaces it (the badge + the RuleCoverageGaps panel).
+  const showCoverage = mode === 'enforce';
+  const coverageByFingerprint = useMemo(() => {
+    const map: Record<string, CoverageStatus> = {};
+    for (const gap of stream.coverage) {
+      map[gap.conventionFingerprint] = gap.status;
+    }
+    return map;
+  }, [stream.coverage]);
+
   return {
     hasProject,
     projectName,
@@ -262,6 +274,9 @@ export function useHarnessView({
     gridFindings,
     skeletonCount,
     emptyMessage,
+    coverage: stream.coverage,
+    coverageByFingerprint,
+    showCoverage,
     proposals: proposals.proposals,
     proposalsLoading: proposals.proposalsLoading,
     proposalsEmptyMessage: proposals.proposalsEmptyMessage,

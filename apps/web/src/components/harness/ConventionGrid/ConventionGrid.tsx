@@ -2,9 +2,15 @@
  *  {@link DetailCard} and lays them out (with streaming skeletons + empty state)
  *  via {@link DetailCardGrid}. */
 import { DetailCard, DetailCardGrid } from '@/components/ui';
+import type { CoverageStatus } from '@/lib/bridge';
 import { formatLocation } from '@/lib/formatters';
 
-import { CATEGORY_META, KIND_META, SEVERITY_META } from '../harness.constants';
+import {
+  CATEGORY_META,
+  COVERAGE_STATUS_META,
+  KIND_META,
+  SEVERITY_META,
+} from '../harness.constants';
 import type { ConventionFindingVM } from '../harness.types';
 import type { ConventionGridProps } from './ConventionGrid.types';
 
@@ -19,13 +25,29 @@ function evidenceLabel(finding: ConventionFindingVM): string | null {
   return more > 0 ? `${base} +${more}` : base;
 }
 
+/** A small coverage badge: `enforced` / `documented-only` / `unenforced`. Rendered
+ *  only in the Enforce destination (when a coverage status is supplied for the row). */
+function CoverageBadge({ status }: { status: CoverageStatus }) {
+  const meta = COVERAGE_STATUS_META[status];
+  return (
+    <span
+      title={meta.hint}
+      className={`inline-flex items-center rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-semibold ${meta.chip} ${meta.tone}`}
+    >
+      {meta.label}
+    </span>
+  );
+}
+
 /** One convention card: severity + kind badges, lens glyph, title, grounded
  *  evidence, and a truncated description. Clickable → the detail panel. */
 function ConventionCard({
   finding,
+  coverage,
   onOpen,
 }: {
   finding: ConventionFindingVM;
+  coverage?: CoverageStatus;
   onOpen: (finding: ConventionFindingVM) => void;
 }) {
   const sev = SEVERITY_META[finding.severity];
@@ -64,6 +86,7 @@ function ConventionCard({
             <Icon size={11} />
             {Meta.label}
           </span>
+          {coverage !== undefined && <CoverageBadge status={coverage} />}
           {finding.status === 'converted' && (
             <span className="ml-auto rounded-md bg-success/[0.12] px-1.5 py-0.5 font-mono text-[10px] font-semibold text-success">
               task
@@ -87,6 +110,7 @@ export function ConventionGrid({
   skeletonCount,
   emptyMessage,
   onOpen,
+  coverageByFingerprint,
 }: ConventionGridProps) {
   return (
     <DetailCardGrid
@@ -95,7 +119,12 @@ export function ConventionGrid({
       skeletonCount={skeletonCount}
     >
       {findings.map((finding) => (
-        <ConventionCard key={finding.id} finding={finding} onOpen={onOpen} />
+        <ConventionCard
+          key={finding.id}
+          finding={finding}
+          coverage={coverageByFingerprint?.[finding.fingerprint]}
+          onOpen={onOpen}
+        />
       ))}
     </DetailCardGrid>
   );
