@@ -21,6 +21,7 @@ import {
   scanSkeletonCount,
 } from '@/lib/scan-run';
 import { sortBySeverityThenStatus } from '@/lib/severity';
+import { useBulkConvert } from '@/lib/useBulkConvert';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import { useScanResultsView } from '@/lib/useScanResultsView';
 import { useScanRun } from '@/lib/useScanRun';
@@ -85,6 +86,31 @@ export function useHarnessView({
   const proposals = useHarnessProposals({ stream, harness, runAction, toast });
   const apply = useHarnessApply({ stream, harness, runAction, toast });
 
+  // Bulk convert-all for the ENFORCE conventions grid (the shared Insight idiom):
+  // "convert every open convention → tasks" over the per-finding convert seam. Its
+  // sibling — the Harden proposals convert-all — lives in `useHarnessProposals`.
+  const {
+    resetBulk: resetConventionsBulk,
+    convertAll: convertAllConventions,
+    bulkConverting: conventionsBulkConverting,
+    bulkProgress: conventionsBulkProgress,
+    bulkStatusMessage: conventionsBulkStatusMessage,
+    bulkError: conventionsBulkError,
+  } = useBulkConvert(harness.convertFinding, 'convertHarnessFindingToTask failed');
+
+  const openConventions = useMemo(
+    () => stream.findings.filter((f) => f.status === 'open'),
+    [stream.findings],
+  );
+
+  // Reset the results transient state AND both convert-all machines together, so a
+  // prior run's "Converted k/N" summaries can't bleed into a freshly entered run.
+  const resetRunTransient = useCallback(() => {
+    resetTransient();
+    resetConventionsBulk();
+    proposals.resetProposalsBulk();
+  }, [resetTransient, resetConventionsBulk, proposals.resetProposalsBulk]);
+
   // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
   // a run + item to open. Consume the target FIRST, land on that run's RESULTS in
   // the owning section, and open the item's detail panel — a convention finding or
@@ -93,7 +119,7 @@ export function useHarnessView({
     preselect,
     onPreselectConsumed,
     selectRun: harness.selectRun,
-    onEnter: resetTransient,
+    onEnter: resetRunTransient,
     onOpenItem: ({ itemId, kind }) => {
       if (kind === 'proposal') {
         setSection('proposals');
@@ -121,9 +147,9 @@ export function useHarnessView({
   }, [config, stream.model, stream.requestedCategories, startReconfigure]);
 
   const onScan = useCallback(() => {
-    resetTransient();
+    resetRunTransient();
     void harness.start(config.orderedSelected, config.model, config.effort, config.providerId);
-  }, [harness, config, resetTransient]);
+  }, [harness, config, resetRunTransient]);
 
   const summary = useMemo(() => {
     const modelLabel =
@@ -210,11 +236,11 @@ export function useHarnessView({
         label: `${new Date(run.createdAt).toLocaleString()} · ${run.findings.length} conventions`,
         onClick: () => {
           // Selecting a past run lands on its RESULTS — drop any reconfigure/peek.
-          resetTransient();
+          resetRunTransient();
           void harness.selectRun(run.id);
         },
       })),
-    [harness, resetTransient],
+    [harness, resetRunTransient],
   );
 
   // The section toggle is a pure filter over the ONE run's findings/proposals/
@@ -224,10 +250,10 @@ export function useHarnessView({
     () =>
       sectionTabsForMode(mode, {
         conventions: countOpenItems(stream.findings),
-        proposals: proposals.proposalCount,
+        proposals: proposals.proposalsBulk.count,
         artifacts: apply.artifactCount,
       }),
-    [mode, stream.findings, proposals.proposalCount, apply.artifactCount],
+    [mode, stream.findings, proposals.proposalsBulk.count, apply.artifactCount],
   );
 
   // ENFORCE-lite coverage: the per-convention `enforced/documented-only/unenforced`
@@ -289,7 +315,18 @@ export function useHarnessView({
     selectedProposal: proposals.selectedProposal,
     openProposal: proposals.openProposal,
     closeProposal: proposals.closeProposal,
-    hasConvertibleProposals: proposals.hasConvertibleProposals,
+    // The two convert-all bar slices (shared Insight idiom). Grouped as cohesive
+    // sub-objects — spread straight into <BulkConvertBar> — so the view model's
+    // budgeted return surface (issue #53) stays under cap.
+    conventionsBulk: {
+      count: openConventions.length,
+      converting: conventionsBulkConverting,
+      progress: conventionsBulkProgress,
+      statusMessage: conventionsBulkStatusMessage,
+      error: conventionsBulkError,
+      onConvertAll: () => convertAllConventions(openConventions),
+    },
+    proposalsBulk: proposals.proposalsBulk,
     selectedArtifact: apply.selectedArtifact,
     openArtifact: apply.openArtifact,
     closeArtifact: apply.closeArtifact,
@@ -306,7 +343,6 @@ export function useHarnessView({
     onApplyProposal: proposals.onApplyProposal,
     onDismissProposal: proposals.onDismissProposal,
     onRestoreProposal: proposals.onRestoreProposal,
-    onConvertAllProposals: proposals.onConvertAllProposals,
     applyProposalTarget: proposals.applyProposalTarget,
     applyProposalPaths: proposals.applyProposalPaths,
     confirmApplyProposal: proposals.confirmApplyProposal,

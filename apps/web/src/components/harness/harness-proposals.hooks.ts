@@ -3,7 +3,8 @@
  *  bundle-apply confirm flow (writing every referenced artifact to disk). */
 import { useCallback, useMemo, useState } from 'react';
 
-import type { ToastApi } from '@/components/ui';
+import type { BulkConvertBarProps, ToastApi } from '@/components/ui';
+import { useBulkConvert } from '@/lib/useBulkConvert';
 
 import type { HarnessProposalVM } from './harness.types';
 import type { UseHarnessResult } from './harness-data.hooks';
@@ -21,7 +22,6 @@ export interface HarnessProposalsConfig {
 /** The proposals slice the HarnessView shell renders. */
 export interface HarnessProposalsApi {
   proposals: HarnessProposalVM[];
-  proposalCount: number;
   proposalsLoading: boolean;
   proposalsEmptyMessage: string;
   selectedProposal: HarnessProposalVM | null;
@@ -29,11 +29,15 @@ export interface HarnessProposalsApi {
   /** Open a proposal by id (the preselect provenance target). */
   openProposalById: (id: string) => void;
   closeProposal: () => void;
-  hasConvertibleProposals: boolean;
   onConvertProposal: (proposalId: string) => void;
   onDismissProposal: (proposalId: string) => void;
   onRestoreProposal: (proposalId: string) => void;
-  onConvertAllProposals: () => void;
+  /** The convert-all bar slice (every still-convertible proposal → tasks), the
+   *  shared Insight idiom: progress, partial-failure resilience, aria-live. The
+   *  `count` doubles as the section-tab badge (still-convertible proposals). */
+  proposalsBulk: BulkConvertBarProps;
+  /** Reset the convert-all counters so a prior run's summary can't bleed on a run change. */
+  resetProposalsBulk: () => void;
   onApplyProposal: (proposalId: string) => void;
   applyProposalTarget: HarnessProposalVM | null;
   applyProposalPaths: string[];
@@ -100,46 +104,47 @@ export function useHarnessProposals({
 
   const cancelApplyProposal = useCallback(() => setApplyProposalTargetId(null), []);
 
-  // Convert every still-convertible proposal (status `proposed`) in one action, mirroring
-  // Insight's convert-all. Sequential so a mid-flight failure surfaces without racing the
-  // store; the `proposal-converted` notice keeps the stream in sync as each lands.
+  // Convert every still-convertible proposal (status `proposed`) in one action —
+  // the shared Insight convert-all machine (sequential loop, per-item progress,
+  // partial-failure resilience, aria-live). The `proposal-converted` notice keeps
+  // the stream in sync as each lands; the convert closure is read through a ref so
+  // its rebinding on `stream.runId` is safe.
   const convertibleProposals = useMemo(
     () => stream.proposals.filter((p) => p.status === 'proposed'),
     [stream.proposals],
   );
-  const onConvertAllProposals = useCallback(() => {
-    if (convertibleProposals.length === 0) return;
-    void runAction('convert all proposals', async () => {
-      for (const p of convertibleProposals) {
-        await harness.convertProposal(p.id);
-      }
-      toast.push({
-        tone: 'success',
-        title: 'Proposals converted',
-        description: `${convertibleProposals.length} ${
-          convertibleProposals.length === 1 ? 'proposal' : 'proposals'
-        } converted to board tasks.`,
-      });
-    });
-  }, [convertibleProposals, runAction, harness, toast]);
+  const {
+    resetBulk,
+    convertAll,
+    bulkConverting,
+    bulkProgress,
+    bulkStatusMessage,
+    bulkError,
+  } = useBulkConvert(harness.convertProposal, 'convertHarnessProposal failed');
 
   return {
     proposals: stream.proposals,
-    proposalCount: stream.proposals.filter((p) => p.status === 'proposed').length,
     proposalsLoading: stream.status === 'running' && stream.proposals.length === 0,
     proposalsEmptyMessage,
     selectedProposal,
     openProposal: (proposal) => setSelectedProposalId(proposal.id),
     openProposalById: (id) => setSelectedProposalId(id),
     closeProposal: () => setSelectedProposalId(null),
-    hasConvertibleProposals: convertibleProposals.length > 0,
     onConvertProposal: (id) =>
       void runAction('convert proposal', () => harness.convertProposal(id)),
     onDismissProposal: (id) =>
       void runAction('dismiss proposal', () => harness.dismissProposal(id)),
     onRestoreProposal: (id) =>
       void runAction('restore proposal', () => harness.restoreProposal(id)),
-    onConvertAllProposals,
+    proposalsBulk: {
+      count: convertibleProposals.length,
+      converting: bulkConverting,
+      progress: bulkProgress,
+      statusMessage: bulkStatusMessage,
+      error: bulkError,
+      onConvertAll: () => convertAll(convertibleProposals),
+    },
+    resetProposalsBulk: resetBulk,
     onApplyProposal: (id) => setApplyProposalTargetId(id),
     applyProposalTarget,
     applyProposalPaths,

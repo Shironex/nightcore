@@ -19,7 +19,13 @@ import {
   startScorecard,
   type Task,
 } from '@/lib/bridge';
-import { deriveRunPhase, patchStreamItem, seedStepState } from '@/lib/scan-run';
+import {
+  countOpenItems,
+  deriveRunPhase,
+  patchStreamItem,
+  seedStepState,
+} from '@/lib/scan-run';
+import { useBulkConvert } from '@/lib/useBulkConvert';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import { useScanItemActions } from '@/lib/useScanItemActions';
 import { useScanResultsView } from '@/lib/useScanResultsView';
@@ -196,6 +202,16 @@ export interface ScorecardViewModel {
   onGrade: () => void;
   onCancel: () => void;
   startNewRun: () => void;
+  /** Bulk harden: every open (not-yet-hardened) reading → tasks (idempotent). */
+  convertAll: () => void;
+  bulkConverting: boolean;
+  bulkProgress: { done: number; total: number; failed: number };
+  /** Polite aria-live announcement for the convert-all flow ('' when idle). */
+  bulkStatusMessage: string;
+  /** Inline failure summary when conversions rejected mid-loop, else `null`. */
+  bulkError: string | null;
+  /** Count of open (hardenable) readings in the current run. */
+  openCount: number;
   onHarden: (readingId: string) => void;
   onGotoBoard?: () => void;
 }
@@ -223,6 +239,19 @@ export function useScorecardView({
   });
   const { setSelectedId, resetTransient, runAction } = view;
 
+  // Bulk convert-all (the shared Insight idiom): "harden every open reading →
+  // tasks" over the per-reading `harden` seam. The convert closure is read
+  // through a ref inside, so its rebinding on `stream.runId` is safe.
+  const { resetBulk, convertAll, bulkConverting, bulkProgress, bulkStatusMessage, bulkError } =
+    useBulkConvert(scorecard.harden, 'convertReadingToTask failed');
+
+  // Reset the results transient state AND the convert-all counters together, so a
+  // prior run's "Converted k/N" summary can't bleed into a freshly entered run.
+  const resetRun = useCallback(() => {
+    resetTransient();
+    resetBulk();
+  }, [resetTransient, resetBulk]);
+
   // Board→scan provenance navigation: a task's `sourceRef` chip landed here with
   // a run + reading to open. Consume the target FIRST, land on that run's RESULTS,
   // and open the reading's detail panel.
@@ -230,7 +259,7 @@ export function useScorecardView({
     preselect,
     onPreselectConsumed,
     selectRun: scorecard.selectRun,
-    onEnter: resetTransient,
+    onEnter: resetRun,
     onOpenItem: (target) => setSelectedId(target.itemId),
   });
 
@@ -283,11 +312,11 @@ export function useScorecardView({
       scorecard.runs.map((run) => ({
         label: `${new Date(run.createdAt).toLocaleString()} · ${run.readings.length} graded`,
         onClick: () => {
-          resetTransient();
+          resetRun();
           void scorecard.selectRun(run.id);
         },
       })),
-    [scorecard, resetTransient],
+    [scorecard, resetRun],
   );
 
   const emptyMessage = useMemo(() => {
@@ -322,10 +351,17 @@ export function useScorecardView({
     closeReading: () => setSelectedId(null),
     pending: view.pending,
     onGrade: () => {
-      resetTransient();
+      resetRun();
       void scorecard.start(config.orderedSelected, config.model, config.effort, config.providerId);
     },
     onCancel: () => void scorecard.cancel(),
+    convertAll: () =>
+      convertAll(stream.readings.filter((r) => r.status === 'open')),
+    bulkConverting,
+    bulkProgress,
+    bulkStatusMessage,
+    bulkError,
+    openCount: countOpenItems(stream.readings),
     startNewRun: () => {
       config.prefill({
         model: stream.model,

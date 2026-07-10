@@ -1,13 +1,13 @@
 /** The HarnessView component shell and its per-phase screens (CONFIGURE / RUNNING
  *  / RESULTS), rendered purely from the `useHarnessView` view model. */
 import {
+  BulkConvertBar,
   Button,
   ChevronLeftIcon,
   EmptyState,
   FolderIcon,
   HistoryIcon,
   Menu,
-  MoveIcon,
   RetryIcon,
   RunLifecycleShell,
   RunProgress,
@@ -196,6 +196,9 @@ function ResultsScreen({
 
       {view.section === 'conventions' && (
         <>
+          {view.stream.status === 'completed' && (
+            <BulkConvertBar {...view.conventionsBulk} />
+          )}
           <CategoryTabs tabs={view.tabs} active={view.activeTab} onSelect={view.setActiveTab} />
           <ConventionGrid
             findings={view.gridFindings}
@@ -209,13 +212,8 @@ function ResultsScreen({
       )}
       {view.section === 'proposals' && (
         <div className="flex min-h-0 flex-1 flex-col">
-          {view.hasConvertibleProposals && (
-            <div className="flex items-center justify-end border-b border-border px-6 py-2">
-              <Button variant="secondary" onClick={view.onConvertAllProposals}>
-                <MoveIcon size={14} />
-                Convert all to tasks
-              </Button>
-            </div>
+          {view.stream.status === 'completed' && (
+            <BulkConvertBar {...view.proposalsBulk} />
           )}
           <TaskProposalList
             proposals={view.proposals}

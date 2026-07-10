@@ -1,5 +1,6 @@
 /** Prop + view-model types for the top-level HarnessView component. */
 import type {
+  BulkConvertBarProps,
   CategoryRunState,
   MenuItem,
   RunPhase,
@@ -119,8 +120,11 @@ export interface HarnessViewModel {
   selectedProposal: HarnessProposalVM | null;
   openProposal: (proposal: HarnessProposalVM) => void;
   closeProposal: () => void;
-  /** Whether any proposal is still convertible (drives the "Convert all" affordance). */
-  hasConvertibleProposals: boolean;
+  /** Convert-all bar slice for the ENFORCE conventions grid — spread into
+   *  `<BulkConvertBar>` (count / progress / partial-failure / aria-live). */
+  conventionsBulk: BulkConvertBarProps;
+  /** Convert-all bar slice for the HARDEN proposals list — same shared idiom. */
+  proposalsBulk: BulkConvertBarProps;
   /** The artifact open in the detail panel, or `null`. */
   selectedArtifact: ProposedArtifactVM | null;
   openArtifact: (artifact: ProposedArtifactVM) => void;
@@ -145,8 +149,6 @@ export interface HarnessViewModel {
   onApplyProposal: (proposalId: string) => void;
   onDismissProposal: (proposalId: string) => void;
   onRestoreProposal: (proposalId: string) => void;
-  /** Convert every still-convertible proposal in one action. */
-  onConvertAllProposals: () => void;
   /** The proposal awaiting bundle-apply confirmation, or `null` (drives the dialog). */
   applyProposalTarget: HarnessProposalVM | null;
   /** The repo-relative paths the bundle-apply would write (shown in the dialog). */
