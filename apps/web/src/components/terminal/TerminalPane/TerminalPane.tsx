@@ -2,33 +2,41 @@ import '@xterm/xterm/css/xterm.css';
 
 import { LockIcon, TerminalIcon } from '@/components/ui';
 
-import { displayPath, identityLabel, identityTitle } from '../terminal-shared';
+import {
+  confinedNoiseHint,
+  displayPath,
+  identityLabel,
+  identityTitle,
+} from '../terminal-shared';
 import { useTerminalPane } from './TerminalPane.hooks';
 import type { TerminalPaneProps } from './TerminalPane.types';
 
 /** The identity chrome header (decision 1): the user terminal runs OUTSIDE the
  *  agent guardrails, so the pane says so — an unconfined marker (or the confined
- *  variant for PR C), the shell, and the cwd. */
+ *  variant), the shell, and the cwd. A confined pane also gets a one-line hint that
+ *  $HOME write denials during shell startup are expected. */
 function IdentityHeader({ confined, shell, cwd }: { confined: boolean; shell: string; cwd: string }) {
   const Icon = confined ? LockIcon : TerminalIcon;
   return (
-    <div
-      title={identityTitle(confined)}
-      className="flex items-center gap-2 border-b border-border bg-black/25 px-3 py-1.5 text-[11px]"
-    >
-      <span
-        className={`flex items-center gap-1.5 font-medium ${
-          confined ? 'text-warning' : 'text-primary/90'
-        }`}
-      >
-        <Icon size={12} aria-hidden />
-        {identityLabel(confined)}
-      </span>
-      <span className="text-muted-foreground/50" aria-hidden>
-        ·
-      </span>
-      <span className="truncate font-mono text-muted-foreground">{shell}</span>
-      <span className="truncate font-mono text-muted-foreground/70">{displayPath(cwd)}</span>
+    <div className="flex flex-col border-b border-border bg-black/25 px-3 py-1.5">
+      <div title={identityTitle(confined)} className="flex items-center gap-2 text-[11px]">
+        <span
+          className={`flex items-center gap-1.5 font-medium ${
+            confined ? 'text-warning' : 'text-primary/90'
+          }`}
+        >
+          <Icon size={12} aria-hidden />
+          {identityLabel(confined)}
+        </span>
+        <span className="text-muted-foreground/50" aria-hidden>
+          ·
+        </span>
+        <span className="truncate font-mono text-muted-foreground">{shell}</span>
+        <span className="truncate font-mono text-muted-foreground/70">{displayPath(cwd)}</span>
+      </div>
+      {confined && (
+        <span className="mt-0.5 text-[10px] text-muted-foreground/70">{confinedNoiseHint()}</span>
+      )}
     </div>
   );
 }

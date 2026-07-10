@@ -27,11 +27,20 @@ test('renders the unconfined identity chrome, shell, and cwd', async () => {
   await expect.element(screen.getByText('Your shell — unconfined')).toBeInTheDocument();
   await expect.element(screen.getByText('/bin/zsh')).toBeInTheDocument();
   await expect.element(screen.getByText('/Users/dev/nightcore')).toBeInTheDocument();
+  // The write-containment hint is confined-only — absent on an unconfined tab.
+  expect(screen.container.textContent).not.toContain('some shell-startup noise is normal');
 });
 
-test('renders the confined chrome variant from the session flag', async () => {
+test('renders the confined chrome variant with the write-containment hint', async () => {
   const screen = render(<Confined />);
   await expect.element(screen.getByText('Confined to this worktree')).toBeInTheDocument();
+  await expect
+    .element(
+      screen.getByText(
+        'Writes outside this folder are blocked — some shell-startup noise is normal.',
+      ),
+    )
+    .toBeInTheDocument();
 });
 
 test('attaches a live xterm instance for a real (echo) session', async () => {

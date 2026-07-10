@@ -32,6 +32,10 @@ const SANDBOX_EXEC: &str = "/usr/bin/sandbox-exec";
 pub(crate) struct ConfinedLaunch {
     pub(crate) program: PathBuf,
     pub(crate) prefix_args: Vec<String>,
+    /// Env vars the caller sets on the PTY command so zsh/oh-my-zsh housekeeping
+    /// writes (history, completion dump, framework cache) land in the writable temp
+    /// state dir instead of $HOME, which the profile denies. See [`shell_state_env`].
+    pub(crate) env: Vec<(String, String)>,
 }
 
 /// Escape a path for a Seatbelt TinyScheme double-quoted string literal.
@@ -99,6 +103,24 @@ fn realpath_or(p: &Path) -> String {
         .into_owned()
 }
 
+/// The shell-state env redirect for a confined session: point zsh's history +
+/// completion dump and the XDG cache root (which oh-my-zsh honours) at `state_dir`,
+/// a subdir of the already-writable temp scratch tree, so first-run housekeeping
+/// doesn't spam `Operation not permitted` denials trying to write $HOME
+/// (`~/.zsh_history`, `~/.zcompdump`, `~/.cache/oh-my-zsh`) — which the profile
+/// denies. BEST-EFFORT: a shell/framework that ignores these vars still just prints
+/// the denials; we deliberately do NOT widen the profile with $HOME allowances to
+/// silence them. Pure — the caller pre-creates the dirs.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn shell_state_env(state_dir: &Path) -> Vec<(String, String)> {
+    let at = |leaf: &str| state_dir.join(leaf).to_string_lossy().into_owned();
+    vec![
+        ("HISTFILE".to_string(), at("zsh_history")),
+        ("XDG_CACHE_HOME".to_string(), at("cache")),
+        ("ZSH_COMPDUMP".to_string(), at("zcompdump")),
+    ]
+}
+
 /// The writable roots for one confined session: the (canonicalized) cwd, the git
 /// common dir for a worktree cwd, `/dev`, and the darwin temp trees. Deduped,
 /// order-stable. Returns an error only if the cwd itself can't be canonicalized
@@ -160,12 +182,25 @@ pub(crate) fn prepare(cwd: &Path) -> Result<ConfinedLaunch, String> {
     std::fs::write(&profile_path, profile)
         .map_err(|e| format!("confined terminal: cannot write Seatbelt profile: {e}"))?;
 
+    // Redirect shell housekeeping (history / completion dump / framework cache) into
+    // a per-session state dir under the scratch tree — a writable root — instead of
+    // $HOME, which the profile denies. Pre-create it (plus the `cache` subdir) so the
+    // shell finds the paths. `create_dir_all` on the `cache` leaf makes both.
+    // LIFECYCLE: like the profile file above, this lives under the OS temp tree and is
+    // left for the temp cleaner to reap — the session never records the scratch path,
+    // so there is no cheap kill/reap hook to delete it from, and confined sessions are
+    // rare + tiny (a history file + compdump).
+    let state_dir = scratch.join("state");
+    std::fs::create_dir_all(state_dir.join("cache"))
+        .map_err(|e| format!("confined terminal: cannot create shell state dir: {e}"))?;
+
     Ok(ConfinedLaunch {
         program: PathBuf::from(SANDBOX_EXEC),
         prefix_args: vec![
             "-f".to_string(),
             profile_path.to_string_lossy().into_owned(),
         ],
+        env: shell_state_env(&state_dir),
     })
 }
 
@@ -198,6 +233,33 @@ mod tests {
     #[test]
     fn seatbelt_string_escapes_quotes_and_backslashes() {
         assert_eq!(seatbelt_string(r#"/a "b"\c"#), r#""/a \"b\"\\c""#);
+    }
+
+    #[test]
+    fn shell_state_env_points_every_var_under_the_state_dir() {
+        // The redirect vars must all live DIRECTLY under the given state dir with the
+        // expected leaf names, so confined housekeeping never touches $HOME.
+        let state = Path::new("/tmp/nc-state");
+        let env = shell_state_env(state);
+        assert_eq!(env.len(), 3);
+        for (key, leaf) in [
+            ("HISTFILE", "zsh_history"),
+            ("XDG_CACHE_HOME", "cache"),
+            ("ZSH_COMPDUMP", "zcompdump"),
+        ] {
+            let value = env
+                .iter()
+                .find(|(k, _)| k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_else(|| panic!("{key} is set"));
+            let p = Path::new(&value);
+            assert_eq!(
+                p.parent().unwrap(),
+                state,
+                "{key} lives under the state dir"
+            );
+            assert_eq!(p.file_name().unwrap(), std::ffi::OsStr::new(leaf));
+        }
     }
 
     #[test]
