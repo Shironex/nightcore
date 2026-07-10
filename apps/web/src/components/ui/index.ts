@@ -4,6 +4,11 @@ export type { BadgeProps, BadgeTone } from './Badge/Badge.types';
 export { BranchPicker } from './BranchPicker';
 export type { BranchPickerProps } from './BranchPicker/BranchPicker.types';
 export { BrandMark } from './BrandMark';
+export type {
+  BulkConvertBarProps,
+  BulkConvertProgressLike,
+} from './BulkConvertBar';
+export { BulkConvertBar } from './BulkConvertBar';
 export { Button } from './Button';
 export { Card } from './Card';
 export type {
