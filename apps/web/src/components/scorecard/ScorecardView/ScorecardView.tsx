@@ -1,4 +1,5 @@
 import {
+  BulkConvertBar,
   Button,
   EmptyState,
   FolderIcon,
@@ -142,6 +143,17 @@ export function ScorecardView(props: ScorecardViewProps) {
                   </div>
                 </div>
               ))}
+
+            {view.stream.status === 'completed' && (
+              <BulkConvertBar
+                count={view.openCount}
+                converting={view.bulkConverting}
+                progress={view.bulkProgress}
+                statusMessage={view.bulkStatusMessage}
+                error={view.bulkError}
+                onConvertAll={view.convertAll}
+              />
+            )}
 
             <DimensionGrid
               rows={view.rows}
