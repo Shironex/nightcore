@@ -5,7 +5,7 @@ import type {
   RunPhase,
   RunProgressCategory,
 } from '@/components/ui';
-import type { ConventionCategory } from '@/lib/bridge';
+import type { ConventionCategory, CoverageStatus } from '@/lib/bridge';
 import type { ScanTarget } from '@/lib/source-ref';
 import type { RunConfig } from '@/lib/useRunConfig';
 
@@ -14,6 +14,7 @@ import type {
   ConventionFindingVM,
   HarnessProposalVM,
   ProposedArtifactVM,
+  RuleCoverageGapVM,
 } from '../harness.types';
 import type {
   HarnessMode,
@@ -96,6 +97,12 @@ export interface HarnessViewModel {
   gridFindings: ConventionFindingVM[];
   skeletonCount: number;
   emptyMessage: string;
+  /** ENFORCE-lite coverage records for the displayed run (the Rule-Coverage-Gaps panel). */
+  coverage: RuleCoverageGapVM[];
+  /** Per-convention coverage status keyed by `fingerprint` — the ConventionGrid badge. */
+  coverageByFingerprint: Record<string, CoverageStatus>;
+  /** Whether the Enforce destination surfaces coverage (badge + panel); false elsewhere. */
+  showCoverage: boolean;
   /** Task-shaped proposals panel inputs (the convert-to-task units). */
   proposals: HarnessProposalVM[];
   proposalsLoading: boolean;

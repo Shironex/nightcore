@@ -127,6 +127,10 @@ export type { StoredHarnessProposal } from '../generated/StoredHarnessProposal';
 export type { StoredProposedArtifact } from '../generated/StoredProposedArtifact';
 export type { StoredRepoPackage } from '../generated/StoredRepoPackage';
 export type { StoredRepoProfile } from '../generated/StoredRepoProfile';
+// ENFORCE-lite rule coverage (ts-rs from `store/harness/wire.rs`). The generated
+// `Stored*` keeps `status` as `string`; the coverage `CoverageStatus` union + the
+// live wire `RuleCoverageGap` come from the zod contract below.
+export type { StoredRuleCoverageGap } from '../generated/StoredRuleCoverageGap';
 // Harness policy authoring (ts-rs from `commands/policy.rs`) + the injection-scan
 // flag rows (ts-rs from `store/injection_scan.rs`).
 export type { HarnessPolicyFile } from '../generated/HarnessPolicyFile';
@@ -142,12 +146,14 @@ export type {
   ConventionCategory,
   ConventionFinding,
   ConventionKind,
+  CoverageStatus,
   HarnessCheck,
   HarnessProposal,
   HarnessProposalKind,
   ProposedArtifact,
   RepoPackage,
   RepoProfile,
+  RuleCoverageGap,
   WorkspaceTool,
 } from '@nightcore/contracts';
 // PR Review (fourth scan sibling) persisted shapes (ts-rs from `store/pr_review.rs`).

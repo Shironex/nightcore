@@ -3,6 +3,7 @@ import type {
   ArtifactWriteMode,
   ConventionCategory,
   ConventionKind,
+  CoverageStatus,
   FindingSeverity,
   HarnessProposalKind,
   RepoPackage,
@@ -106,6 +107,28 @@ export interface HarnessProposalVM {
   status: ProposalStatus;
   /** The board task this proposal was converted into, if any (`converted` status). */
   linkedTaskId: string | null;
+}
+
+/** One convention's ENFORCE-lite coverage record as the view renders it: the unified
+ *  shape both the live wire `RuleCoverageGap` (contract) and the persisted
+ *  `StoredRuleCoverageGap` (ts-rs) normalize into. Keyed to a convention finding by
+ *  `conventionFingerprint`. Coverage, not conformance — never a "followed" claim. */
+export interface RuleCoverageGapVM {
+  id: string;
+  /** Joins to the {@link ConventionFindingVM} it covers (`fingerprint`). */
+  conventionFingerprint: string;
+  /** The convention's lens (a `ConventionCategory` wire string). */
+  category: string;
+  title: string;
+  /** `enforced` (a rule covers it) | `documented-only` (a doc claims it) | `unenforced`. */
+  status: CoverageStatus;
+  /** Enforcing rule ids that cover it (populated for `enforced`). */
+  enforcedBy: string[];
+  /** Agent-doc claim lines that mention it (populated for `documented-only`). */
+  documentedIn: string[];
+  /** What PROPOSE could generate to close the gap (an `ArtifactKind` wire string). */
+  suggestedArtifactKind: string | null;
+  fingerprint: string;
 }
 
 /** The deterministically-detected repo profile as the ProfileBanner renders it. */

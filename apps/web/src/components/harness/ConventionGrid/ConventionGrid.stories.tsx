@@ -58,3 +58,15 @@ export const Streaming: Story = {
 };
 
 export const Empty: Story = { args: { findings: [], skeletonCount: 0 } };
+
+/** The Enforce destination: each row carries an ENFORCE-lite coverage badge keyed
+ *  by the convention's `fingerprint`. */
+export const WithCoverage: Story = {
+  args: {
+    findings: [
+      finding({ id: 'c1', fingerprint: 'fp1' }),
+      finding({ id: 'c2', fingerprint: 'fp2', title: 'No cross-feature import boundary' }),
+    ],
+    coverageByFingerprint: { fp1: 'enforced', fp2: 'unenforced' },
+  },
+};
