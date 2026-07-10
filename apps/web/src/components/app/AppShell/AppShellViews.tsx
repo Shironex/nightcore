@@ -227,6 +227,35 @@ export function AppShellViews({
           </Suspense>
         )}
 
+        {/* Harden / Enforce (Phase-1 PR 2): the same HarnessView run/store, split by
+            `mode`. Provenance chips still route to the unified `harness` view until
+            PR 3 retargets the source-ref REGISTRY, so these carry no preselect yet. */}
+        {view === 'harden' && (
+          <Suspense fallback={<RouteFallback />}>
+            <HarnessView
+              mode="harden"
+              projectPath={active?.path ?? null}
+              projectName={active?.name ?? null}
+              onGotoBoard={() => routing.goto('board')}
+              preselect={null}
+              onPreselectConsumed={routing.clearScanTarget}
+            />
+          </Suspense>
+        )}
+
+        {view === 'enforce' && (
+          <Suspense fallback={<RouteFallback />}>
+            <HarnessView
+              mode="enforce"
+              projectPath={active?.path ?? null}
+              projectName={active?.name ?? null}
+              onGotoBoard={() => routing.goto('board')}
+              preselect={null}
+              onPreselectConsumed={routing.clearScanTarget}
+            />
+          </Suspense>
+        )}
+
         {view === 'prreview' && (
           <Suspense fallback={<RouteFallback />}>
             <PrReviewView
