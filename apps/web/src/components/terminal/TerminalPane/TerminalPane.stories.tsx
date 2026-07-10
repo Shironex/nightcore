@@ -43,19 +43,22 @@ const meta = {
 export default meta;
 type Story = StoryObj<typeof meta>;
 
-/** Unconfined identity chrome — the default (and only) PR B posture. */
+/** Unconfined identity chrome — the default posture. No write-containment hint. */
 export const Unconfined: Story = {
   args: { session: session({}) },
   play: async ({ canvas }) => {
     await expect(canvas.getByText('Your shell — unconfined')).toBeInTheDocument();
+    expect(canvas.queryByText(/some shell-startup noise is normal/)).toBeNull();
   },
 };
 
-/** The confined chrome variant (PR C flips this on; it already renders from the
- *  session flag). */
+/** The confined chrome variant: the lock label plus the one-line startup-noise hint. */
 export const Confined: Story = {
   args: { session: session({ confined: true }) },
   play: async ({ canvas }) => {
     await expect(canvas.getByText('Confined to this worktree')).toBeInTheDocument();
+    await expect(
+      canvas.getByText('Writes outside this folder are blocked — some shell-startup noise is normal.'),
+    ).toBeInTheDocument();
   },
 };

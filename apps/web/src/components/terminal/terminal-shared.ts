@@ -62,6 +62,15 @@ export function identityTitle(confined: boolean): string {
     : 'This is your own shell with full permissions — it runs outside the agent guardrails.';
 }
 
+/** One-line hint shown under a CONFINED tab's identity chrome (decision 1): the
+ *  Seatbelt profile denies writes to $HOME, so shell-startup housekeeping (history,
+ *  oh-my-zsh cache) can print `Operation not permitted` on a first run — reassure the
+ *  user that's expected. Copy kept consistent with the picker's confined description
+ *  ("writes limited to this folder"). Only the confined pane shows it. */
+export function confinedNoiseHint(): string {
+  return 'Writes outside this folder are blocked — some shell-startup noise is normal.';
+}
+
 /** Whether the session list has hit the live-session cap. */
 export function atSessionCap(sessions: readonly TerminalSessionInfo[]): boolean {
   return sessions.length >= TERMINAL_SESSION_CAP;
