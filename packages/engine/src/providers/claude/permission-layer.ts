@@ -124,6 +124,14 @@ export class PermissionLayer {
     });
   }
 
+  /** Whether any interactive approval is currently parked awaiting a surface
+   *  decision — including a plan-mode `ExitPlanMode` awaiting approve/refine/reject.
+   *  The idle watchdog consults this so a run legitimately waiting on a human is
+   *  NEVER auto-failed as "stalled" (T6 #147: a parked plan waits indefinitely). */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   /** Resolve a parked approval from a surface `approve-permission` command.
    *  Returns false if the requestId is unknown (already settled / stale). */
   resolve(requestId: string, decision: ApprovalDecision): boolean {

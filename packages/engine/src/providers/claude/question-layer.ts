@@ -120,6 +120,13 @@ export class QuestionLayer {
     });
   }
 
+  /** Whether any AskUserQuestion dialog is currently parked awaiting an answer.
+   *  The idle watchdog consults this (alongside `PermissionLayer.hasPending`) so a
+   *  run legitimately waiting on a human is never auto-failed as "stalled". */
+  hasPending(): boolean {
+    return this.pending.size > 0;
+  }
+
   /** Resolve a parked question from a surface `answer-question` command.
    *  Returns false if the requestId is unknown (already settled / stale). */
   resolve(requestId: string, answer: QuestionAnswer): boolean {

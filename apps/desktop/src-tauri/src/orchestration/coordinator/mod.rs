@@ -16,7 +16,7 @@
 mod auto_loop;
 mod commands;
 mod cwd;
-mod reconcile;
+pub(crate) mod reconcile;
 mod state;
 mod submit;
 mod usage_gate;

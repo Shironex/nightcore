@@ -242,7 +242,11 @@ pub fn reconcile_tasks(app: &AppHandle) {
 /// `Some((status, Recovery::Requeued))`; every other status (terminal, launchable,
 /// or awaiting approval) → `None` (left untouched). No `AppHandle`, so it is
 /// unit-testable like `move_task_inner`.
-fn reconcile_task_inner(status: &TaskStatus) -> Option<(TaskStatus, Recovery)> {
+///
+/// `pub(crate)` so the plan-approval feature can pin its "a parked plan is never
+/// auto-resolved by boot reconciliation" guarantee (T6, #147) against this exact
+/// predicate rather than duplicating the status matrix.
+pub(crate) fn reconcile_task_inner(status: &TaskStatus) -> Option<(TaskStatus, Recovery)> {
     match status {
         TaskStatus::InProgress | TaskStatus::Verifying => Some((*status, Recovery::Requeued)),
         _ => None,
