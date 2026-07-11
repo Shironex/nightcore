@@ -87,6 +87,36 @@ pub(super) fn fetch_pr_diff_with(
     Ok((diff, changed_files))
 }
 
+/// Fetch a PR's FULL unified diff for POST-time inline-anchor validation. Unlike
+/// [`fetch_pr_diff_with`] (which CAPS the diff for the review prompt's context budget and
+/// also lists the changed files) this returns the diff UNCAPPED and makes only the one
+/// `gh pr diff <n>` call: the review post validates EVERY inline comment against the real
+/// hunks, and a capped tail would silently demote otherwise-anchorable comments. Binary-
+/// parameterized (the fake-`gh` seam). `pr_number` is a `u64` rendered decimal
+/// (injection-safe).
+pub(super) fn fetch_pr_diff_raw_with(
+    dir: &Path,
+    binary: &str,
+    pr_number: u64,
+    deadline: Duration,
+) -> Result<String, String> {
+    if pr_number == 0 {
+        return Err("enter a valid PR number (a positive integer)".to_string());
+    }
+    let number = pr_number.to_string();
+    run_gh_checked(GhCall {
+        dir,
+        binary,
+        args: &["pr", "diff", &number],
+        action: "install it to review pull requests",
+        subcmd: "pr diff",
+        stdin: None,
+        deadline,
+        timeout_msg:
+            "timed out fetching the PR diff from GitHub — check your network and try again",
+    })
+}
+
 /// Resolve a PR's head commit SHA (`gh pr view <n> --json headRefOid`) so a PR-review
 /// run can be stamped with the head it reviewed — the UI then flags the run STALE once
 /// the PR advances past it. `pub(crate)` production entry point; called BEST-EFFORT off

@@ -9,6 +9,8 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use tauri::{AppHandle, Manager};
 
+use super::anchor::prepare_survivable_review;
+use super::diff::{fetch_pr_diff_raw_with, fetch_pr_head_oid_with};
 use super::GH_TIMEOUT;
 use crate::git::gh::{map_gh_failure, probe_gh, run_gh_bounded, GhOutput, GH_BINARY};
 use crate::store::pr_review::PrReviewStore;
@@ -175,9 +177,20 @@ fn post_review_blocking(
     let _ = app.try_state::<TaskStore>();
     let project = require_project(app)?;
     let dir = std::path::PathBuf::from(&project.path);
-    tracing::info!(target: "nightcore::pr", pr_number, verdict, comments = comments.len(), "posting PR review to GitHub");
-    post_review_with(
-        &dir, GH_BINARY, pr_number, verdict, body, comments, GH_TIMEOUT,
+
+    // Post SURVIVABLY: re-anchor the inline comments against the PR's CURRENT diff, demote
+    // the un-anchorable ones into the body, and note a moved head. The reviewed head (for
+    // staleness) comes from the originating run when there is one.
+    let reviewed = reviewed_head(app, run_id);
+    post_review_survivable_with(
+        &dir,
+        GH_BINARY,
+        pr_number,
+        verdict,
+        body,
+        comments,
+        reviewed.as_deref(),
+        GH_TIMEOUT,
     )?;
 
     // The post SUCCEEDED — record it on the originating run so the UI shows what was last
@@ -187,6 +200,75 @@ fn post_review_blocking(
         stamp_posted(app, run_id, verdict);
     }
     Ok(())
+}
+
+/// Post a review that SURVIVES GitHub's all-or-nothing inline-anchor validation
+/// (binary-parameterized seam — the tests + the `e2e_gh` harness drive the real
+/// fetch→re-anchor→post with a fake/real `gh`). With inline comments present, fetch the
+/// CURRENT diff + head, keep only the comments that anchor on that diff, DEMOTE the rest
+/// into the body, note a moved head vs. `reviewed_head`, then POST one atomic review. With
+/// NO comments there is nothing to anchor — the diff/head reads are skipped and `body` is
+/// posted verbatim (behavior unchanged). Fails ONLY when the diff can't be fetched:
+/// without it no anchor can be proven safe, so refusing (nothing posted, message says so)
+/// beats risking a whole-review 422. The head fetch is best-effort (a miss just drops the
+/// stale note, never the post).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn post_review_survivable_with(
+    dir: &Path,
+    binary: &str,
+    pr_number: u64,
+    verdict: &str,
+    body: &str,
+    comments: &[InlineComment],
+    reviewed_head: Option<&str>,
+    deadline: Duration,
+) -> Result<(), String> {
+    let (post_body, post_comments): (String, Vec<InlineComment>) = if comments.is_empty() {
+        (body.to_string(), Vec::new())
+    } else {
+        let diff = fetch_pr_diff_raw_with(dir, binary, pr_number, deadline).map_err(|e| {
+            format!(
+                "couldn't fetch the PR diff to validate the inline comment anchors — no \
+                 review was posted: {e}"
+            )
+        })?;
+        // The diff is fetched against the CURRENT head, so validating anchors against it IS
+        // re-anchoring; the head fetch only powers the (best-effort) staleness note.
+        let current_head =
+            fetch_pr_head_oid_with(dir, binary, pr_number, deadline).unwrap_or_default();
+        let prepared =
+            prepare_survivable_review(body, comments, &diff, reviewed_head, &current_head);
+        (prepared.body, prepared.comments)
+    };
+    tracing::info!(
+        target: "nightcore::pr",
+        pr_number,
+        verdict,
+        comments = post_comments.len(),
+        demoted = comments.len().saturating_sub(post_comments.len()),
+        "posting PR review to GitHub"
+    );
+    post_review_with(
+        dir,
+        binary,
+        pr_number,
+        verdict,
+        &post_body,
+        &post_comments,
+        deadline,
+    )
+}
+
+/// The head SHA the originating run reviewed (`PrReviewRun.head_sha`), when this post is
+/// tied to a stored run that recorded one. `None` for a post composed outside a stored run
+/// or an older run with no captured head — staleness then can't be detected, but anchors
+/// are still re-validated against the current diff.
+fn reviewed_head(app: &AppHandle, run_id: Option<&str>) -> Option<String> {
+    let store = app.try_state::<PrReviewStore>()?;
+    store
+        .get(run_id?)
+        .and_then(|run| run.head_sha)
+        .filter(|s| !s.is_empty())
 }
 
 /// Best-effort stamp of a successful post onto its PR-review run (`postedVerdict` +

@@ -21,6 +21,7 @@
 //! `crate::workflow::pr_review_post::{fetch_pr_diff, post_review_to_github,
 //! InlineComment, PR_DIFF_CAP}` paths.
 
+mod anchor;
 mod diff;
 mod post;
 mod timeout;
