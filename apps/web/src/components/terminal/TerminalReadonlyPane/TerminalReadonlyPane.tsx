@@ -1,6 +1,6 @@
 import '@xterm/xterm/css/xterm.css';
 
-import { Button, HistoryIcon, PlayIcon, SparkIcon } from '@/components/ui';
+import { Button, HistoryIcon, PlayIcon, ProviderIcon } from '@/components/ui';
 
 import { displayPath, restoredIdentityLabel, restoredIdentityTitle } from '../terminal-shared';
 import { useTerminalReadonlyPane } from './TerminalReadonlyPane.hooks';
@@ -58,7 +58,7 @@ export function TerminalReadonlyPane({
               : 'The original folder no longer exists — nothing to resume'
           }
         >
-          <SparkIcon size={13} />
+          <ProviderIcon provider="claude" size={13} />
           Resume Claude
         </Button>
         <Button

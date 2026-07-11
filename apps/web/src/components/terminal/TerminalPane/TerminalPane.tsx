@@ -1,6 +1,14 @@
 import '@xterm/xterm/css/xterm.css';
 
-import { BoltIcon, CloseIcon, IconButton, LockIcon, SparkIcon, TagIcon, TerminalIcon } from '@/components/ui';
+import {
+  BoltIcon,
+  CloseIcon,
+  IconButton,
+  LockIcon,
+  ProviderIcon,
+  TagIcon,
+  TerminalIcon,
+} from '@/components/ui';
 import type { TerminalSessionInfo } from '@/lib/bridge';
 
 import { useInlineRename } from '../terminal-rename';
@@ -89,7 +97,7 @@ function LinkChrome({ link }: { link: TerminalPaneLink }) {
           title="Type `claude` into this terminal (runs as you, outside the gates)"
           className="ml-auto flex shrink-0 items-center gap-1.5 rounded-md px-2 py-0.5 font-medium text-primary/90 transition-colors hover:bg-primary/10 hover:text-primary"
         >
-          <SparkIcon size={12} aria-hidden />
+          <ProviderIcon provider="claude" size={12} />
           Launch Claude
         </button>
       )}
