@@ -2,6 +2,7 @@ import type {
   ArtifactKind,
   ArtifactWriteMode,
   ConventionCategory,
+  ConventionDriftStatus,
   ConventionKind,
   CoverageStatus,
   FindingSeverity,
@@ -128,6 +129,35 @@ export interface RuleCoverageGapVM {
   documentedIn: string[];
   /** What PROPOSE could generate to close the gap (an `ArtifactKind` wire string). */
   suggestedArtifactKind: string | null;
+  fingerprint: string;
+}
+
+/** One convention's MEASURED drift as the view renders it: the unified shape the
+ *  wire `ConventionDrift` (carried on `ArmedChecksState.drift`, string-typed `status`)
+ *  normalizes into, narrowing the wire string to the `ConventionDriftStatus` union.
+ *  Keyed to a {@link RuleCoverageGapVM} by `conventionFingerprint`. Coverage answers
+ *  "is there a rule?"; drift answers "is it FOLLOWED at every site?" — so `method` +
+ *  `sitesMatched`/`sitesChecked` are always carried (the fail-visible product rule:
+ *  `clean`/`drifted` are never rendered without them). */
+export interface ConventionDriftVM {
+  id: string;
+  /** Joins to the {@link RuleCoverageGapVM} it measures (`fingerprint`). */
+  conventionFingerprint: string;
+  /** The convention's lens (a `ConventionCategory` wire string). */
+  category: string;
+  title: string;
+  /** `clean` | `drifted` | `uncheckable` | `errored`. */
+  status: ConventionDriftStatus;
+  /** ALWAYS rendered: the check name + tool/rule id that determined this. */
+  method: string;
+  /** Violating sites the armed check reported. */
+  sitesMatched: number;
+  /** Sites the armed check examined (`0` ⇒ counts unknown → never `clean`). */
+  sitesChecked: number;
+  /** The armed check that produced this record, if known. */
+  checkName: string | null;
+  /** Why the check could not run / parse (populated for `errored`). */
+  errorReason: string | null;
   fingerprint: string;
 }
 
