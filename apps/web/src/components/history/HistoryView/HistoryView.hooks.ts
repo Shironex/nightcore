@@ -6,6 +6,7 @@
  *  already return full run lists; this hook is the merge seam — and the upgrade
  *  point if a server-side aggregator is ever wanted. It reads only `@/lib/*`, so
  *  History stays a leaf that imports no sibling feature view. */
+import { useVirtualizer, type Virtualizer } from '@tanstack/react-virtual';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
@@ -147,4 +148,53 @@ export function useAllScanRuns(projectPath: string | null): AllScanRuns {
   const refresh = useCallback(() => void load(), [load]);
 
   return { runs, loading, error, refresh };
+}
+
+/** Estimated row height (px) before measurement. History rows are fixed-height
+ *  flex rows (badge + title + receipt + status chip); `measureElement` corrects
+ *  each mounted row to its real size, so this only needs to be close. */
+const ESTIMATED_ROW_HEIGHT = 49;
+
+/** Extra rows rendered above/below the viewport so a fast scroll never flashes blank. */
+const ROW_OVERSCAN = 8;
+
+/** The virtualization surface a virtualized list needs: a ref-setter for the
+ *  scroll container plus the vertical virtualizer over the run list. */
+export interface HistoryListView {
+  /** Ref for the inner scroll container — the virtualizer's scroll element. */
+  setScrollRef: (element: HTMLDivElement | null) => void;
+  /** The vertical virtualizer over the run list. */
+  virtualizer: Virtualizer<HTMLDivElement, Element>;
+}
+
+/**
+ * Vertical virtualization for the History run list so only the visible rows
+ * mount. `useAllScanRuns` merges every family's full run list with no limit, so
+ * an accumulating history would otherwise grow the DOM unbounded (one row per
+ * run). Mirrors the board column's `useColumn` virtualizer: a scroll-element
+ * ref, a fixed `estimateSize`, `measureElement` for real heights, and stable
+ * `family:id` keys so a refresh/re-sort reconciles rows correctly.
+ */
+export function useHistoryVirtualizer(runs: ScanRunSummary[]): HistoryListView {
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((element: HTMLDivElement | null) => {
+    scrollRef.current = element;
+  }, []);
+
+  const virtualizer = useVirtualizer({
+    count: runs.length,
+    getScrollElement: () => scrollRef.current,
+    estimateSize: () => ESTIMATED_ROW_HEIGHT,
+    overscan: ROW_OVERSCAN,
+    // `id` alone collides across families (an Insight and a Harness run can share
+    // an id), so key on `family:id` — the same compound key the list markup uses.
+    // A stable, unique key is required for correct reconciliation when the merge
+    // hook re-sorts or a refresh swaps the list.
+    getItemKey: (index) => {
+      const run = runs[index];
+      return run !== undefined ? `${run.family}:${run.id}` : index;
+    },
+  });
+
+  return { setScrollRef, virtualizer };
 }
