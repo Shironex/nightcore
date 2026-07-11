@@ -16,12 +16,17 @@
  *    the PTY (on non-mac, Ctrl+T/W/F would otherwise send control bytes); the React
  *    layer (view shortcuts / pane search / grid zoom) performs the actual action.
  *
+ * The two byte-emitting intents (Shift+Enter, kill-line) bypass xterm's `onData`, so
+ * they write through the injected {@link EmitBroadcast} rather than the bridge directly
+ * — that funnels them through the session manager's broadcast fan-out (round-2 PR B),
+ * so an armed broadcast reaches every visible pane. Paste is NOT injected: `term.paste`
+ * delivers through xterm's `onData`, which the session manager already routes through
+ * the same fan-out (so a broadcast paste rides the typing path — no double-send).
+ *
  * The clipboard cap is a module-level notifier (mirroring the session manager's
  * activity subscription) so the non-React manager can tell the view to toast.
  */
 import type { Terminal } from '@xterm/xterm';
-
-import { writeTerminal } from '@/lib/bridge';
 
 import { isMacPlatform } from './terminal-platform';
 
@@ -33,6 +38,14 @@ export const PASTE_CAP_BYTES = 1024 * 1024;
 const ESC_NEWLINE = new Uint8Array([0x1b, 0x0a]);
 /** `Ctrl+U` — the readline kill-line control byte (⌘/Ctrl+Backspace). */
 const KILL_LINE = new Uint8Array([0x15]);
+
+/** The byte-write sink the keymap emits through — supplied by the session manager so
+ *  the manual (non-`onData`) emits funnel through the broadcast fan-out (round-2 PR B).
+ *  When broadcast is armed the write reaches every visible pane; otherwise just the
+ *  owning session, exactly as before. */
+export interface EmitBroadcast {
+  readonly write: (data: Uint8Array) => void;
+}
 
 /** What the cockpit does with a keydown, decided purely (testable without xterm).
  *  `copy` = copy-if-selection-else-passthrough-SIGINT; the impure handler resolves
@@ -135,9 +148,12 @@ async function pasteFromClipboard(term: Terminal): Promise<void> {
 }
 
 /** Install the cockpit keymap on a live terminal. Idempotent per term — xterm keeps
- *  a single custom key-event handler, so re-calling replaces it. `sessionId` is the
- *  PTY write target for the byte-emitting intents. */
-export function installKeymap(term: Terminal, sessionId: string): void {
+ *  a single custom key-event handler, so re-calling replaces it. `emit.write` is the
+ *  byte sink for the manual (non-`onData`) intents, wired by the session manager to
+ *  the broadcast fan-out so an armed broadcast reaches every visible pane (round-2
+ *  PR B). Paste routes through `term.paste` (which rides `onData`), so it fans out via
+ *  the session manager's `onData` path without a second write here. */
+export function installKeymap(term: Terminal, emit: EmitBroadcast): void {
   term.attachCustomKeyEventHandler((event) => {
     const intent = classifyKeyEvent(event, isMacPlatform());
     switch (intent) {
@@ -156,10 +172,10 @@ export function installKeymap(term: Terminal, sessionId: string): void {
         void pasteFromClipboard(term);
         return false;
       case 'multiline':
-        void writeTerminal(sessionId, ESC_NEWLINE);
+        emit.write(ESC_NEWLINE);
         return false;
       case 'killline':
-        void writeTerminal(sessionId, KILL_LINE);
+        emit.write(KILL_LINE);
         return false;
     }
   });
