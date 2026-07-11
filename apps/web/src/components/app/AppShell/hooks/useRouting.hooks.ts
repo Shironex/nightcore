@@ -20,21 +20,32 @@ export function useRouting() {
     setSwitcherOpen(false);
   }, []);
 
-  /** Navigate to the scan surface that produced a task's `sourceRef`, carrying
-   *  the run/item target for the view to preselect. Unknown/malformed tokens
-   *  no-op (the chip doesn't render for those, but routing stays defensive). */
-  const gotoSourceRef = useCallback((sourceRef: string) => {
-    const target = parseSourceRef(sourceRef);
-    if (target === null) return;
+  /** Preselect a scan target and route to its owning stage. The single seam both
+   *  provenance-chip navigation (`gotoSourceRef`) and run-level navigation (the
+   *  History row click) funnel through — no token synthesis for the latter. */
+  const gotoScanTarget = useCallback((target: ScanTarget) => {
     setScanTarget(target);
     setView(target.view);
     setSwitcherOpen(false);
   }, []);
 
+  /** Navigate to the scan surface that produced a task's `sourceRef`, carrying
+   *  the run/item target for the view to preselect. Unknown/malformed tokens
+   *  no-op (the chip doesn't render for those, but routing stays defensive). */
+  const gotoSourceRef = useCallback(
+    (sourceRef: string) => {
+      const target = parseSourceRef(sourceRef);
+      if (target === null) return;
+      gotoScanTarget(target);
+    },
+    [gotoScanTarget],
+  );
+
   return {
     view,
     goto,
     scanTarget,
+    gotoScanTarget,
     gotoSourceRef,
     clearScanTarget: useCallback(() => setScanTarget(null), []),
     switcherOpen,

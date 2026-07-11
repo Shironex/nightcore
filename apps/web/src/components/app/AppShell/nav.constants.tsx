@@ -4,6 +4,7 @@ import {
   BugIcon,
   GearIcon,
   GithubIcon,
+  HistoryIcon,
   InsightIcon,
   LockIcon,
   RefineIcon,
@@ -16,10 +17,9 @@ import type { NavItem } from './AppShell.types';
  *  Understand → Harden → Enforce → Verify) plus the non-stage Project and footer
  *  Settings groups. Each stage is its own mono-uppercase group header (kept even
  *  for single-child groups); the group metadata + order live in
- *  `NavSidebar.hooks.ts` (NAV_GROUP_META / GROUP_ORDER). Hints K W L T U H E P S
- *  are all distinct (L = the Terminal view; I / R were freed by removing the
- *  standalone Insight / Scorecard rows in the PR 3 stage flip — R stays reserved
- *  for the spec'd History rail). */
+ *  `NavSidebar.hooks.ts` (NAV_GROUP_META / GROUP_ORDER). Hints K W L R T U H E P S
+ *  are all distinct (L = the Terminal view, R = the History view — freed with I by
+ *  removing the standalone Insight / Scorecard rows in the PR 3 stage flip). */
 export const APP_SHELL_NAV: NavItem[] = [
   {
     view: 'board',
@@ -40,6 +40,13 @@ export const APP_SHELL_NAV: NavItem[] = [
     label: 'Terminal',
     hint: 'L',
     icon: <TerminalIcon size={16} />,
+    group: 'project',
+  },
+  {
+    view: 'history',
+    label: 'History',
+    hint: 'R',
+    icon: <HistoryIcon size={16} />,
     group: 'project',
   },
   {

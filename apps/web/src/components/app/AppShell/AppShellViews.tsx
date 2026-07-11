@@ -1,6 +1,7 @@
 import { lazy, Suspense } from 'react';
 
 import { Board, EMPTY_TRANSCRIPT } from '@/components/board';
+import type { ScanFamily } from '@/components/history';
 import {
   AnimatePresence,
   Button,
@@ -10,6 +11,7 @@ import {
   m,
 } from '@/components/ui';
 import type { PermissionPrompt, QuestionPrompt } from '@/lib/bridge';
+import type { ScanTarget } from '@/lib/source-ref';
 import { requestOpenTerminalInCwd } from '@/lib/terminal-links';
 
 import type { AppShellState } from './AppShell.hooks';
@@ -45,6 +47,26 @@ const WorktreeView = lazy(() =>
 const TerminalView = lazy(() =>
   import('@/components/terminal').then((m) => ({ default: m.TerminalView })),
 );
+const HistoryView = lazy(() =>
+  import('@/components/history').then((m) => ({ default: m.HistoryView })),
+);
+
+/** Map a History row (family + run) to a run-level provenance target: Insight and
+ *  Scorecard both land on the Understand stage (its shell splits by `family`),
+ *  Harness on Enforce — mirroring the source-ref REGISTRY's stage mapping. The
+ *  `itemId` is empty (run-level), so the stage's preselect selects the run without
+ *  opening an item panel. Built inline here (not synthesized as a token) so the
+ *  History chunk stays lazy — only the `ScanFamily` type crosses, and types erase. */
+function historyRunTarget(family: ScanFamily, runId: string): ScanTarget {
+  switch (family) {
+    case 'scorecard':
+      return { view: 'understand', family: 'scorecard', kind: 'reading', runId, itemId: '' };
+    case 'harness':
+      return { view: 'enforce', family: 'harness', kind: 'finding', runId, itemId: '' };
+    default:
+      return { view: 'understand', family: 'insight', kind: 'finding', runId, itemId: '' };
+  }
+}
 
 /** A minimal fallback while a lazy route view streams in — a quiet centered
  *  status line that never flashes chrome of its own. */
@@ -201,6 +223,21 @@ export function AppShellViews({
               yoloLaunch={settings.settings?.terminalYoloLaunch ?? false}
               onConfinedDefaultChange={(confined) =>
                 settings.update({ terminalConfinedDefault: confined })
+              }
+            />
+          </Suspense>
+        )}
+
+        {/* Global run History (Views Phase 2): one cross-family list of every
+            Insight / Scorecard / Harness run for the active project. A row click
+            routes run-level into the owning stage (Understand / Enforce) through the
+            same preselect seam provenance chips use — no token synthesis. */}
+        {view === 'history' && (
+          <Suspense fallback={<RouteFallback />}>
+            <HistoryView
+              projectPath={active?.path ?? null}
+              onOpenRun={(family, runId) =>
+                routing.gotoScanTarget(historyRunTarget(family, runId))
               }
             />
           </Suspense>
