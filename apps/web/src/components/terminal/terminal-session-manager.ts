@@ -29,9 +29,9 @@ import {
   killTerminal,
   resizeTerminal,
   spawnTerminal,
-  writeTerminal,
 } from '@/lib/bridge';
 
+import { writeToTargets } from './terminal-broadcast';
 import { forgetCommandCapture, recordCommandInput } from './terminal-command-capture';
 import { installKeymap } from './terminal-keymap';
 import {
@@ -247,9 +247,9 @@ async function installSession(
     throw err;
   }
   sessionId = handle.session.id;
-  // Clipboard smarts + app-chord swallowing (spec PR 3b) — installed now that the
-  // session id (the PTY write target for Shift+Enter / kill-line) is known.
-  installKeymap(term, handle.session.id);
+  // Clipboard smarts + app-chord swallowing (spec PR 3b). The emit routes the manual
+  // Shift+Enter / kill-line writes through the broadcast fan-out (round-2 PR B).
+  installKeymap(term, { write: (b) => void writeToTargets(handle.session.id, b, [...visibleIds]) });
 
   const host = document.createElement('div');
   host.style.width = '100%';
@@ -330,9 +330,9 @@ export function attachSession(id: string, container: HTMLElement): () => void {
   if (!entry.opened) {
     entry.term.open(entry.host);
     entry.opened = true;
-    // Write path: xterm keystrokes → terminal_write + the opt-in AI-naming capture.
+    // Write path: keystrokes (+ pastes, which ride onData) → broadcast fan-out + AI capture.
     entry.input = entry.term.onData((data) => {
-      void writeTerminal(id, encoder.encode(data));
+      writeToTargets(id, encoder.encode(data), [...visibleIds]);
       recordCommandInput(id, data);
     });
   }
