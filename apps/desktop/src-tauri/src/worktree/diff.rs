@@ -28,6 +28,9 @@ pub(super) fn diff_numstat(repo: &Path, range: &str) -> (Vec<DiffFileStat>, u32,
         repo,
         &[
             "diff",
+            // Belt-and-suspenders over the `diff.external=` config neutralizer in
+            // `git_command`: never run a repo-configured external diff driver.
+            "--no-ext-diff",
             "--numstat",
             "--no-renames",
             "--end-of-options",
@@ -98,7 +101,9 @@ pub struct WorktreeDiff {
 /// passes [`crate::git::validate_ref`]).
 pub fn base_diff(dir: &Path, base: &str) -> Result<String, String> {
     crate::git::validate_ref(base)?;
-    git(dir, &["diff", &format!("{base}...HEAD")])
+    // `--no-ext-diff` refuses any repo-configured external diff driver (belt-and-
+    // suspenders over the `diff.external=` neutralizer in `git_command`).
+    git(dir, &["diff", "--no-ext-diff", &format!("{base}...HEAD")])
 }
 
 /// Cap on the synthesized-patch read for an untracked file — a huge generated file
@@ -119,8 +124,21 @@ pub fn file_diff(dir: &Path, base: &str, path: &str) -> Result<String, String> {
     let rel = sanitize_diff_path(path)?;
     refresh_index(dir);
     // Tracked changes vs base (committed + staged + unstaged); `--` fences the path so a
-    // pathspec starting with `-` can't be read as an option.
-    let patch = git(dir, &["diff", "--end-of-options", base, "--", &rel]).unwrap_or_default();
+    // pathspec starting with `-` can't be read as an option. `--no-ext-diff` refuses any
+    // repo-configured external diff driver (belt-and-suspenders over the `diff.external=`
+    // neutralizer in `git_command`).
+    let patch = git(
+        dir,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--end-of-options",
+            base,
+            "--",
+            &rel,
+        ],
+    )
+    .unwrap_or_default();
     if !patch.trim().is_empty() {
         return Ok(patch);
     }

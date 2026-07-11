@@ -170,13 +170,18 @@ pub const GIT_EXEC_ENV_VARS_TO_CLEAR: &[&str] = &[
 /// the agent can write through a Bash redirect (the documented workspace-confinement
 /// gap that does not intercept `> /abs/.git/config`). Without these overrides a
 /// planted `core.fsmonitor=<cmd>` / `core.sshCommand=<cmd>` / `core.pager=<cmd>` /
-/// `core.hooksPath=<dir>` yields code execution in the host on the next git call.
-/// Command-line `-c` beats repo/global/system config, so these win.
+/// `core.hooksPath=<dir>` / `diff.external=<cmd>` / `core.gitProxy=<cmd>` yields code
+/// execution in the host on the next git call: `diff.external` runs an arbitrary
+/// program to render EVERY diff (worktree review, PR drafting, merge preview), and
+/// `core.gitProxy` runs one for every network fetch/clone. Command-line `-c` beats
+/// repo/global/system config, so these win.
 const GIT_CONFIG_NEUTRALIZERS: &[&str] = &[
     "core.fsmonitor=",
     "core.sshCommand=",
     "core.pager=cat",
     "core.hooksPath=/dev/null",
+    "diff.external=",
+    "core.gitProxy=",
 ];
 
 /// Build a `git` [`std::process::Command`] in `repo` with an ISOLATED environment.
@@ -596,8 +601,8 @@ mod tests {
 
     /// Every git spawn must lead with `-c <key>=` overrides that neutralize the
     /// agent-writable repo-local code-execution config keys (core.fsmonitor,
-    /// core.sshCommand, core.pager, core.hooksPath), and those overrides must
-    /// precede any subcommand the caller appends.
+    /// core.sshCommand, core.pager, core.hooksPath, diff.external, core.gitProxy),
+    /// and those overrides must precede any subcommand the caller appends.
     #[test]
     fn git_command_neutralizes_repo_local_exec_config() {
         let cmd = git_command(Path::new("/tmp"));
@@ -613,5 +618,19 @@ mod tests {
         }
         // core.hooksPath is neutralized so native hooks (not just Husky) can't fire.
         assert!(args.iter().any(|a| a == "core.hooksPath=/dev/null"));
+        // diff.external (arbitrary program run to render every diff) and
+        // core.gitProxy (arbitrary program run for every network fetch) are the
+        // RCE vectors #220 adds — both must be neutralized on the spawn.
+        assert!(args.iter().any(|a| a == "diff.external="));
+        assert!(args.iter().any(|a| a == "core.gitProxy="));
+    }
+
+    /// The neutralizer list must name the two config keys #220 adds. A regression
+    /// guard: dropping either re-opens a host-RCE vector (`diff.external` on any
+    /// diff, `core.gitProxy` on any fetch) via an agent-planted `.git/config`.
+    #[test]
+    fn neutralizer_list_covers_diff_external_and_git_proxy() {
+        assert!(GIT_CONFIG_NEUTRALIZERS.contains(&"diff.external="));
+        assert!(GIT_CONFIG_NEUTRALIZERS.contains(&"core.gitProxy="));
     }
 }

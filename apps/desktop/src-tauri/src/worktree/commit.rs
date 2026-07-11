@@ -55,8 +55,11 @@ pub fn has_staged_changes(dir: &Path) -> bool {
 
 /// The staged diff text in `dir` (`git diff --cached`). Fed (capped) to the commit-
 /// message generator as the primary signal for the Conventional Commits subject.
+/// `--no-ext-diff` refuses any repo-configured external diff driver (the
+/// `diff.external=` neutralizer in `git_command` makes a patch-producing diff without
+/// this flag fail closed rather than run an attacker-planted program).
 pub fn staged_diff(dir: &Path) -> Result<String, String> {
-    git(dir, &["diff", "--cached"])
+    git(dir, &["diff", "--no-ext-diff", "--cached"])
 }
 
 /// Commit already-staged changes in `dir` with `message`. The commit half of the

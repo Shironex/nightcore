@@ -40,7 +40,11 @@ pub fn append_anti_gaming_check(
         return;
     };
     let range = format!("{merge_base}..HEAD");
-    let Some(diff) = crate::git::run::git_stdout(review_dir, &["diff", "--no-color", &range])
+    // `--no-ext-diff` refuses any repo-configured external diff driver (the
+    // `diff.external=` neutralizer in `git_command` makes a patch-producing diff
+    // without this flag fail closed rather than run an attacker-planted program).
+    let Some(diff) =
+        crate::git::run::git_stdout(review_dir, &["diff", "--no-ext-diff", "--no-color", &range])
     else {
         tracing::warn!(target: "nightcore::anti_gaming", range = %range, dir = %review_dir.display(), "git diff failed; skipping anti-gaming sweep");
         return;
