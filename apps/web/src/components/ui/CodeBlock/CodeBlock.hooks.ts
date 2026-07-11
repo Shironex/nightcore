@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { createHighlighterCore, type HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
 import bash from 'shiki/langs/bash.mjs';
+import diff from 'shiki/langs/diff.mjs';
 import javascript from 'shiki/langs/javascript.mjs';
 import json from 'shiki/langs/json.mjs';
 import jsx from 'shiki/langs/jsx.mjs';
@@ -15,12 +16,12 @@ import githubDark from 'shiki/themes/github-dark-default.mjs';
 const THEME = 'github-dark-default';
 
 /**
- * The 7 grammars loaded into the singleton highlighter (canonical Shiki ids).
+ * The 8 grammars loaded into the singleton highlighter (canonical Shiki ids).
  * Imported from Shiki's fine-grained `shiki/core` entry — rather than the bundled
  * `shiki` entry, which lazy-loads EVERY grammar (wolfram, emacs-lisp, …) plus the
  * 600KB+ oniguruma WASM — so only these languages ship in the production bundle.
  */
-const LANGS = [bash, javascript, json, jsx, markdown, tsx, typescript];
+const LANGS = [bash, diff, javascript, json, jsx, markdown, tsx, typescript];
 
 /** Map an input language token (or file extension) to a loaded grammar id, or
  *  `text` for anything unknown — Shiki always has the built-in plain-text lang. */
@@ -38,6 +39,8 @@ const LANG_ALIASES: Record<string, string> = {
   json: 'json',
   jsonc: 'json',
   json5: 'json',
+  diff: 'diff',
+  patch: 'diff',
   md: 'markdown',
   markdown: 'markdown',
   mdx: 'markdown',

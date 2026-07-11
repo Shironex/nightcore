@@ -409,6 +409,8 @@ pub fn run() {
             workflow::pr_fix::list_pr_fixes,
             workflow::pr_fix::cancel_pr_fix,
             workflow::pr_fix::dismiss_pr_fix,
+            workflow::pr_fix::pr_fix_diff,
+            workflow::pr_fix::pr_fix_file_diff,
             gauntlet::run_gauntlet,
             workflow::ratchet::snapshot_ratchet_baseline,
             analysis::injection_scan::scan_injection_surface,

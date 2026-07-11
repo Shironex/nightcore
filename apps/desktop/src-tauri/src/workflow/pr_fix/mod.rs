@@ -38,6 +38,7 @@ mod command;
 mod comment;
 mod complete;
 mod conflicts;
+mod diff;
 mod dispatch;
 mod prompt;
 mod state;
@@ -49,7 +50,9 @@ mod tests;
 // `workflow::pr_fix::*` for `generate_handler!`), the reader-intercept handlers,
 // and the managed registry + wire state.
 pub(crate) use command::*;
+// The fix-commit diff bridge commands (the push-gate trust view).
 pub(crate) use complete::{handle_fix_completed, handle_fix_failed};
+pub(crate) use diff::*;
 pub(crate) use state::{refuse_while_fix_pending_push, refuse_while_fix_running, PrFixRegistry};
 // Consumed by the cfg(test) ts-rs exporter (`contracts::ts_bindings`) only —
 // runtime code reaches the state through the registry.

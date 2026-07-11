@@ -21,9 +21,11 @@ import {
   RunProgress,
   Spinner,
   StopIcon,
+  UsageLimitBanner,
 } from '@/components/ui';
 import { PROVIDER_LABEL } from '@/lib/bridge';
 
+import { DegradedReviewChip } from '../DegradedReviewChip';
 import { FixRunCard } from '../FixRunCard';
 import { ALL_LENSES, LENS_META, VERDICT_META } from '../prreview.constants';
 import {
@@ -31,6 +33,7 @@ import {
   OWN_PR_TITLE,
 } from '../prreview.constants';
 import type { ReviewVerdict } from '../prreview.types';
+import { degradedLenses } from '../prreview-stream';
 import { ReviewFindings } from '../ReviewFindings';
 import { ReviewPosition } from '../ReviewPosition';
 import { ReviewTimeline } from '../ReviewTimeline';
@@ -51,6 +54,9 @@ export function ReviewSection({
 }: ReviewSectionProps) {
   const { config } = configure;
   const lensCount = config.orderedSelected.length;
+  // The lenses that errored in the displayed run — the degraded-review signal.
+  // Pure derivation over the stream's per-lens state (empty when there's no run).
+  const degradedReview = stream !== null ? degradedLenses(stream) : [];
   const { toolbar } = results;
   // Ids for the sr-only disabled-reason spans the guarded toolbar buttons point
   // at via aria-describedby (`useId` is render-safe — allowlisted by the
@@ -236,6 +242,20 @@ export function ReviewSection({
                 {stream.error ?? 'Review failed.'}
               </div>
             ))}
+
+          {/* Fail-visible signals (T10): a completed review that spent nothing is
+              a usage-limit tell, not a clean bill; a run with any errored lens is
+              degraded (incomplete). Both must show so a broken run never reads as a
+              full, clean review. The banner self-hides unless the $0 signature holds. */}
+          <UsageLimitBanner
+            status={stream.status}
+            costUsd={stream.costUsd}
+            usage={stream.usage}
+            runNoun="review"
+          />
+          {stream.status === 'completed' && (
+            <DegradedReviewChip lenses={degradedReview} />
+          )}
 
           {/* The review-position layer: reconciliation banner, staleness chip,
               merge verdict, and follow-up summary (self-hides when empty). */}

@@ -44,6 +44,8 @@ const {
   CompletedWithTimeline,
   CompletedJustPosted,
   CompletedClean,
+  CompletedDegraded,
+  CompletedUsageLimit,
 } = composeStories(stories);
 
 test('config mode renders the lens chips and the Review action', async () => {
@@ -71,6 +73,28 @@ test('running mode renders the lens progress and the cancel action', async () =>
   // The two requested lenses render as progress rows.
   await expect.element(screen.getByText('Security')).toBeInTheDocument();
   await expect.element(screen.getByText('Logic')).toBeInTheDocument();
+});
+
+test('a healthy completed run shows neither the degraded chip nor the $0 banner', async () => {
+  const screen = render(<Completed />);
+  expect(screen.container.textContent).not.toContain('Degraded review');
+  expect(screen.container.textContent).not.toContain('likely a usage limit');
+});
+
+test('a degraded run (a lens errored) shows the degraded chip naming the lens', async () => {
+  const screen = render(<CompletedDegraded />);
+  await expect
+    .element(screen.getByText(/degraded review/i))
+    .toBeInTheDocument();
+  // The errored lens (security) is named; the finished one (logic) is not blamed.
+  expect(screen.container.textContent).toContain('Security');
+});
+
+test('a $0 / zero-token completed run shows the usage-limit banner', async () => {
+  const screen = render(<CompletedUsageLimit />);
+  await expect
+    .element(screen.getByText(/likely a usage limit/i))
+    .toBeInTheDocument();
 });
 
 test('results mode renders the toolbar with all three verdicts enabled', async () => {

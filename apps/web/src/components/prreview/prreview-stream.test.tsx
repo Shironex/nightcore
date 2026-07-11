@@ -7,6 +7,7 @@ import type {
 } from '@/lib/bridge';
 
 import {
+  degradedLenses,
   EMPTY_REVIEW_STREAM,
   foldReview,
   type PrReviewLensEvent,
@@ -318,5 +319,34 @@ describe('normalizers', () => {
     const s = streamFromRun(run);
     expect(s.requestedLenses).toEqual(['logic', 'security']);
     expect(s.lensState).toEqual({ logic: 'done', security: 'done' });
+  });
+});
+
+describe('degradedLenses', () => {
+  it('returns the errored lenses in requested order', () => {
+    const stream: ReviewStream = {
+      ...EMPTY_REVIEW_STREAM,
+      requestedLenses: ['security', 'logic', 'tests'],
+      lensState: { security: 'error', logic: 'done', tests: 'error' },
+    };
+    expect(degradedLenses(stream)).toEqual(['security', 'tests']);
+  });
+
+  it('is empty when every lens finished', () => {
+    const stream: ReviewStream = {
+      ...EMPTY_REVIEW_STREAM,
+      requestedLenses: ['security', 'logic'],
+      lensState: { security: 'done', logic: 'done' },
+    };
+    expect(degradedLenses(stream)).toEqual([]);
+  });
+
+  it('ignores a stray error state for a non-requested lens', () => {
+    const stream: ReviewStream = {
+      ...EMPTY_REVIEW_STREAM,
+      requestedLenses: ['security'],
+      lensState: { security: 'done', phantom: 'error' },
+    };
+    expect(degradedLenses(stream)).toEqual([]);
   });
 });
