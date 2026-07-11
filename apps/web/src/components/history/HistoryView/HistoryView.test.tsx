@@ -147,6 +147,40 @@ test('a row surfaces the persisted run receipt (approximate cost + duration)', a
   await expect.element(screen.getByText(/≈ \$0\.42 · 1m 14s/)).toBeInTheDocument();
 });
 
+test('virtualizes a large run list — only a subset of rows mount', async () => {
+  // The merge hook applies no limit, so a long history would otherwise mount one
+  // DOM row per run. Under a bounded viewport the virtualizer keeps the mounted
+  // row count far below the total. Wrapped in a fixed-height flex column so the
+  // scroll container is bounded (matching how HistoryView is routed in the shell).
+  const runs: ScanRunSummary[] = Array.from({ length: 400 }, (_, i) => ({
+    id: `r${i}`,
+    family: 'insight' as const,
+    title: `${i} findings`,
+    status: 'completed',
+    createdAt: Date.now() - i * 1000,
+    projectPath: '/p',
+    model: 'claude-opus-4-8',
+    costUsd: 0.1,
+    durationMs: 1000,
+  }));
+  const screen = render(
+    <div style={{ display: 'flex', flexDirection: 'column', height: 300 }}>
+      <HistoryList runs={runs} loading={false} error={null} onOpenRun={() => {}} />
+    </div>,
+  );
+
+  // Every mounted row is a button; the Refresh button lives on HistoryView, not
+  // here, so the container's buttons are exactly the mounted rows.
+  await vi.waitFor(() => {
+    const mounted = screen.container.querySelectorAll('button').length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(runs.length);
+  });
+  // A comfortably-tighter bound than "< 400": ~6 visible rows + overscan, never
+  // hundreds — proves the whole list isn't in the DOM.
+  expect(screen.container.querySelectorAll('button').length).toBeLessThan(60);
+});
+
 test('a warning row renders above the list without blanking it', async () => {
   const runs: ScanRunSummary[] = [
     {

@@ -5,6 +5,7 @@
 import { Badge, EmptyState, HistoryIcon, StatusDot } from '@/components/ui';
 import { formatRelativeTime, formatRunReceipt } from '@/lib/formatters';
 
+import { useHistoryVirtualizer } from './HistoryView.hooks';
 import type { HistoryListProps, ScanFamily, ScanRunSummary } from './HistoryView.types';
 
 /** Family → badge label. */
@@ -65,9 +66,12 @@ function HistoryRow({
   );
 }
 
-/** The newest-first run list with its empty/loading/warning treatments. */
+/** The newest-first run list with its empty/loading/warning treatments. The
+ *  populated list is virtualized (`useHistoryVirtualizer`) so an unbounded run
+ *  history only mounts the visible rows — mirroring the board column. */
 export function HistoryList({ runs, loading, error, onOpenRun }: HistoryListProps) {
   const showEmpty = !loading && runs.length === 0 && error === null;
+  const { setScrollRef, virtualizer } = useHistoryVirtualizer(runs);
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -95,13 +99,29 @@ export function HistoryList({ runs, loading, error, onOpenRun }: HistoryListProp
           Loading history…
         </div>
       ) : (
-        <ul className="min-h-0 flex-1 divide-y divide-border overflow-y-auto">
-          {runs.map((run) => (
-            <li key={`${run.family}:${run.id}`}>
-              <HistoryRow run={run} onOpen={() => onOpenRun(run.family, run.id)} />
-            </li>
-          ))}
-        </ul>
+        // Virtualized scroll container: only the visible rows mount. The inner
+        // <ul> is sized to the full list height and each row is absolutely
+        // positioned at its measured offset — so `divide-y` (which needs
+        // in-flow siblings) is replaced by a per-row `border-b`.
+        <div ref={setScrollRef} className="min-h-0 flex-1 overflow-y-auto">
+          <ul className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+            {virtualizer.getVirtualItems().map((row) => {
+              const run = runs[row.index];
+              if (run === undefined) return null;
+              return (
+                <li
+                  key={`${run.family}:${run.id}`}
+                  data-index={row.index}
+                  ref={virtualizer.measureElement}
+                  className="absolute left-0 top-0 w-full border-b border-border"
+                  style={{ transform: `translateY(${row.start}px)` }}
+                >
+                  <HistoryRow run={run} onOpen={() => onOpenRun(run.family, run.id)} />
+                </li>
+              );
+            })}
+          </ul>
+        </div>
       )}
     </div>
   );
