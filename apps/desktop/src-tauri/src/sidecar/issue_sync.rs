@@ -12,15 +12,20 @@
 //! on `nc:task` transitions. Until then the command is invocable but inert, so PR 2 carries
 //! no live GitHub traffic.
 
+use std::collections::{HashMap, HashSet};
+
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::project::ProjectStore;
 use crate::settings::SettingsStore;
+use crate::sidecar::lifecycle::apply_and_emit;
 use crate::store::issue_triage::IssueValidationStore;
 use crate::store::TaskStore;
 use crate::task::{Task, TASK_EVENT};
-use crate::workflow::issue_sync::{apply_writeback, pending_work};
-use crate::workflow::merge::acquire_root_lease;
+use crate::workflow::issue_sync::{
+    apply_writeback, open_issue_in_browser as open_issue_page, pending_work, project_issue_states,
+};
+use crate::workflow::merge::{acquire_root_lease, require_project};
 
 /// Writeback a task's status to its linked GitHub issue. Off the UI thread (it shells to
 /// `gh`). A no-op when sync is disabled, the task links no issue, or nothing changed.
@@ -118,4 +123,91 @@ fn backfill_issue_number(app: &AppHandle, task: &Task) -> Option<u64> {
     let run_id = task.source_ref.as_deref()?.strip_prefix("issue-triage:")?;
     let store = app.try_state::<IssueValidationStore>()?;
     store.get(run_id).map(|r| r.issue_number)
+}
+
+/// Projection-IN (#97 PR 4, §5): poll the upstream state of every issue-linked task's
+/// GitHub issue and project close/reopen onto `task.issue_state` (the "closed upstream"
+/// chip's data). READS ONLY — no mutation lease, no issue write; a merged task is skipped
+/// (its issue closing is expected, not a divergence). Off the UI thread (it shells to
+/// `gh`). Fired on window focus by the web (gated on `issueSyncEnabled`). Returns the
+/// `(issue_number, state)` pairs that CHANGED this poll.
+#[tauri::command]
+pub async fn poll_issue_states(app: AppHandle) -> Result<Vec<(u64, String)>, String> {
+    tauri::async_runtime::spawn_blocking(move || poll_issue_states_blocking(&app))
+        .await
+        .map_err(|e| format!("polling issue states failed to run: {e}"))?
+}
+
+fn poll_issue_states_blocking(app: &AppHandle) -> Result<Vec<(u64, String)>, String> {
+    // No active project ⇒ nothing to poll (a background focus poll must not error out).
+    let project = match app.state::<ProjectStore>().active() {
+        Some(project) => project,
+        None => return Ok(Vec::new()),
+    };
+    let store = app
+        .try_state::<TaskStore>()
+        .ok_or_else(|| "task store unavailable".to_string())?;
+
+    // The DISTINCT linked issue numbers of tasks we still care about (not merged).
+    let mut linked: Vec<u64> = Vec::new();
+    let mut seen: HashSet<u64> = HashSet::new();
+    for task in store.list() {
+        if task.merged {
+            continue;
+        }
+        if let Some(number) = task.issue_number {
+            if seen.insert(number) {
+                linked.push(number);
+            }
+        }
+    }
+    // Zero linked issues ⇒ zero `gh` calls (the natural guard: only a GitHub project
+    // with issue-linked tasks ever talks to the network here).
+    if linked.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let by_number: HashMap<u64, String> =
+        project_issue_states(std::path::Path::new(&project.path), &linked)?
+            .into_iter()
+            .map(|projection| (projection.number, projection.state))
+            .collect();
+
+    // Project the last-observed state onto each affected task, emitting only on a CHANGE
+    // (last-write-wins; never mutates anything but `issue_state`).
+    let mut changed: Vec<(u64, String)> = Vec::new();
+    for task in store.list() {
+        if task.merged {
+            continue;
+        }
+        let Some(number) = task.issue_number else {
+            continue;
+        };
+        let Some(state) = by_number.get(&number) else {
+            continue;
+        };
+        if task.issue_state.as_deref() == Some(state.as_str()) {
+            continue;
+        }
+        let next = state.clone();
+        apply_and_emit(app, store.inner(), &task.id, {
+            let next = next.clone();
+            move |t| t.issue_state = Some(next)
+        });
+        changed.push((number, next));
+    }
+    Ok(changed)
+}
+
+/// Open a linked issue on GitHub in the user's browser — the "closed upstream" chip's
+/// click action (§5). READ-ONLY (`gh issue view <n> --web`; it opens a page, never
+/// mutates the issue). Off the UI thread (it shells to `gh`).
+#[tauri::command]
+pub async fn open_issue_in_browser(app: AppHandle, issue_number: u64) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = require_project(&app)?;
+        open_issue_page(std::path::Path::new(&project.path), issue_number)
+    })
+    .await
+    .map_err(|e| format!("opening the issue failed to run: {e}"))?
 }
