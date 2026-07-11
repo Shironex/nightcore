@@ -22,41 +22,51 @@ use std::time::Duration;
 
 use crate::git::gh::{map_gh_failure, probe_gh, run_gh_bounded};
 
-/// One `nc:*` label: a fixed name/color/description triple (all trusted constants).
+/// One managed label: a fixed SUFFIX/color/description triple (all trusted constants).
+/// The suffix is prefix-independent — the configured `issue_label_prefix` composes the
+/// full name via [`Label::full_name`], so BOTH the scan-map export and the issue-sync
+/// writeback honor the same prefix (#97; the export used to hardcode `nc:`).
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Label {
-    pub name: &'static str,
+    pub suffix: &'static str,
     pub color: &'static str,
     pub desc: &'static str,
 }
 
+impl Label {
+    /// The full label name under the configured prefix (`"nc:"` + `"map"` → `"nc:map"`).
+    pub(crate) fn full_name(&self, prefix: &str) -> String {
+        format!("{prefix}{}", self.suffix)
+    }
+}
+
 /// A Nightcore scan-map PARENT issue — also the supersede-discovery key (§3.10).
 pub(crate) const NC_MAP: Label = Label {
-    name: "nc:map",
+    suffix: "map",
     color: "5319e7",
     desc: "A Nightcore scan-map parent issue",
 };
 /// A Nightcore scan-finding SUB-issue.
 pub(crate) const NC_FINDING: Label = Label {
-    name: "nc:finding",
+    suffix: "finding",
     color: "bfd4f2",
     desc: "A Nightcore scan-finding sub-issue",
 };
 /// Per-scan-kind label — from an Insight scan (also the per-kind discovery key).
 pub(crate) const NC_INSIGHT: Label = Label {
-    name: "nc:insight",
+    suffix: "insight",
     color: "0e8a16",
     desc: "From an Insight scan",
 };
 /// Per-scan-kind label — from a Scorecard scan.
 pub(crate) const NC_SCORECARD: Label = Label {
-    name: "nc:scorecard",
+    suffix: "scorecard",
     color: "fbca04",
     desc: "From a Scorecard scan",
 };
 /// Per-scan-kind label — from an Enforce/conventions scan.
 pub(crate) const NC_ENFORCE: Label = Label {
-    name: "nc:enforce",
+    suffix: "enforce",
     color: "d93f0b",
     desc: "From an Enforce/conventions scan",
 };
@@ -69,22 +79,27 @@ fn ensure_cache() -> &'static Mutex<HashSet<(String, String)>> {
     CACHE.get_or_init(|| Mutex::new(HashSet::new()))
 }
 
-/// Ensure every label in `labels` exists on the repo rooted at `dir`. Returns `true`
-/// when all are present (created, already-existed, or cached), or `false` to signal
-/// the caller should DEGRADE — create the issues without labels — when any label
-/// cannot be ensured (a 403 scope failure or any other non-422 error). Never errors:
-/// labels are cosmetic, so a label problem must not sink the export.
+/// Ensure every label in `labels` exists on the repo rooted at `dir`, under the
+/// configured `prefix`. Returns `true` when all are present (created, already-existed,
+/// or cached), or `false` to signal the caller should DEGRADE — create the issues
+/// without labels — when any label cannot be ensured (a 403 scope failure or any other
+/// non-422 error). Never errors: labels are cosmetic, so a label problem must not sink
+/// the export.
 pub(crate) fn ensure_labels(
     dir: &Path,
     binary: &str,
     labels: &[Label],
+    prefix: &str,
     deadline: Duration,
 ) -> bool {
     for label in labels {
-        if let Err(reason) = ensure_label_with(dir, binary, *label, deadline) {
+        let name = label.full_name(prefix);
+        if let Err(reason) =
+            ensure_label_named(dir, binary, &name, label.color, label.desc, deadline)
+        {
             tracing::warn!(
                 target: "nightcore::issue_map",
-                label = label.name,
+                label = %name,
                 error = %reason,
                 "could not ensure label — exporting without labels (degrade)"
             );
@@ -94,20 +109,26 @@ pub(crate) fn ensure_labels(
     true
 }
 
-/// Ensure ONE label (binary-parameterized — the fake-`gh` test seam). A cached
-/// `(dir, name)` short-circuits; otherwise `POST …/labels` with the fixed
-/// name/color/description on argv (`-f`), treating `422 already_exists` as success.
-fn ensure_label_with(
+/// Ensure ONE label exists by NAME/color/description (binary-parameterized — the
+/// fake-`gh` test seam). THE single label-definition-ensure seam (#97 decision 5):
+/// both the scan-map export (via [`ensure_labels`]) and the two-way issue-sync
+/// writeback route their `POST …/labels` through here, so there is exactly one
+/// create path + one ensure-cache — no forked parallel seam. A cached `(dir, name)`
+/// short-circuits; otherwise `POST …/labels` with the fixed name/color/description
+/// on argv (`-f`), treating `422 already_exists` as idempotent success.
+pub(crate) fn ensure_label_named(
     dir: &Path,
     binary: &str,
-    label: Label,
+    name: &str,
+    color: &str,
+    description: &str,
     deadline: Duration,
 ) -> Result<(), String> {
-    let key = (dir.to_string_lossy().to_string(), label.name.to_string());
+    let key = (dir.to_string_lossy().to_string(), name.to_string());
     if crate::sync::lock_or_recover(ensure_cache()).contains(&key) {
         return Ok(());
     }
-    probe_gh(binary, "install it to create the map's labels")?;
+    probe_gh(binary, "install it to manage GitHub labels")?;
     let out = run_gh_bounded(
         dir,
         binary,
@@ -117,11 +138,11 @@ fn ensure_label_with(
             "POST",
             "repos/{owner}/{repo}/labels",
             "-f",
-            &format!("name={}", label.name),
+            &format!("name={name}"),
             "-f",
-            &format!("color={}", label.color),
+            &format!("color={color}"),
             "-f",
-            &format!("description={}", label.desc),
+            &format!("description={description}"),
         ],
         None,
         deadline,
@@ -171,6 +192,7 @@ mod tests {
             tmp.path(),
             bin,
             &[NC_MAP],
+            "nc:",
             Duration::from_secs(5)
         ));
         // A second ensure of the SAME label is served from cache (no second call).
@@ -178,6 +200,7 @@ mod tests {
             tmp.path(),
             bin,
             &[NC_MAP],
+            "nc:",
             Duration::from_secs(5)
         ));
         let calls = std::fs::read_to_string(tmp.path().join("calls.txt")).expect("calls");
@@ -199,6 +222,7 @@ mod tests {
             tmp.path(),
             bin,
             &[NC_FINDING],
+            "nc:",
             Duration::from_secs(5)
         ));
     }
@@ -213,6 +237,7 @@ mod tests {
             tmp.path(),
             bin,
             &[NC_INSIGHT],
+            "nc:",
             Duration::from_secs(5)
         ));
         let args = std::fs::read_to_string(tmp.path().join("args.txt")).expect("args");
@@ -223,5 +248,33 @@ mod tests {
         assert!(args.contains("name=nc:insight"), "label name: {args}");
         assert!(args.contains("color=0e8a16"), "label color: {args}");
         assert!(args.contains("From an Insight scan"), "description: {args}");
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn ensure_labels_honors_a_remapped_prefix() {
+        // A remapped `issue_label_prefix` composes the full name — the export honors the
+        // same prefix as the sync writeback (fix T2-6).
+        let tmp = tempfile::TempDir::new().expect("tmp");
+        let script = fake_gh(tmp.path(), "printf '%s\\n' \"$@\" > args.txt\nexit 0");
+        let bin = script.to_str().expect("utf8");
+        assert!(ensure_labels(
+            tmp.path(),
+            bin,
+            &[NC_MAP],
+            "track:",
+            Duration::from_secs(5)
+        ));
+        let args = std::fs::read_to_string(tmp.path().join("args.txt")).expect("args");
+        assert!(
+            args.contains("name=track:map"),
+            "the configured prefix composes the label name: {args}"
+        );
+    }
+
+    #[test]
+    fn full_name_composes_suffix_under_the_prefix() {
+        assert_eq!(NC_MAP.full_name("nc:"), "nc:map");
+        assert_eq!(NC_INSIGHT.full_name("track:"), "track:insight");
     }
 }

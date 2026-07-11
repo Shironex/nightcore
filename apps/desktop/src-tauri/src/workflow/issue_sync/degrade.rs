@@ -14,12 +14,11 @@ use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
 
 use super::comment::build_sync_comment;
-use super::labels::{
-    add_label_with, ensure_label_with, remove_label_with, spec_for, GH_LABEL_TIMEOUT,
-};
+use super::labels::{add_label_with, remove_label_with, spec_for, GH_LABEL_TIMEOUT};
 use super::transition::{pending_work, Pending};
 use crate::git::gh::GH_BINARY;
 use crate::task::Task;
+use crate::workflow::github_labels::ensure_label_named;
 use crate::workflow::issue_triage::post_issue_comment_with;
 
 /// The comments-only degradation notice (§3.8 tier 2) — a human message, never a token.
@@ -27,6 +26,16 @@ const COMMENTS_ONLY_MSG: &str =
     "sync running comments-only: the token can't manage labels on this repo";
 /// The silent-off degradation notice (§3.8 tier 3).
 const PAUSED_MSG: &str = "issue sync paused: the token lacks write access to this repo";
+
+/// How long a per-project scope-downgrade sticks before the ladder RE-PROBES the token
+/// at [`SyncTier::Full`] (fix T2-2). The downgrade cache exists so a scopeless repo isn't
+/// 403-stormed on every transition — but making it permanent-until-restart meant that
+/// fixing the token scope (or re-enabling sync) could NOT recover within a session. After
+/// this interval the entry expires and the next writeback re-probes at Full: it recovers
+/// automatically once the scope is granted, while still bounding a genuinely-scopeless
+/// repo to at most one probe per interval (never a storm). 5 minutes balances recovery
+/// latency against re-probe cost.
+const DOWNGRADE_TTL: Duration = Duration::from_secs(300);
 
 /// The writeback capability tier for a project, downgraded (never upgraded automatically)
 /// as 403s reveal missing scope. Ordered by shrinking capability.
@@ -56,24 +65,57 @@ pub(crate) struct WritebackOutcome {
     pub(crate) changed: bool,
 }
 
-/// Per-project downgrade cache: once a project reveals missing scope we probe once, not on
-/// every transition. Keyed by project path; absent ⇒ [`SyncTier::Full`].
-fn downgrade_cache() -> &'static Mutex<HashMap<String, SyncTier>> {
-    static CACHE: OnceLock<Mutex<HashMap<String, SyncTier>>> = OnceLock::new();
+/// A cached scope-downgrade for one project: the reduced tier plus the epoch-ms after
+/// which it EXPIRES and the ladder re-probes at [`SyncTier::Full`] (fix T2-2).
+#[derive(Clone, Copy)]
+struct CachedDowngrade {
+    tier: SyncTier,
+    expires_at: u64,
+}
+
+/// Per-project downgrade cache: once a project reveals missing scope we probe once (not on
+/// every transition) UNTIL the entry expires. Keyed by project path; absent/expired ⇒
+/// [`SyncTier::Full`].
+fn downgrade_cache() -> &'static Mutex<HashMap<String, CachedDowngrade>> {
+    static CACHE: OnceLock<Mutex<HashMap<String, CachedDowngrade>>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 fn current_tier(dir: &Path) -> SyncTier {
-    crate::sync::lock_or_recover(downgrade_cache())
-        .get(dir.to_string_lossy().as_ref())
-        .copied()
-        .unwrap_or(SyncTier::Full)
+    current_tier_at(dir, crate::task::now_ms())
+}
+
+/// [`current_tier`] against an explicit clock (the fake-clock test seam). An expired entry
+/// is EVICTED and reported as [`SyncTier::Full`] so the next writeback re-probes the token.
+fn current_tier_at(dir: &Path, now: u64) -> SyncTier {
+    let mut cache = crate::sync::lock_or_recover(downgrade_cache());
+    let key = dir.to_string_lossy();
+    match cache.get(key.as_ref()) {
+        Some(entry) if now < entry.expires_at => entry.tier,
+        Some(_) => {
+            // Stale — drop it and recover to Full (re-probe on the next writeback).
+            cache.remove(key.as_ref());
+            SyncTier::Full
+        }
+        None => SyncTier::Full,
+    }
 }
 
 fn downgrade(dir: &Path, tier: SyncTier) {
-    crate::sync::lock_or_recover(downgrade_cache())
-        .insert(dir.to_string_lossy().into_owned(), tier);
-    tracing::warn!(target: "nightcore", project = %dir.display(), tier = ?tier, "issue-sync degraded for this repo");
+    downgrade_at(dir, tier, crate::task::now_ms());
+}
+
+/// [`downgrade`] against an explicit clock (the fake-clock test seam). The entry expires
+/// [`DOWNGRADE_TTL`] after `now`.
+fn downgrade_at(dir: &Path, tier: SyncTier, now: u64) {
+    crate::sync::lock_or_recover(downgrade_cache()).insert(
+        dir.to_string_lossy().into_owned(),
+        CachedDowngrade {
+            tier,
+            expires_at: now.saturating_add(DOWNGRADE_TTL.as_millis() as u64),
+        },
+    );
+    tracing::warn!(target: "nightcore", project = %dir.display(), tier = ?tier, "issue-sync degraded for this repo (re-probes in {}s)", DOWNGRADE_TTL.as_secs());
 }
 
 /// Classify a `gh` mutation failure: a 403 / "Resource not accessible" / insufficient-scope
@@ -193,7 +235,10 @@ fn apply_label_delta(
 ) -> Result<(), String> {
     if let Some(desired) = pending.desired_full.as_deref() {
         if let Some(spec) = pending.desired_suffix.and_then(spec_for) {
-            ensure_label_with(dir, binary, desired, spec.color, spec.description, deadline)?;
+            // The label-definition ensure goes through the SHARED github_labels seam
+            // (#97 decision 5) — one `POST …/labels` path + one ensure-cache for both
+            // the map export and this writeback.
+            ensure_label_named(dir, binary, desired, spec.color, spec.description, deadline)?;
         }
         add_label_with(dir, binary, issue_number, desired, deadline)?;
     }
@@ -377,6 +422,36 @@ mod tests {
         assert_eq!(
             out.synced_label, None,
             "label unchanged so it retries next transition"
+        );
+    }
+
+    #[test]
+    fn a_downgrade_expires_and_re_probes_at_full() {
+        let tmp = tempfile::TempDir::new().expect("tempdir");
+        let ttl = DOWNGRADE_TTL.as_millis() as u64;
+        // Downgrade at t=1000; the entry should hold until t=1000+ttl.
+        downgrade_at(tmp.path(), SyncTier::SilentOff, 1_000);
+        assert_eq!(
+            current_tier_at(tmp.path(), 1_000),
+            SyncTier::SilentOff,
+            "the downgrade holds immediately after"
+        );
+        assert_eq!(
+            current_tier_at(tmp.path(), 1_000 + ttl - 1),
+            SyncTier::SilentOff,
+            "still degraded just before expiry (no 403-storm)"
+        );
+        // At/after expiry it recovers to Full so a fixed token re-probes without a restart.
+        assert_eq!(
+            current_tier_at(tmp.path(), 1_000 + ttl),
+            SyncTier::Full,
+            "expired ⇒ recovers to Full"
+        );
+        // ...and the stale entry was evicted, so a subsequent read is also Full.
+        assert_eq!(
+            current_tier_at(tmp.path(), 0),
+            SyncTier::Full,
+            "the expired entry is evicted, not left behind"
         );
     }
 

@@ -13,6 +13,8 @@
 //! no live GitHub traffic.
 
 use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -25,7 +27,7 @@ use crate::task::{Task, TASK_EVENT};
 use crate::workflow::issue_sync::{
     apply_writeback, open_issue_in_browser as open_issue_page, pending_work, project_issue_states,
 };
-use crate::workflow::merge::{acquire_root_lease, require_project};
+use crate::workflow::merge::{acquire_root_lease, require_project, TaskLease};
 
 /// Writeback a task's status to its linked GitHub issue. Off the UI thread (it shells to
 /// `gh`). A no-op when sync is disabled, the task links no issue, or nothing changed.
@@ -65,12 +67,23 @@ fn sync_issue_status_blocking(app: &AppHandle, task_id: &str) -> Result<(), Stri
     };
     task.issue_number = Some(issue_number);
 
-    // 3. Project guard — the active project's root is the `gh` cwd resolving {owner}/{repo}.
-    let project = app
-        .state::<ProjectStore>()
-        .active()
-        .ok_or_else(|| "no active project".to_string())?;
-    let project_path = std::path::PathBuf::from(&project.path);
+    // 3. Explicit project→repo guard (fix T2-1). Resolve the repo the label is routed to
+    //    from where the task file actually LIVES (`<root>/.nightcore/tasks` → `<root>`) —
+    //    the TaskStore is retargeted per active project, so its target dir IS the task's
+    //    project root. NEVER the global active pointer alone (which could name a different
+    //    repo than the store the task came from during a project switch). Then require that
+    //    root to still be the active project (its root is the `gh` cwd resolving
+    //    {owner}/{repo}). A switch racing this writeback fails CLOSED: skip, never misroute
+    //    a label onto another repo's issue #N.
+    let Some(project_path) = task_project_root(&store.tasks_dir()) else {
+        tracing::warn!(target: "nightcore", task_id, "issue-sync skipped: cannot resolve the task's project root from its store dir");
+        return Ok(());
+    };
+    let active = app.state::<ProjectStore>().active();
+    if active.as_ref().map(|p| Path::new(p.path.as_str())) != Some(project_path.as_path()) {
+        tracing::warn!(target: "nightcore", task_id, project = %project_path.display(), "issue-sync skipped: the task's project is not the active one — refusing to route a label to another repo");
+        return Ok(());
+    }
 
     // 4. Compute the writeback delta PURELY — zero `gh` calls when nothing changed.
     if pending_work(&task, &prefix).is_noop() {
@@ -89,8 +102,18 @@ fn sync_issue_status_blocking(app: &AppHandle, task_id: &str) -> Result<(), Stri
     }
 
     // 5. Per-root mutation lease — writeback mutates the shared repo (a GitHub write from
-    //    its root), so serialize against merge / commit / pull-base / comment-post.
-    let _lease = acquire_root_lease(&project_path, "syncing the issue status")?;
+    //    its root), so serialize against merge / commit / pull-base / comment-post. A
+    //    refusal (another root mutation in flight) is bounded-retried with a short backoff
+    //    (fix T2-4) so a TERMINAL writeback isn't dropped the instant a merge/commit holds
+    //    the root — otherwise the issue label could lag the task state indefinitely. Past
+    //    the bound it defers to the next transition / boot re-emit (never busy-loops).
+    let _lease = match acquire_lease_with_retry(&project_path, std::thread::sleep) {
+        Ok(lease) => lease,
+        Err(e) => {
+            tracing::info!(target: "nightcore", task_id, error = %e, "issue-sync deferred: the project root is busy — will reconcile on the next transition");
+            return Ok(());
+        }
+    };
 
     // 6. Apply the label delta + terminal comment under the degradation ladder.
     let outcome = apply_writeback(&project_path, &prefix, issue_number, &task);
@@ -123,6 +146,56 @@ fn backfill_issue_number(app: &AppHandle, task: &Task) -> Option<u64> {
     let run_id = task.source_ref.as_deref()?.strip_prefix("issue-triage:")?;
     let store = app.try_state::<IssueValidationStore>()?;
     store.get(run_id).map(|r| r.issue_number)
+}
+
+/// Bounded-retry budget for a root-lease refusal (another root mutation in flight). Small
+/// enough never to pin a blocking-pool thread; large enough to outlast a typical
+/// commit/short merge so a terminal writeback usually lands rather than lagging the state.
+const LEASE_RETRY_ATTEMPTS: u32 = 5;
+const LEASE_RETRY_BACKOFF: Duration = Duration::from_millis(200);
+
+/// Whether an [`acquire_root_lease`] error is a lease REFUSAL (the root is busy) — the only
+/// failure we bounded-retry. Any other error is surfaced immediately so a future non-busy
+/// failure mode isn't silently swallowed by the retry loop.
+fn is_lease_refusal(err: &str) -> bool {
+    err.contains("modifying the project root")
+}
+
+/// Acquire the per-root mutation lease for `project_path`, bounded-retrying a refusal with a
+/// short backoff (fix T2-4) so a terminal writeback isn't dropped the instant a merge/commit
+/// holds the root. `sleep` is injected so tests drive the backoff without real time. Each
+/// attempt is a fresh try-acquire (respects single-flight, never a spin); it is bounded by
+/// [`LEASE_RETRY_ATTEMPTS`] and sleeps between attempts only (`attempts - 1` times), so it
+/// never busy-loops and never blocks longer than ~1 s. Past the bound the caller defers to
+/// the next transition / boot re-emit.
+fn acquire_lease_with_retry(
+    project_path: &Path,
+    mut sleep: impl FnMut(Duration),
+) -> Result<TaskLease, String> {
+    let mut attempt = 1;
+    loop {
+        match acquire_root_lease(project_path, "syncing the issue status") {
+            Ok(lease) => return Ok(lease),
+            Err(e) if attempt < LEASE_RETRY_ATTEMPTS && is_lease_refusal(&e) => {
+                attempt += 1;
+                sleep(LEASE_RETRY_BACKOFF);
+            }
+            Err(e) => return Err(e),
+        }
+    }
+}
+
+/// The repo root that OWNS a task, derived from the task store's target dir — the layout is
+/// always `<root>/.nightcore/tasks` (see [`crate::project::ProjectStore::active_tasks_dir`]),
+/// so the root is the grandparent whose intermediate component is `.nightcore`. `None` when
+/// the dir is not that shape (e.g. the `no-active-project/tasks` scratch dir used with no
+/// active project) — the caller fails closed rather than guessing a repo (fix T2-1).
+fn task_project_root(tasks_dir: &Path) -> Option<PathBuf> {
+    let nightcore = tasks_dir.parent()?;
+    if nightcore.file_name() != Some(std::ffi::OsStr::new(".nightcore")) {
+        return None;
+    }
+    nightcore.parent().map(Path::to_path_buf)
 }
 
 /// Projection-IN (#97 PR 4, §5): poll the upstream state of every issue-linked task's
@@ -210,4 +283,74 @@ pub async fn open_issue_in_browser(app: AppHandle, issue_number: u64) -> Result<
     })
     .await
     .map_err(|e| format!("opening the issue failed to run: {e}"))?
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn task_project_root_resolves_the_owning_repo_from_the_store_dir() {
+        // The real per-project layout: <root>/.nightcore/tasks → <root>.
+        assert_eq!(
+            task_project_root(Path::new("/repo/nightcore/.nightcore/tasks")),
+            Some(PathBuf::from("/repo/nightcore")),
+        );
+        // Matches the exact PathBuf `active_tasks_dir` builds (join of ".nightcore/tasks").
+        let built = Path::new("/repo/a").join(".nightcore/tasks");
+        assert_eq!(task_project_root(&built), Some(PathBuf::from("/repo/a")));
+    }
+
+    #[test]
+    fn task_project_root_fails_closed_off_the_expected_shape() {
+        // The no-active-project scratch dir (`…/no-active-project/tasks`) is NOT a repo.
+        assert_eq!(
+            task_project_root(Path::new("/config/no-active-project/tasks")),
+            None,
+        );
+        // Any dir whose parent is not `.nightcore` is refused (no guessing a repo root).
+        assert_eq!(task_project_root(Path::new("/repo/tasks")), None);
+        assert_eq!(task_project_root(Path::new("/")), None);
+    }
+
+    #[test]
+    fn is_lease_refusal_matches_the_root_busy_message_only() {
+        // The real refusal string from a held root lease is classified as a refusal...
+        let dir = Path::new("/nc-test-issue-sync/classify");
+        let _held = acquire_root_lease(dir, "test").expect("hold the root lease");
+        let refusal = match acquire_root_lease(dir, "syncing the issue status") {
+            Ok(_) => panic!("a second acquire must be refused while the root is held"),
+            Err(e) => e,
+        };
+        assert!(
+            is_lease_refusal(&refusal),
+            "the real refusal is a lease refusal: {refusal}"
+        );
+        // ...but a scope/network failure is NOT (never bounded-retried).
+        assert!(!is_lease_refusal("gh: Resource not accessible (HTTP 403)"));
+    }
+
+    #[test]
+    fn acquire_lease_with_retry_bounds_a_busy_root_without_busy_looping() {
+        let dir = Path::new("/nc-test-issue-sync/busy");
+        // Hold the lease for the whole call so every attempt is refused.
+        let _held = acquire_root_lease(dir, "test").expect("hold the root lease");
+        let mut sleeps = 0u32;
+        let result = acquire_lease_with_retry(dir, |_| sleeps += 1);
+        assert!(result.is_err(), "a permanently-busy root defers (Err)");
+        assert_eq!(
+            sleeps,
+            LEASE_RETRY_ATTEMPTS - 1,
+            "sleeps BETWEEN attempts only — bounded, never a busy-loop"
+        );
+    }
+
+    #[test]
+    fn acquire_lease_with_retry_takes_a_free_root_immediately() {
+        let dir = Path::new("/nc-test-issue-sync/free");
+        let mut sleeps = 0u32;
+        let lease = acquire_lease_with_retry(dir, |_| sleeps += 1).expect("a free root acquires");
+        assert_eq!(sleeps, 0, "no backoff when the lease is free");
+        drop(lease);
+    }
 }
