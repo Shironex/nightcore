@@ -24,24 +24,36 @@ pub(super) fn desired_label(task: &Task) -> Option<&'static str> {
     })
 }
 
-/// The terminal COMMENT key to post for a task's state (§3.2), or `None`. Pure. Reads
-/// `issue_comment_marker` only for the once-only `converted` case: the initial "tracking"
-/// comment posts exactly once, on the first sync of a freshly-minted (Backlog/Ready,
-/// marker-unset) task. A Done→Backlog→Done flap must NOT re-post it — by then the marker
-/// is `done`/`failed`, so this returns `None`. The `done`/`failed` keys are returned
-/// unconditionally for their terminal state; the command's marker guard ([`Pending`])
+/// The terminal COMMENT key to post for a task's state (§3.2), or `None`. Pure.
+///
+/// The once-only `converted` "tracking" comment is keyed on the DURABLE
+/// `issue_comment_marker`, NOT on the transient `Backlog`/`Ready` status. A fast
+/// Backlog→Done transition coalesces (the 500 ms observer debounce, §3.6) into a single
+/// `sync_issue_status` call carrying the LATEST state — so gating `converted` on the
+/// status being Backlog/Ready would DROP it whenever the task raced past those states
+/// before the first sync fired. Keyed on the marker instead, the first-ever sync of any
+/// issue-linked task (marker unset) posts `converted` exactly once — regardless of how
+/// far the status has already advanced — and, once the marker is set, never re-posts it
+/// (a Done→Backlog→Done flap is inert). The `done`/`failed` keys are returned for their
+/// terminal state once `converted` has posted; the command's marker guard ([`Pending`])
 /// makes each post at most once.
 pub(super) fn comment_key(task: &Task) -> Option<&'static str> {
     if task.merged {
         return None;
     }
+    // First-ever sync (no comment ever posted) ⇒ the tracking comment, whatever the
+    // status has coalesced to. This survives a Backlog→Done fast-path.
+    if task.issue_comment_marker.is_none() {
+        return Some("converted");
+    }
     match task.status {
         TaskStatus::Failed => Some("failed"),
         TaskStatus::Done => Some("done"),
-        TaskStatus::Backlog | TaskStatus::Ready => {
-            task.issue_comment_marker.is_none().then_some("converted")
-        }
-        TaskStatus::InProgress | TaskStatus::Verifying | TaskStatus::WaitingApproval => None,
+        TaskStatus::Backlog
+        | TaskStatus::Ready
+        | TaskStatus::InProgress
+        | TaskStatus::Verifying
+        | TaskStatus::WaitingApproval => None,
     }
 }
 
@@ -129,21 +141,56 @@ mod tests {
     }
 
     #[test]
-    fn comment_key_maps_terminals_and_the_once_only_converted() {
-        // Just-converted (Backlog, marker unset) posts `converted`.
-        assert_eq!(comment_key(&task(TaskStatus::Backlog)), Some("converted"));
-        assert_eq!(comment_key(&task(TaskStatus::Ready)), Some("converted"));
-        // An ordinary Backlog whose converted comment already posted does NOT re-post.
-        let mut synced = task(TaskStatus::Backlog);
-        synced.issue_comment_marker = Some("done".into());
-        assert_eq!(comment_key(&synced), None, "converted is once-only");
-        // Work states post nothing.
-        assert_eq!(comment_key(&task(TaskStatus::InProgress)), None);
-        assert_eq!(comment_key(&task(TaskStatus::Verifying)), None);
-        assert_eq!(comment_key(&task(TaskStatus::WaitingApproval)), None);
-        // Terminals post their own key.
-        assert_eq!(comment_key(&task(TaskStatus::Done)), Some("done"));
-        assert_eq!(comment_key(&task(TaskStatus::Failed)), Some("failed"));
+    fn converted_is_keyed_on_the_marker_and_survives_coalescing() {
+        // The first-ever sync (marker unset) posts `converted` regardless of how far the
+        // status has advanced — so a fast Backlog→Done coalesce can't drop the tracking
+        // comment (fix T2-3).
+        for status in [
+            TaskStatus::Backlog,
+            TaskStatus::Ready,
+            TaskStatus::InProgress,
+            TaskStatus::Verifying,
+            TaskStatus::WaitingApproval,
+            TaskStatus::Done,
+            TaskStatus::Failed,
+        ] {
+            assert_eq!(
+                comment_key(&task(status)),
+                Some("converted"),
+                "marker-unset {status:?} posts the once-only converted comment"
+            );
+        }
+    }
+
+    #[test]
+    fn comment_key_maps_terminals_once_converted_has_posted() {
+        // Once the tracking comment has posted (marker set), terminals post their own key.
+        let mut done = task(TaskStatus::Done);
+        done.issue_comment_marker = Some("converted".into());
+        assert_eq!(comment_key(&done), Some("done"));
+        let mut failed = task(TaskStatus::Failed);
+        failed.issue_comment_marker = Some("converted".into());
+        assert_eq!(comment_key(&failed), Some("failed"));
+        // ...and the non-terminal states post nothing.
+        for status in [
+            TaskStatus::Backlog,
+            TaskStatus::Ready,
+            TaskStatus::InProgress,
+            TaskStatus::Verifying,
+            TaskStatus::WaitingApproval,
+        ] {
+            let mut t = task(status);
+            t.issue_comment_marker = Some("converted".into());
+            assert_eq!(
+                comment_key(&t),
+                None,
+                "{status:?} (converted) posts nothing"
+            );
+        }
+        // A Done→Backlog→Done flap never re-posts `converted` (marker already `done`).
+        let mut flap = task(TaskStatus::Backlog);
+        flap.issue_comment_marker = Some("done".into());
+        assert_eq!(comment_key(&flap), None, "converted is once-only");
     }
 
     #[test]
