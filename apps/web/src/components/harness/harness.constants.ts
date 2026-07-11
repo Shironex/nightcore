@@ -13,6 +13,7 @@ import {
 import type {
   ArtifactKind,
   ConventionCategory,
+  ConventionDriftStatus,
   ConventionKind,
   CoverageStatus,
   HarnessProposalKind,
@@ -112,6 +113,49 @@ export const COVERAGE_STATUS_META: Record<CoverageStatus, CoverageStatusMeta> = 
     tone: 'text-muted-foreground',
     chip: 'bg-white/[0.05] border-border',
     hint: 'Neither a rule nor an agent doc covers this convention.',
+  },
+};
+
+interface DriftStatusMeta {
+  label: string;
+  /** Tailwind text tone for the badge. */
+  tone: string;
+  /** Tailwind bg/border tone for the badge chip. */
+  chip: string;
+  /** One-line description for the row hover. */
+  hint: string;
+}
+
+/** Drift-v1 (T15) conformance status palette + copy — the MEASURED sibling of
+ *  {@link COVERAGE_STATUS_META}. `clean` reads as the green "followed at every
+ *  checked site" state (always WITH counts); `drifted` is the red "N sites violate";
+ *  `errored` is the amber "ran but couldn't be counted"; `uncheckable` is the muted
+ *  honest "no armed check measures this". Never a bare "followed"/"clean" — the row
+ *  always shows the method + site counts alongside a `clean`/`drifted` chip. */
+export const DRIFT_STATUS_META: Record<ConventionDriftStatus, DriftStatusMeta> = {
+  clean: {
+    label: 'Clean',
+    tone: 'text-success',
+    chip: 'bg-success/[0.12] border-success/40',
+    hint: 'An armed check ran and found no violating sites (shown with its method + counts).',
+  },
+  drifted: {
+    label: 'Drifted',
+    tone: 'text-destructive',
+    chip: 'bg-destructive/[0.12] border-destructive/40',
+    hint: 'An armed check found sites that violate this convention.',
+  },
+  uncheckable: {
+    label: 'Uncheckable',
+    tone: 'text-muted-foreground',
+    chip: 'bg-white/[0.05] border-border',
+    hint: 'No armed check covers this convention, so its conformance is unmeasured — not "clean".',
+  },
+  errored: {
+    label: 'Errored',
+    tone: 'text-warning',
+    chip: 'bg-warning/[0.12] border-warning/40',
+    hint: 'The armed check could not run, or its output could not be parsed into site counts.',
   },
 };
 

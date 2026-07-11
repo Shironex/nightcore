@@ -46,6 +46,11 @@ export type { ArmedChecksState } from '../generated/ArmedChecksState';
 export type { BoardAppearance } from '../generated/BoardAppearance';
 export type { BoardBackgroundRef } from '../generated/BoardBackgroundRef';
 export type { BranchInfo } from '../generated/BranchInfo';
+// Drift-v1 (T15): the measured per-convention conformance carried on
+// `ArmedChecksState.drift` (ts-rs from `store/checks_state.rs`). The generated
+// shape keeps `status`/`category` as `string`; the `ConventionDriftStatus` union
+// comes from the zod contract below (the web casts, mirroring the coverage record).
+export type { ConventionDrift } from '../generated/ConventionDrift';
 export type { DetectedEditor } from '../generated/DetectedEditor';
 export type { DiffFileStat } from '../generated/DiffFileStat';
 export type { DiffStatus } from '../generated/DiffStatus';
@@ -201,6 +206,7 @@ export type {
   ArtifactKind,
   ArtifactWriteMode,
   ConventionCategory,
+  ConventionDriftStatus,
   ConventionFinding,
   ConventionKind,
   CoverageStatus,
