@@ -138,3 +138,134 @@ pub(crate) fn git_status_success(repo: &Path, args: &[&str]) -> bool {
         .map(|o| o.status.success())
         .unwrap_or(false)
 }
+
+// The bounded-subprocess core (`drain_and_wait`) is exercised with plain `sh`
+// children (no git needed) so the anti-deadlock + deadline behavior is tested in
+// isolation; the `git_with_deadline` overrun test uses a real git op against a
+// local black-hole listener. Unix-only: the fixtures use `sh`/`yes`.
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+    use std::process::{Command, Stdio};
+    use std::sync::mpsc;
+    use std::time::Instant;
+
+    /// Run `body` on its own thread bounded by `limit`, panicking (failing the test
+    /// FAST) if it doesn't finish in time. A drain-deadlock regression would otherwise
+    /// hang until the CI-wide test timeout; this reds it in seconds instead.
+    fn bounded<F: FnOnce() + Send + 'static>(limit: Duration, body: F) {
+        let (tx, rx) = mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            body();
+            let _ = tx.send(());
+        });
+        match rx.recv_timeout(limit) {
+            Ok(()) => worker.join().expect("the test body panicked"),
+            Err(_) => {
+                panic!("test body exceeded {limit:?}: likely a drain_and_wait deadlock regression")
+            }
+        }
+    }
+
+    /// The whole point of the dual-stream drain: a child emitting FAR more than one
+    /// pipe buffer (~64KB) on BOTH stdout AND stderr concurrently must be drained fully
+    /// without wedging. If the two pipes weren't drained on their own threads, whichever
+    /// the child filled first would block the child mid-write and `drain_and_wait` would
+    /// hang forever. 300KB per stream is well past any platform's pipe buffer.
+    #[test]
+    fn drain_and_wait_drains_both_full_pipes_without_deadlocking() {
+        bounded(Duration::from_secs(20), || {
+            let child = Command::new("sh")
+                .args([
+                    "-c",
+                    // Two concurrent writers: 300KB of 'A' to stdout, 300KB of 'B' to
+                    // stderr, then `wait` for both. Each far exceeds the pipe buffer.
+                    "yes A | head -c 300000 & yes B | head -c 300000 1>&2 & wait",
+                ])
+                .stdin(Stdio::null())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .expect("spawn the dual-stream writer");
+            // Generous deadline: a healthy drain finishes in well under a second. Only a
+            // regression would approach it — and the `bounded` watchdog fires first.
+            let out = drain_and_wait(child, None, Duration::from_secs(60))
+                .expect("the wait itself must not fail")
+                .expect("the child exits within the deadline");
+            assert!(out.status.success(), "the writer exits cleanly");
+            assert_eq!(out.stdout.len(), 300_000, "all of stdout was drained");
+            assert_eq!(out.stderr.len(), 300_000, "all of stderr was drained");
+            // Each stream carries exactly its own bytes — no cross-pipe bleed.
+            assert!(
+                out.stdout.bytes().all(|b| b == b'A' || b == b'\n'),
+                "stdout holds only the stdout stream"
+            );
+            assert!(
+                out.stderr.bytes().all(|b| b == b'B' || b == b'\n'),
+                "stderr holds only the stderr stream"
+            );
+        });
+    }
+
+    /// The deadline arm: a child that outlives the deadline comes back `Ok(None)` and is
+    /// killed promptly — proven by returning far sooner than the child's own 30s sleep.
+    /// (The kill+reap mechanics themselves are pinned in `infra::proc`.)
+    #[test]
+    fn drain_and_wait_times_out_to_none_on_overrun() {
+        let child = Command::new("sh")
+            .args(["-c", "sleep 30"])
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("spawn the sleeper");
+        let started = Instant::now();
+        let out = drain_and_wait(child, None, Duration::from_millis(200))
+            .expect("the wait must not fail");
+        assert!(out.is_none(), "an overrunning child times out to Ok(None)");
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the child is killed at the deadline, not waited out for its full sleep"
+        );
+    }
+
+    /// `git_with_deadline` maps an overrun to `Err(timeout_msg)`. We point git at a
+    /// git:// URL served by a local listener that ACCEPTS but never replies, so git
+    /// connects and then blocks reading the protocol response — the exact
+    /// black-holed-origin hang the deadline exists for — and assert git is killed at the
+    /// deadline with the timeout message, not left to pin the calling thread.
+    #[test]
+    fn git_with_deadline_surfaces_a_hang_as_the_timeout_error() {
+        use std::net::TcpListener;
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind a loopback listener");
+        let port = listener.local_addr().expect("listener addr").port();
+        // Accept one connection and hold it open (never replying) past the deadline, so
+        // git is what gets killed — not us closing the socket on it.
+        let acceptor = std::thread::spawn(move || {
+            if let Ok((stream, _)) = listener.accept() {
+                std::thread::sleep(Duration::from_secs(2));
+                drop(stream);
+            }
+        });
+
+        let repo = tempfile::TempDir::new().expect("temp cwd");
+        let url = format!("git://127.0.0.1:{port}/repo.git");
+        let started = Instant::now();
+        let result = git_with_deadline(
+            repo.path(),
+            &["ls-remote", &url],
+            Duration::from_millis(800),
+            "git timed out",
+        );
+        assert_eq!(
+            result,
+            Err("git timed out".to_string()),
+            "a black-holed git op must surface the timeout message, not hang"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(2),
+            "git is killed at the ~800ms deadline, well before the 2s connection hold"
+        );
+        let _ = acceptor.join();
+    }
+}

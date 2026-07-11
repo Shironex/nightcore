@@ -409,4 +409,158 @@ mod tests {
             "off-macOS confinement must refuse: {err}"
         );
     }
+
+    // --- macOS-only: the composed writable-set assembly in `derive_writable_roots`.
+    // The pure helpers it composes are covered above; these pin how it wires cwd, the
+    // worktree git-common dir, the ~/.claude state leaves, parent exclusion, and dedup.
+
+    /// HOME is process-global; serialize the tests that pin it so a parallel run can't
+    /// swap it mid-assertion. No other test in the crate mutates HOME.
+    #[cfg(target_os = "macos")]
+    static HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// RAII guard: pins HOME for a test (restoring the prior value on drop, even on a
+    /// panic) while holding [`HOME_LOCK`], so the ~/.claude carve-outs derive from a
+    /// known temp root rather than the CI user's real home.
+    #[cfg(target_os = "macos")]
+    struct HomeGuard {
+        _lock: std::sync::MutexGuard<'static, ()>,
+        prev: Option<std::ffi::OsString>,
+    }
+
+    #[cfg(target_os = "macos")]
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match self.prev.take() {
+                Some(v) => std::env::set_var("HOME", v),
+                None => std::env::remove_var("HOME"),
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn pin_home(home: &Path) -> HomeGuard {
+        let lock = HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let prev = std::env::var_os("HOME");
+        std::env::set_var("HOME", home);
+        HomeGuard { _lock: lock, prev }
+    }
+
+    /// Canonicalize an existing path to the kernel-resolved, symlink-free string
+    /// Seatbelt (and the deriver) match — macOS temp dirs live under a /var → /private
+    /// symlink, so the lexical TempDir path is NOT what lands in the roots.
+    #[cfg(target_os = "macos")]
+    fn canon(p: &Path) -> String {
+        std::fs::canonicalize(p)
+            .expect("canonicalize an existing path")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn derive_writable_roots_includes_the_canon_cwd_but_not_its_parent() {
+        let tmp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        // A nested cwd so its parent is a distinct dir the deriver must NOT add.
+        let cwd = tmp.path().join("workspace/project");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let _home = pin_home(home.path());
+        let roots = derive_writable_roots(&cwd).expect("derive roots");
+
+        assert!(
+            roots.contains(&canon(&cwd)),
+            "the canonicalized cwd must be a writable root"
+        );
+        // The parent working dir is deliberately NOT a derived root — containment stays
+        // scoped to the session cwd, never widening to its parent tree.
+        let parent = canon(cwd.parent().unwrap());
+        assert!(
+            !roots.contains(&parent),
+            "the cwd's parent must not be a writable root: {parent}"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn derive_writable_roots_includes_a_linked_worktree_git_common_dir() {
+        let tmp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        // Linked-worktree layout: cwd/.git is a FILE pointing into <repo>/.git/worktrees.
+        let repo_git = tmp.path().join("repo/.git");
+        std::fs::create_dir_all(repo_git.join("worktrees/wt1")).unwrap();
+        let cwd = tmp.path().join("wt");
+        std::fs::create_dir_all(&cwd).unwrap();
+        std::fs::write(
+            cwd.join(".git"),
+            format!("gitdir: {}\n", repo_git.join("worktrees/wt1").display()),
+        )
+        .unwrap();
+
+        let _home = pin_home(home.path());
+        let roots = derive_writable_roots(&cwd).expect("derive roots");
+
+        assert!(
+            roots.contains(&canon(&cwd)),
+            "the worktree cwd is a writable root"
+        );
+        assert!(
+            roots.contains(&canon(&repo_git)),
+            "the shared .git common dir must be writable so git works in the confined worktree"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn derive_writable_roots_carves_claude_state_dirs_but_never_the_config_root() {
+        let tmp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let cwd = tmp.path().join("project");
+        std::fs::create_dir_all(&cwd).unwrap();
+
+        let _home = pin_home(home.path());
+        let roots = derive_writable_roots(&cwd).expect("derive roots");
+
+        // HOME is canonicalized inside the deriver, so build expectations from the same
+        // base (the leaves are lexical — they don't exist yet).
+        let claude_root = format!("{}/.claude", canon(home.path()));
+        for leaf in ["session-env", "projects", "todos", "logs", "debug"] {
+            let expected = format!("{claude_root}/{leaf}");
+            assert!(
+                roots.contains(&expected),
+                "the {leaf} state dir must be a writable root"
+            );
+        }
+        // SECURITY INVARIANT: the ~/.claude CONFIG ROOT is NEVER a writable root — a
+        // confined shell that could rewrite settings.json / hooks/ would escape the
+        // sandbox (Claude Code hooks run OUTSIDE the Seatbelt profile).
+        assert!(
+            !roots.contains(&claude_root),
+            "the .claude config root must never be a writable root"
+        );
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn derive_writable_roots_dedups_when_the_git_common_dir_is_the_cwd() {
+        let tmp = TempDir::new().unwrap();
+        let home = TempDir::new().unwrap();
+        let cwd = tmp.path().join("wt");
+        std::fs::create_dir_all(&cwd).unwrap();
+        // A .git FILE whose gitdir points back at the cwd itself → the git common dir
+        // resolves to the SAME path as the already-added canonical cwd, so the dedup
+        // HashSet must fold it to a single entry instead of listing the cwd twice.
+        std::fs::write(cwd.join(".git"), format!("gitdir: {}\n", cwd.display())).unwrap();
+
+        let _home = pin_home(home.path());
+        let roots = derive_writable_roots(&cwd).expect("derive roots");
+
+        let canon_cwd = canon(&cwd);
+        let occurrences = roots.iter().filter(|r| **r == canon_cwd).count();
+        assert_eq!(
+            occurrences, 1,
+            "the cwd must appear exactly once even when it is also the git common dir"
+        );
+    }
 }
