@@ -1,6 +1,7 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { expect, fn, userEvent, within } from 'storybook/test';
 
+import { ToastProvider } from '@/components/ui';
 import type { Settings } from '@/lib/bridge';
 
 import { SettingsView } from './SettingsView';
@@ -43,6 +44,15 @@ const meta = {
   title: 'Settings/SettingsView',
   component: SettingsView,
   parameters: { layout: 'fullscreen' },
+  // The Notifications card's Claude notify-hook affordance uses `useToast` (T11); the
+  // real app provides a ToastProvider at the shell root, so the story mirrors it.
+  decorators: [
+    (Story) => (
+      <ToastProvider>
+        <Story />
+      </ToastProvider>
+    ),
+  ],
   args: {
     settings,
     activeProjectId: 'nightcore',

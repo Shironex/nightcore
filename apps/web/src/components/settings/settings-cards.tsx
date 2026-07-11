@@ -5,7 +5,6 @@
  *  Settings never re-derives its own model/effort vocabulary. */
 import {
   AgentsIcon,
-  BellIcon,
   BoltIcon,
   BranchIcon,
   FieldValue,
@@ -31,6 +30,7 @@ import {
 import { buildAboutCards } from './settings-about-cards';
 import { buildGithubCards } from './settings-github-cards';
 import { buildInterfaceCards } from './settings-interface-cards';
+import { buildNotificationCards } from './settings-notification-cards';
 import {
   DefaultModelControl,
   defaultModelForProvider,
@@ -330,46 +330,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
       ];
     case 'hooks':
       return [
-        {
-          icon: <BellIcon size={18} />,
-          title: 'Notifications',
-          subtitle: 'A desktop notification when a task finishes or fails.',
-          rows: [
-            {
-              label: 'Native notifications',
-              hint: 'Notify on Done and Failed',
-              control: (
-                <Toggle
-                  on={settings.notifyOnComplete}
-                  onChange={(next) => patchGlobal({ notifyOnComplete: next })}
-                  label="Native notifications on task complete"
-                />
-              ),
-            },
-            {
-              label: 'Waiting for input',
-              hint: 'Notify when a run parks on a question (on by default)',
-              control: (
-                <Toggle
-                  on={settings.notifyOnAwaitingInput}
-                  onChange={(next) => patchGlobal({ notifyOnAwaitingInput: next })}
-                  label="Native notifications when a run awaits your input"
-                />
-              ),
-            },
-            {
-              label: 'Terminal command completion',
-              hint: 'Notify when a shell command finishes in an unfocused terminal',
-              control: (
-                <Toggle
-                  on={settings.terminalBellNotify}
-                  onChange={(next) => patchGlobal({ terminalBellNotify: next })}
-                  label="Native notifications on terminal command completion"
-                />
-              ),
-            },
-          ],
-        },
+        ...buildNotificationCards(settings, patchGlobal),
         ...buildGithubCards(settings, patchGlobal),
       ];
     case 'paths':
