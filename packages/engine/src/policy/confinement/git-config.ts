@@ -1,11 +1,11 @@
 /**
  * The git-config write-protection rule (`git-config-protection` rule id): DENY any
- * WRITE to a git `config` file (a `config` file directly under a `.git` directory, at
- * any depth) — the sibling of the sensitive-read denylist, but on the mutation side
- * and INDEPENDENT of cwd containment (a
- * `.git/config` INSIDE the run cwd is denied too). Extracted as its own confinement
- * family; the orchestrator that dispatches to it stays in the `workspace-confinement.ts`
- * facade.
+ * WRITE to a git config file git EXECUTES — `config` or `config.worktree`, whether
+ * directly under a `.git` directory or under `.git/worktrees/<name>/`, at any depth —
+ * the sibling of the sensitive-read denylist, but on the mutation side and INDEPENDENT
+ * of cwd containment (a `.git/config` INSIDE the run cwd is denied too). Extracted as
+ * its own confinement family; the orchestrator that dispatches to it stays in the
+ * `workspace-confinement.ts` facade.
  *
  * WHY DENY, NOT CONFINE (issue #221). A committed `.gitattributes` (`* merge=evil`)
  * plus a `[merge "evil"] driver = <cmd>` — or a `filter.<name>.clean`/`.smudge`, or a
@@ -16,12 +16,18 @@
  * (not the exec-sink ASK tier): unlike CI/hook files an agent sometimes legitimately
  * edits, hand-writing `.git/config` is never a legitimate agent action.
  *
- * SCOPE — narrow on purpose. Only the `config` FILE is covered, and only for WRITES:
- *  - Reads of `.git/config` are NOT blocked (this is a mutation gate).
- *  - `.git/index`, `.git/refs/**`, `.git/HEAD`, `.git/config.worktree`, and
- *    `.git/hooks/config` do NOT match — git's own index/ref/HEAD writes must keep
- *    working, and only the top-level `config` file carries the merge/filter/diff
- *    sections git executes.
+ * SCOPE — narrow on purpose. Every git-EXECUTED config FILE is covered, and only for
+ * WRITES. Git reads TWO file names as full config (both carry the merge/filter/diff
+ * sections it runs): the repo `config`, AND `config.worktree` — git treats the latter
+ * as a full config whenever `extensions.worktreeConfig=true`, which it auto-enables on
+ * a legitimate `git sparse-checkout set` inside a worktree, so a poisoned
+ * `config.worktree` is the SAME host-RCE as a poisoned `config`. Denied at any depth:
+ *  - `.git/config` and `.git/config.worktree` (directly in a `.git` directory); and
+ *  - `.git/worktrees/<name>/config` and `.git/worktrees/<name>/config.worktree` (the
+ *    per-worktree config dir git keeps for a linked worktree).
+ * NOT covered (left writable so normal git keeps working): reads of any of the above
+ * (this is a mutation gate), `.git/index`, the `.git/refs` tree, `.git/HEAD`, and
+ * `.git/hooks/config` (a `config` that is NOT directly under `.git`).
  *
  * LIMITS — lexical, like the rest of confinement. The native mutation tools
  * (`Write`/`Edit`/`MultiEdit`/`NotebookEdit`), every `ApplyPatch` body target, and the
@@ -29,9 +35,11 @@
  * path. A write through a non-shell interpreter, a dynamic Bash target (`> $VAR/x`), a
  * symlink, or the `git config …` SUBCOMMAND (which mutates `.git/config` WITHOUT a
  * file-write tool) is NOT caught here — real containment is the OS sandbox (the
- * tiered-sandbox roadmap). Path matching is case-INSENSITIVE: on a case-insensitive
- * filesystem (macOS/Windows) `.GIT/Config` resolves to the same file, so folding case
- * only ever STRENGTHENS the block.
+ * tiered-sandbox roadmap). Windows filename canonicalization (a trailing dot/space, or
+ * an `::$DATA` ADS on `.git\config`) that resolves to the same file is likewise an
+ * OS-sandbox-tier residual, not modeled by this lexical matcher. Path matching is
+ * case-INSENSITIVE: on a case-insensitive filesystem (macOS/Windows) `.GIT/Config`
+ * resolves to the same file, so folding case only ever STRENGTHENS the block.
  */
 import { bashWriteTargetTokens, resolveBashWriteTargetInCwd } from './workspace.js';
 
@@ -46,19 +54,39 @@ function pathSegments(p: string): string[] {
   return p.split(/[\\/]/).filter((s) => s.length > 0);
 }
 
+/** The config FILE names git reads as a FULL config (merge/filter/diff sections it
+ *  executes): the repo `config`, and `config.worktree` — which git treats as a full
+ *  config whenever `extensions.worktreeConfig=true` (git auto-enables that on a
+ *  `git sparse-checkout set` inside a worktree), so it carries the exact same
+ *  `[merge "x"] driver` / `filter.*.clean` / `diff.*.textconv` host-RCE. */
+const GIT_CONFIG_FILE_NAMES: ReadonlySet<string> = new Set(['config', 'config.worktree']);
+
 /**
- * True when a resolved absolute path is a git config file: a file named `config`
- * directly inside a directory named `.git`, at ANY depth. Case-folded (see the module
- * header). Deliberately narrow: `.git/config.worktree`, `.git/hooks/config`,
- * `.git/index`, the `.git/refs` tree, and `.git/HEAD` do NOT match —
- * only the `config` file whose merge/filter/diff sections git executes on the host.
+ * True when a resolved absolute path is a git config file whose contents git executes,
+ * at ANY depth (case-folded — see the module header). Two shapes, both denied:
+ *  - a `config` or `config.worktree` file DIRECTLY inside a `.git` directory; and
+ *  - a `config` or `config.worktree` file under `.git/worktrees/<name>/` — the
+ *    per-worktree config dir git keeps for a linked worktree, which it reads the same way.
+ *
+ * Deliberately narrow — these do NOT match: `.git/index`, the `.git/refs` tree,
+ * `.git/HEAD`, `.git/hooks/config` (a `config` NOT directly under `.git`), and any
+ * `config`/`config.worktree` outside a `.git` layout (`.github/config`, `x.git/config`,
+ * a project's own `src/config`). Only git's executable-config surfaces are denied.
  */
 export function isGitConfigWriteTarget(resolved: string): boolean {
   const segments = pathSegments(resolved);
-  if (segments.length < 2) return false;
-  const last = segments[segments.length - 1]!.toLowerCase();
-  const parent = segments[segments.length - 2]!.toLowerCase();
-  return last === 'config' && parent === '.git';
+  const n = segments.length;
+  if (n < 2) return false;
+  if (!GIT_CONFIG_FILE_NAMES.has(segments[n - 1]!.toLowerCase())) return false;
+  // (a) `<.git>/config` or `<.git>/config.worktree` — directly inside a `.git` dir.
+  if (segments[n - 2]!.toLowerCase() === '.git') return true;
+  // (b) `<.git>/worktrees/<name>/config[.worktree]` — the per-worktree config git reads
+  //     for a linked worktree (`<name>` is arbitrary, so it is unconstrained here).
+  return (
+    n >= 4 &&
+    segments[n - 3]!.toLowerCase() === 'worktrees' &&
+    segments[n - 4]!.toLowerCase() === '.git'
+  );
 }
 
 /** The deny reason the agent sees — names the target and the RCE vector, and points
