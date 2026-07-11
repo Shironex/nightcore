@@ -5,6 +5,7 @@
  * (contract) and the persisted `StoredReading` (ts-rs) — into the single
  * `ScorecardReadingView` the UI renders.
  */
+import { ScorecardDimensionSchema, ScorecardGradeSchema } from '@nightcore/contracts';
 import type {
   ScorecardDimension,
   ScorecardReading,
@@ -13,7 +14,10 @@ import type {
   StoredReading,
 } from '@/lib/bridge';
 import {
+  enumGuard,
   makeScanFold,
+  narrowMembers,
+  narrowOr,
   normalizeLocation,
   runStatusFromPersisted,
   seedStepStateFromRun,
@@ -22,7 +26,6 @@ import {
 /** The live wire evidence shape (an element of a contract `ScorecardReading.findings`). */
 type WireEvidence = ScorecardReading['findings'][number];
 import type {
-  ReadingStatus,
   RunStatus,
   ScorecardEvidenceView,
   ScorecardReadingView,
@@ -30,6 +33,10 @@ import type {
 
 /** A dimension's progress within a run. */
 export type DimensionProgress = 'pending' | 'running' | 'done' | 'error';
+
+/** Membership guard for the web-local `ReadingStatus` union (no contract schema),
+ *  mirroring `scorecard.types.ts` exactly. */
+const READING_STATUS = enumGuard(['open', 'converted'] as const);
 
 /** The stable reason a `scorecard-failed` event carries, threaded through the fold
  *  so the view can tell a user cancel (`aborted`) from a real crash. */
@@ -99,12 +106,16 @@ export function wireToReading(r: ScorecardReading): ScorecardReadingView {
 }
 
 /** Map a persisted `StoredReading` (string-typed) into the view shape, narrowing the
- *  wire strings to their unions (the engine guarantees valid values). */
+ *  wire strings to their unions. The engine guarantees valid values on write, so a
+ *  well-formed store maps unchanged; a corrupt value degrades to a documented
+ *  fallback rather than leaking into the UI (see `@/lib/scan-run/narrow`). */
 export function storedToReading(r: StoredReading): ScorecardReadingView {
   return {
     id: r.id,
-    dimension: r.dimension as ScorecardReadingView['dimension'],
-    grade: r.grade as ScorecardReadingView['grade'],
+    // Fallback `architecture`: the general/first dimension for an unrecognized value.
+    dimension: narrowOr(ScorecardDimensionSchema, r.dimension, 'architecture'),
+    // Fallback `C`: a neutral mid grade — never the alarming `F` for a bad value.
+    grade: narrowOr(ScorecardGradeSchema, r.grade, 'C'),
     title: r.title,
     summary: r.summary,
     rationale: r.rationale,
@@ -118,7 +129,8 @@ export function storedToReading(r: StoredReading): ScorecardReadingView {
     })),
     confidence: r.confidence,
     fingerprint: r.fingerprint,
-    status: r.status as ReadingStatus,
+    // Fallback `open`: the neutral active lifecycle state.
+    status: narrowOr(READING_STATUS, r.status, 'open'),
     linkedTaskId: r.linkedTaskId,
   };
 }
@@ -127,7 +139,9 @@ export function storedToReading(r: StoredReading): ScorecardReadingView {
  *  produces, so the view renders both from one model. */
 export function streamFromRun(run: ScorecardRun): ScorecardStream {
   const status: RunStatus = runStatusFromPersisted(run.status);
-  const dimensions = run.dimensions as ScorecardDimension[];
+  // Drop any persisted dimension that isn't a contract member rather than seed a
+  // bogus stepper dimension.
+  const dimensions = narrowMembers(ScorecardDimensionSchema, run.dimensions);
   return {
     runId: run.id,
     status,

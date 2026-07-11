@@ -64,6 +64,20 @@ describe('digestToolInput', () => {
     expect(digestToolInput(undefined)).toBe('');
     expect(digestToolInput(null)).toBe('');
   });
+
+  test('redacts a secret in the chosen field BEFORE truncation (never persisted raw)', () => {
+    const digest = digestToolInput({
+      command: 'curl -H "Authorization: Bearer sk-live-0123456789ABCDEFabcdef"',
+    });
+    expect(digest).not.toContain('sk-live-0123456789ABCDEFabcdef');
+    expect(digest).toContain('‹redacted›');
+    // Redaction runs first, so a secret that would straddle the truncation boundary
+    // is masked whole rather than leaving a live fragment at the cut.
+    const long = digestToolInput({
+      command: `${'x'.repeat(DIGEST_MAX_CHARS - 5)} ghp_0123456789abcdefABCDEF0123456789abcd`,
+    });
+    expect(long).not.toContain('ghp_0123456789abcdefABCDEF0123456789abcd');
+  });
 });
 
 describe('SessionLedger — appends', () => {

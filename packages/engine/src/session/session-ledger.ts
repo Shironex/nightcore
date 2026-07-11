@@ -27,12 +27,18 @@
  *     stops — a pathological session can't fill the disk;
  *   - **digest, not payload**: only the first {@link DIGEST_MAX_CHARS} chars of
  *     the most relevant input field are recorded (the Bash command line or the
- *     target path — what the Rust detectors need), never full tool inputs.
+ *     target path — what the Rust detectors need), never full tool inputs;
+ *   - **secret-redacted**: the chosen field is run through
+ *     {@link redactSecrets} BEFORE truncation, so a `Bearer`/API-key/PEM/sensitive-
+ *     assignment value in a Bash command line never lands verbatim in the ledger (or
+ *     any export of `.nightcore/`) — see `docs/security/threat-model.md`.
  */
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 
 import type { Logger } from '@nightcore/shared';
+
+import { redactSecrets } from './secret-redaction.js';
 
 /** The ledger size cap. Crossing it writes one final `truncated` marker line
  *  and disables the writer (see the module header). */
@@ -94,8 +100,15 @@ export function digestToolInput(input: unknown): string {
   }
 }
 
+/** Redact secrets, THEN clamp to {@link DIGEST_MAX_CHARS}. Redaction runs first so a
+ *  token that straddles the truncation boundary is still masked whole (rather than
+ *  leaving a live fragment), and so the sentinel — not the secret — is what counts
+ *  toward the budget. See {@link redactSecrets} for the (fail-open) posture. */
 function truncateDigest(value: string): string {
-  return value.length > DIGEST_MAX_CHARS ? value.slice(0, DIGEST_MAX_CHARS) : value;
+  const redacted = redactSecrets(value);
+  return redacted.length > DIGEST_MAX_CHARS
+    ? redacted.slice(0, DIGEST_MAX_CHARS)
+    : redacted;
 }
 
 /** The append-only NDJSON writer. Construct with the wire `ledgerPath`; every

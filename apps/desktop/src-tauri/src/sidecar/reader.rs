@@ -36,6 +36,90 @@ struct TaggedSessionEvent<'a> {
     event: &'a RawValue,
 }
 
+/// The terminal-failure event type each scan family's crash-reap emits — the SAME
+/// literal the family's own `handle_*_event` matches on AND the contract declares, so
+/// it both marks the run failed AND passes the web's event `safeParse`. Harness is the
+/// ONE family carrying the `-scan-` infix (`harness-scan-failed`); the other four are
+/// `<family>-failed`. A regression test validates each against the codegen'd contract
+/// fixtures, so a wrong literal (which would silently miss the handler's `_ => {}` and
+/// leave the run `running`) can never ship again.
+const INSIGHT_CRASH_FAILED_TYPE: &str = "analysis-failed";
+const HARNESS_CRASH_FAILED_TYPE: &str = "harness-scan-failed";
+const SCORECARD_CRASH_FAILED_TYPE: &str = "scorecard-failed";
+const PR_REVIEW_CRASH_FAILED_TYPE: &str = "pr-review-failed";
+const ISSUE_VALIDATION_CRASH_FAILED_TYPE: &str = "issue-validation-failed";
+
+/// The synthetic `*-failed` event a crash-reap routes through a family handler.
+/// Matches the contract's failed-event shape (`{ type, runId, reason, message }`)
+/// EXACTLY so the web's `NightcoreEventSchema.safeParse` accepts it and folds the live
+/// view to failed. `runner-crash` is a member of the shared `scanFailure` reason enum
+/// (and a valid free string for the pr-review / issue-validation families).
+fn crash_failed_event(event_type: &str, run_id: &str) -> Value {
+    serde_json::json!({
+        "type": event_type,
+        "runId": run_id,
+        "reason": "runner-crash",
+        "message": "Sidecar exited mid-run — scan reaped.",
+    })
+}
+
+/// Fail every in-flight SCAN run when the sidecar process exits (T14). Scans correlate
+/// by `runId`, not `sessionId`, so `handle_sidecar_crash`'s session-based task recovery
+/// never sees them — a running scan would otherwise sit `running` until the next boot's
+/// `reap_running`. For each of the five families, snapshot its running run ids and route
+/// the family's own synthetic `*-failed` event through the SAME handler a real failure
+/// uses: that both marks the persisted run `failed` AND forwards the event to the family
+/// channel, so an OPEN scan view stops spinning live rather than only on the next
+/// refetch. Idempotent — a run that finalized between the snapshot and the reap is a
+/// no-op under the handler's own dedupe. The `running_ids()` snapshot drops the state
+/// guard before the awaits, so nothing is held across an `.await`.
+pub(crate) async fn reap_scans_on_crash(app: &AppHandle) {
+    for run_id in app
+        .state::<crate::store::insight::InsightStore>()
+        .running_ids()
+    {
+        let event = crash_failed_event(INSIGHT_CRASH_FAILED_TYPE, &run_id);
+        super::insight::handle_analysis_event(app, INSIGHT_CRASH_FAILED_TYPE, &event).await;
+    }
+    for run_id in app
+        .state::<crate::store::harness::HarnessStore>()
+        .running_ids()
+    {
+        // Harness is the ONE family whose terminal-failure event carries the `-scan-`
+        // infix (`harness-scan-failed`) — the other four are `<family>-failed`. Using
+        // the wrong literal would miss the handler's match arm (run left `running`) AND
+        // fail the web's `safeParse` (no `harness-failed` in the schema).
+        let event = crash_failed_event(HARNESS_CRASH_FAILED_TYPE, &run_id);
+        super::harness::handle_harness_event(app, HARNESS_CRASH_FAILED_TYPE, &event).await;
+    }
+    for run_id in app
+        .state::<crate::store::scorecard::ScorecardStore>()
+        .running_ids()
+    {
+        let event = crash_failed_event(SCORECARD_CRASH_FAILED_TYPE, &run_id);
+        super::scorecard::handle_scorecard_event(app, SCORECARD_CRASH_FAILED_TYPE, &event).await;
+    }
+    for run_id in app
+        .state::<crate::store::pr_review::PrReviewStore>()
+        .running_ids()
+    {
+        let event = crash_failed_event(PR_REVIEW_CRASH_FAILED_TYPE, &run_id);
+        super::pr_review::handle_pr_review_event(app, PR_REVIEW_CRASH_FAILED_TYPE, &event).await;
+    }
+    for run_id in app
+        .state::<crate::store::issue_triage::IssueValidationStore>()
+        .running_ids()
+    {
+        let event = crash_failed_event(ISSUE_VALIDATION_CRASH_FAILED_TYPE, &run_id);
+        super::issue_triage::handle_issue_validation_event(
+            app,
+            ISSUE_VALIDATION_CRASH_FAILED_TYPE,
+            &event,
+        )
+        .await;
+    }
+}
+
 /// Process one parsed sidecar event: correlate it to its task, forward it as
 /// `nc:session`, auto-deny permission requests, and apply terminal transitions
 /// (releasing the slot, cleaning up the worktree, feeding the breaker, kicking the
@@ -646,6 +730,61 @@ mod tests {
         assert!(
             !arm.contains(bare_spawn),
             "must NOT use bare tokio::spawn — it aborts off-runtime (SIGABRT)"
+        );
+    }
+
+    /// Regression guard (PR #181 review): the sidecar-crash scan reap must emit each
+    /// family's EXACT terminal-failure event type. Harness diverges with a `-scan-`
+    /// infix (`harness-scan-failed`) while the other four are `<family>-failed`; a
+    /// wrong literal silently misses the family handler's `_ => {}` (leaving the run
+    /// `running` all session) AND fails the web's event `safeParse`. This validates
+    /// every crash-reap const against the codegen'd contract fixtures — an INDEPENDENT
+    /// source of truth (the sibling of `generated.rs`), so a hand-typed wrong literal
+    /// has no matching fixture and fails HERE even though the same wrong string is used
+    /// at both reap sites. Parametrized across all five families so the divergence
+    /// can't recur in any of them. (A full store-marking integration test is not
+    /// possible in the unit binary — the family handlers are `AppHandle<Wry>`-typed and
+    /// `tauri::test` only offers a `MockRuntime` handle; a contract-correct literal is
+    /// what transitively guarantees the handler's match arm is hit and the run failed.)
+    #[test]
+    fn crash_reap_terminal_types_match_the_codegend_contract() {
+        // One canonical wire payload per event variant, keyed under "events" by the
+        // exact `type` discriminator literal (emitted alongside generated.rs).
+        const FIXTURES: &str = include_str!("../contracts/fixtures.json");
+        let fixtures: Value = serde_json::from_str(FIXTURES).expect("fixtures.json parses");
+        let events = fixtures
+            .get("events")
+            .and_then(Value::as_object)
+            .expect("fixtures.json has an events section");
+
+        let families = [
+            ("insight", INSIGHT_CRASH_FAILED_TYPE),
+            ("harness", HARNESS_CRASH_FAILED_TYPE),
+            ("scorecard", SCORECARD_CRASH_FAILED_TYPE),
+            ("pr-review", PR_REVIEW_CRASH_FAILED_TYPE),
+            ("issue-triage", ISSUE_VALIDATION_CRASH_FAILED_TYPE),
+        ];
+        for (family, event_type) in families {
+            let fixture = events.get(event_type).unwrap_or_else(|| {
+                panic!(
+                    "{family}: crash-reap emits {event_type:?}, but the contract declares no \
+                     such event — a wrong terminal literal that would miss the handler match \
+                     arm and leave the run `running`"
+                )
+            });
+            assert_eq!(
+                fixture.get("type").and_then(Value::as_str),
+                Some(event_type),
+                "{family}: contract fixture {event_type:?} has a mismatched type tag",
+            );
+        }
+
+        // The family that regressed: it must carry the `-scan-` infix, and the plain
+        // `harness-failed` must NOT be a contract event (the exact bug this guards).
+        assert_eq!(HARNESS_CRASH_FAILED_TYPE, "harness-scan-failed");
+        assert!(
+            !events.contains_key("harness-failed"),
+            "`harness-failed` is not a contract event — the reap must never emit it"
         );
     }
 }

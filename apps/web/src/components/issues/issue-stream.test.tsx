@@ -173,3 +173,51 @@ test('projects a persisted run into the stream with staleness + action markers',
   // The stored projector narrows the string-typed verdict to its union.
   expect(storedToVerdict(stored).issueKind).toBe('bug_report');
 });
+
+test('storedToVerdict degrades corrupt enum fields to their neutral fallbacks', () => {
+  const stored: StoredIssueValidationResult = {
+    issueKind: 'not-a-kind',
+    verdict: 'maybe',
+    confidence: 'certain',
+    reasoning: 'r',
+    bugConfirmed: null,
+    relatedFiles: [],
+    estimatedComplexity: 'galactic',
+    proposedPlan: null,
+    missingInfo: [],
+    prAnalysis: {
+      hasOpenPr: true,
+      prNumber: 3,
+      prFixesIssue: null,
+      prSummary: null,
+      recommendation: 'do-a-barrel-roll',
+    },
+  };
+  const v = storedToVerdict(stored);
+  expect(v.issueKind).toBe('unknown');
+  expect(v.verdict).toBe('needs_clarification');
+  expect(v.confidence).toBe('low');
+  // A corrupt (present) complexity degrades to null — no fabricated bucket.
+  expect(v.estimatedComplexity).toBeNull();
+  expect(v.prAnalysis?.recommendation).toBe('no_pr');
+});
+
+test('storedToVerdict keeps a null estimatedComplexity null (no fabrication)', () => {
+  const stored: StoredIssueValidationResult = {
+    issueKind: 'question',
+    verdict: 'needs_clarification',
+    confidence: 'medium',
+    reasoning: 'r',
+    bugConfirmed: null,
+    relatedFiles: [],
+    estimatedComplexity: null,
+    proposedPlan: null,
+    missingInfo: [],
+    prAnalysis: null,
+  };
+  const v = storedToVerdict(stored);
+  expect(v.estimatedComplexity).toBeNull();
+  // Valid values still pass through untouched.
+  expect(v.issueKind).toBe('question');
+  expect(v.verdict).toBe('needs_clarification');
+});

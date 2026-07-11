@@ -5,6 +5,12 @@
  * (contract) and the persisted `StoredFinding` (ts-rs) — into the single
  * `InsightFinding` the UI renders.
  */
+import {
+  AnalysisScopeSchema,
+  FindingCategorySchema,
+  FindingEffortSchema,
+  FindingSeveritySchema,
+} from '@nightcore/contracts';
 import type {
   AnalysisEvent,
   AnalysisScope,
@@ -14,20 +20,23 @@ import type {
   StoredFinding,
 } from '@/lib/bridge';
 import {
+  enumGuard,
   makeScanFold,
+  narrowMembers,
+  narrowOr,
   normalizeLocation,
   runStatusFromPersisted,
   seedStepStateFromRun,
 } from '@/lib/scan-run';
 
-import type {
-  FindingStatus,
-  InsightFinding,
-  RunStatus,
-} from './insight.types';
+import type { InsightFinding, RunStatus } from './insight.types';
 
 /** A category's progress within a run. */
 export type CategoryProgress = 'pending' | 'running' | 'done' | 'error';
+
+/** Membership guard for the web-local `FindingStatus` union (no contract schema),
+ *  mirroring `insight.types.ts` exactly. */
+const FINDING_STATUS = enumGuard(['open', 'dismissed', 'converted'] as const);
 
 /** The stable reason an `analysis-failed` event carries, threaded through the fold
  *  so the view can tell a user cancel (`aborted`) from a real crash. */
@@ -93,13 +102,19 @@ export function wireToFinding(f: Finding): InsightFinding {
 }
 
 /** Map a persisted `StoredFinding` (string-typed) into the view shape, narrowing
- *  the unified wire strings to their unions (the engine guarantees valid values). */
+ *  the unified wire strings to their unions. The engine guarantees valid values on
+ *  write, so a well-formed store maps unchanged; a corrupt value degrades to a
+ *  documented fallback rather than leaking into the UI (see `@/lib/scan-run/narrow`). */
 export function storedToFinding(f: StoredFinding): InsightFinding {
   return {
     id: f.id,
-    category: f.category as InsightFinding['category'],
-    severity: f.severity as InsightFinding['severity'],
-    effort: f.effort as InsightFinding['effort'],
+    // Fallback `refactor`: a neutral maintenance bucket (not the alarming
+    // `security`/`bugs`) for an unrecognized category.
+    category: narrowOr(FindingCategorySchema, f.category, 'refactor'),
+    // Fallback `info`: the lowest severity — never over-escalate a bad value.
+    severity: narrowOr(FindingSeveritySchema, f.severity, 'info'),
+    // Fallback `medium`: a mid effort estimate.
+    effort: narrowOr(FindingEffortSchema, f.effort, 'medium'),
     title: f.title,
     description: f.description,
     rationale: f.rationale,
@@ -111,7 +126,8 @@ export function storedToFinding(f: StoredFinding): InsightFinding {
     tags: f.tags,
     confidence: f.confidence,
     fingerprint: f.fingerprint,
-    status: f.status as FindingStatus,
+    // Fallback `open`: the neutral active lifecycle state.
+    status: narrowOr(FINDING_STATUS, f.status, 'open'),
     linkedTaskId: f.linkedTaskId,
   };
 }
@@ -120,11 +136,14 @@ export function storedToFinding(f: StoredFinding): InsightFinding {
  *  produces, so the view renders both from one model. */
 export function streamFromRun(run: InsightRun): InsightStream {
   const status: RunStatus = runStatusFromPersisted(run.status);
-  const categories = run.categories as FindingCategory[];
+  // Drop any persisted category that isn't a contract member rather than seed a
+  // bogus stepper lens.
+  const categories = narrowMembers(FindingCategorySchema, run.categories);
   return {
     runId: run.id,
     status,
-    scope: run.scope as AnalysisScope,
+    // Fallback `repo`: the default full-repo scope for an unrecognized value.
+    scope: narrowOr(AnalysisScopeSchema, run.scope, 'repo'),
     model: run.model || null,
     requestedCategories: categories,
     categoryState: seedStepStateFromRun(categories, status === 'running'),

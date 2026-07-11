@@ -270,4 +270,53 @@ describe('normalizers', () => {
     expect(s.lensState.logic).toBe('done');
     expect(s.costUsd).toBe(0.5);
   });
+
+  it('storedToFinding degrades corrupt enum fields + drops unknown corroborators', () => {
+    const stored: StoredReviewFinding = {
+      id: 'f1',
+      lens: 'made-up-lens',
+      severity: 'catastrophic',
+      file: 'src/a.ts',
+      line: null,
+      title: 't',
+      body: 'b',
+      suggestedFix: null,
+      fingerprint: 'fp',
+      corroboratedBy: ['logic', 'not-a-lens', 'tests'],
+      status: 'weird',
+      linkedTaskId: null,
+    };
+    const f = storedToFinding(stored);
+    expect(f.lens).toBe('structure');
+    expect(f.severity).toBe('info');
+    expect(f.status).toBe('open');
+    // The unknown corroborator is dropped, not fabricated into a bogus lens.
+    expect(f.corroboratedBy).toEqual(['logic', 'tests']);
+  });
+
+  it('streamFromRun drops an unknown lens from the stepper', () => {
+    const run: PrReviewRun = {
+      id: 'run-1',
+      projectPath: '/proj',
+      prNumber: 7,
+      status: 'completed',
+      lenses: ['logic', 'phantom', 'security'],
+      model: 'm',
+      createdAt: 1,
+      updatedAt: 2,
+      costUsd: 0,
+      durationMs: 0,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      findings: [],
+      error: null,
+      verdict: null,
+      verdictReasoning: null,
+      headSha: null,
+      postedVerdict: null,
+      postedAt: null,
+    };
+    const s = streamFromRun(run);
+    expect(s.requestedLenses).toEqual(['logic', 'security']);
+    expect(s.lensState).toEqual({ logic: 'done', security: 'done' });
+  });
 });

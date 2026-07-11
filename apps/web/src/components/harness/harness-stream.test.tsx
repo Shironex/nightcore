@@ -7,17 +7,21 @@ import type {
   ProposedArtifact,
   RepoProfile,
   StoredConventionFinding,
+  StoredHarnessProposal,
   StoredProposedArtifact,
   StoredRepoProfile,
 } from '@/lib/bridge';
 
 import {
-  EMPTY_HARNESS_STREAM,
-  foldHarness,
-  type HarnessStream,
   storedToArtifact,
   storedToConventionFinding,
   storedToProfile,
+  storedToProposal,
+} from './harness-stored';
+import {
+  EMPTY_HARNESS_STREAM,
+  foldHarness,
+  type HarnessStream,
   streamFromRun,
   wireToArtifact,
   wireToConventionFinding,
@@ -498,5 +502,132 @@ describe('normalizers', () => {
     // RUNNING screen shows the finished stepper + the synthesis row, not pending rows.
     expect(s.categoryState['folder-structure']).toBe('done');
     expect(s.categoryState['naming']).toBe('done');
+  });
+
+  it('storedToConventionFinding degrades corrupt enum fields to their fallbacks', () => {
+    const stored: StoredConventionFinding = {
+      id: 'c1',
+      category: 'not-a-lens',
+      kind: 'neither',
+      severity: 'doomsday',
+      title: 't',
+      description: 'd',
+      rationale: null,
+      evidence: [],
+      suggestion: null,
+      tags: [],
+      confidence: null,
+      fingerprint: 'fp',
+      status: 'garbled',
+      linkedTaskId: null,
+    };
+    const f = storedToConventionFinding(stored);
+    expect(f.category).toBe('architecture');
+    expect(f.kind).toBe('convention');
+    expect(f.severity).toBe('info');
+    expect(f.status).toBe('open');
+  });
+
+  it('storedToArtifact degrades corrupt kind / writeMode / status to their fallbacks', () => {
+    const stored: StoredProposedArtifact = {
+      id: 'a1',
+      kind: 'mystery-kind',
+      group: null,
+      groupTitle: null,
+      title: 't',
+      description: 'd',
+      rationale: null,
+      targetPath: 'x',
+      writeMode: 'overwrite-everything',
+      content: 'c',
+      language: null,
+      sourceFindings: [],
+      dependsOn: [],
+      confidence: null,
+      fingerprint: 'afp',
+      status: 'exploded',
+      appliedPath: null,
+      appliedAt: null,
+    };
+    const a = storedToArtifact(stored);
+    expect(a.kind).toBe('tool-config');
+    expect(a.writeMode).toBe('create');
+    expect(a.status).toBe('proposed');
+  });
+
+  it('storedToProposal degrades corrupt kind / status to their fallbacks', () => {
+    const stored: StoredHarnessProposal = {
+      id: 'p1',
+      kind: 'not-a-kind',
+      title: 't',
+      description: 'd',
+      rationale: null,
+      artifactIds: [],
+      prompt: null,
+      verifyCommand: null,
+      harnessCheck: null,
+      confidence: null,
+      fingerprint: 'pfp',
+      status: 'invalid',
+      linkedTaskId: null,
+    };
+    const p = storedToProposal(stored);
+    expect(p.kind).toBe('agent-task');
+    expect(p.status).toBe('proposed');
+  });
+
+  it('storedToProfile degrades a corrupt workspaceTool / package role to unknown', () => {
+    const stored: StoredRepoProfile = {
+      isMonorepo: false,
+      workspaceTool: 'gradle',
+      packages: [{ name: 'app', path: '.', role: 'weird-role' }],
+      languages: [],
+      frameworks: [],
+      hasEslintFlatConfig: false,
+      hasLintMeta: false,
+      hasAgentDocs: false,
+      existingPlugins: [],
+    };
+    const p = storedToProfile(stored);
+    expect(p.workspaceTool).toBe('unknown');
+    expect(p.packages[0]?.role).toBe('unknown');
+  });
+
+  it('streamFromRun drops an unknown category from the stepper', () => {
+    const run: HarnessRun = {
+      id: 'run-3',
+      projectPath: '/proj',
+      status: 'completed',
+      categories: ['folder-structure', 'phantom-lens', 'naming'],
+      model: 'm',
+      createdAt: 1,
+      updatedAt: 2,
+      costUsd: 0,
+      durationMs: 0,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      profile: {
+        isMonorepo: false,
+        workspaceTool: 'single',
+        packages: [],
+        languages: [],
+        frameworks: [],
+        hasEslintFlatConfig: false,
+        hasLintMeta: false,
+        hasAgentDocs: false,
+        existingPlugins: [],
+      },
+      findings: [],
+      artifacts: [],
+      proposals: [],
+      coverage: [],
+      synthesizing: false,
+      error: null,
+    };
+    const s = streamFromRun(run);
+    expect(s.requestedCategories).toEqual(['folder-structure', 'naming']);
+    expect(s.categoryState).toEqual({
+      'folder-structure': 'done',
+      naming: 'done',
+    });
   });
 });

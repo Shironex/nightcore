@@ -5,28 +5,31 @@
  * (contract) and the persisted `StoredReviewFinding` (ts-rs) — into the single
  * `ReviewFindingView` the UI renders.
  */
+import { ReviewLensSchema, ReviewSeveritySchema } from '@nightcore/contracts';
 import type {
   PrReviewEvent,
   PrReviewRun,
   ReviewFinding,
   ReviewLens,
-  ReviewSeverity,
   StoredReviewFinding,
 } from '@/lib/bridge';
 import {
+  enumGuard,
   makeScanFold,
+  narrowMembers,
+  narrowOr,
   runStatusFromPersisted,
   seedStepStateFromRun,
 } from '@/lib/scan-run';
 
-import type {
-  FindingStatus,
-  ReviewFindingView,
-  RunStatus,
-} from './prreview.types';
+import type { ReviewFindingView, RunStatus } from './prreview.types';
 
 /** A lens's progress within a run. */
 export type LensProgress = 'pending' | 'running' | 'done' | 'error';
+
+/** Membership guard for the web-local `FindingStatus` union (no contract schema),
+ *  mirroring `prreview.types.ts` exactly. */
+const FINDING_STATUS = enumGuard(['open', 'dismissed', 'converted'] as const);
 
 /** The `pr-review-*` events the stream folds — every family member EXCEPT the
  *  convert acknowledgement (that mutates a single finding's lifecycle and is
@@ -100,21 +103,27 @@ export function wireToFinding(f: ReviewFinding): ReviewFindingView {
 }
 
 /** Map a persisted `StoredReviewFinding` (string-typed) into the view shape,
- *  narrowing the wire strings to their unions (the engine guarantees valid values). */
+ *  narrowing the wire strings to their unions. The engine guarantees valid values on
+ *  write, so a well-formed store maps unchanged; a corrupt value degrades to a
+ *  documented fallback rather than leaking into the UI (see `@/lib/scan-run/narrow`). */
 export function storedToFinding(f: StoredReviewFinding): ReviewFindingView {
   return {
     id: f.id,
-    lens: f.lens as ReviewLens,
-    severity: f.severity as ReviewSeverity,
+    // Fallback `structure`: a general code-quality lens (not the alarming `security`)
+    // for an unrecognized value.
+    lens: narrowOr(ReviewLensSchema, f.lens, 'structure'),
+    // Fallback `info`: the lowest severity — never over-escalate a bad value.
+    severity: narrowOr(ReviewSeveritySchema, f.severity, 'info'),
     file: f.file,
     line: f.line,
     title: f.title,
     body: f.body,
     suggestedFix: f.suggestedFix,
     fingerprint: f.fingerprint,
-    // Persisted as wire strings (like `lens`); null when uncorroborated → [].
-    corroboratedBy: (f.corroboratedBy as ReviewLens[] | null) ?? [],
-    status: f.status as FindingStatus,
+    // Persisted as wire strings (like `lens`); drop any non-lens member, null → [].
+    corroboratedBy: narrowMembers(ReviewLensSchema, f.corroboratedBy ?? []),
+    // Fallback `open`: the neutral active lifecycle state.
+    status: narrowOr(FINDING_STATUS, f.status, 'open'),
     linkedTaskId: f.linkedTaskId,
   };
 }
@@ -123,7 +132,9 @@ export function storedToFinding(f: StoredReviewFinding): ReviewFindingView {
  *  produces, so the view renders both from one model. */
 export function streamFromRun(run: PrReviewRun): ReviewStream {
   const status: RunStatus = runStatusFromPersisted(run.status);
-  const lenses = run.lenses as ReviewLens[];
+  // Drop any persisted lens that isn't a contract member rather than seed a bogus
+  // stepper lens.
+  const lenses = narrowMembers(ReviewLensSchema, run.lenses);
   return {
     runId: run.id,
     status,
