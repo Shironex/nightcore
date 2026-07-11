@@ -3,9 +3,21 @@ import { userEvent } from '@vitest/browser/context';
 import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
+import { planFirstDefault } from './NewTaskForm.hooks';
 import * as stories from './NewTaskForm.stories';
 
 const { Default } = composeStories(stories);
+
+test('planFirstDefault seeds plan-first only for a Build task on a hooks-capable provider', () => {
+  // The interactive default-on: Build + gate on + a plan-capable provider.
+  expect(planFirstDefault('build', true, true)).toBe(true);
+  // Fix 3 (#147): a hookless provider (Codex) is NEVER plan-gated by the default —
+  // a plan-mode run there surfaces no plan and would silently no-op.
+  expect(planFirstDefault('build', true, false)).toBe(false);
+  // Non-Build kinds and a disabled gate default off regardless of the provider.
+  expect(planFirstDefault('research', true, true)).toBe(false);
+  expect(planFirstDefault('build', false, true)).toBe(false);
+});
 
 test('gates create on a non-empty title, then fires onCreate', async () => {
   const onCreate = vi.fn(async () => {});
@@ -20,6 +32,8 @@ test('gates create on a non-empty title, then fires onCreate', async () => {
 
   expect(onCreate).toHaveBeenCalledWith('Add a panel', '', 'build', 'main', {
     permissionMode: null,
+    // Build + the default-on plan gate ⇒ the "Plan first" toggle seeds true.
+    planFirst: true,
     model: null,
     effort: null,
     maxTurns: null,
@@ -40,6 +54,7 @@ test('threads an explicit max-turns ceiling through onCreate', async () => {
 
   expect(onCreate).toHaveBeenCalledWith('Bounded run', '', 'build', 'main', {
     permissionMode: null,
+    planFirst: true,
     model: null,
     effort: null,
     maxTurns: 40,

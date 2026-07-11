@@ -26,6 +26,7 @@ function settingsWith(projectId: string, appearance: BoardAppearance): Settings 
     maxBudgetUsd: null,
     mcpServers: [],
     contextPackEnabled: true,
+    planGateDefault: true,
     autoCommitOnVerified: false,
     sandboxSessions: false,
     issueSyncEnabled: false,

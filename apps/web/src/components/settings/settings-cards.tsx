@@ -7,6 +7,7 @@ import {
   AgentsIcon,
   BoltIcon,
   BranchIcon,
+  ChecksIcon,
   FieldValue,
   FolderIcon,
   GearIcon,
@@ -219,6 +220,27 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
                   on={settings.sandboxSessions}
                   onChange={(next) => patchGlobal({ sandboxSessions: next })}
                   label="Sandbox agent writes (macOS, experimental)"
+                />
+              ),
+            },
+          ],
+        },
+        {
+          icon: <ChecksIcon size={18} />,
+          title: 'Plan-approval gate',
+          subtitle:
+            'Build tasks produce a reviewable plan and wait for your approval before writing code.',
+          rows: [
+            {
+              label: 'Plan before code (Build tasks)',
+              hint: 'New Build tasks default to planning first — approve, refine, or reject. A per-task "Plan first" toggle overrides it.',
+              control: (
+                // Global-only (like the OS-sandbox toggle): a studio-wide governance
+                // stance, not a per-project preference.
+                <Toggle
+                  on={settings.planGateDefault}
+                  onChange={(next) => patchGlobal({ planGateDefault: next })}
+                  label="Plan before code for Build tasks"
                 />
               ),
             },

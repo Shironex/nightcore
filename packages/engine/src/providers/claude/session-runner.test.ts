@@ -65,6 +65,13 @@ let throwOnQuery = false;
 let rejectProbeRead = false;
 /** Scripted return value for the stubbed `supportedModels()` control read. */
 let scriptedModels: unknown[] = [];
+/** When true, the stubbed query's first exhausted `next()` PARKS a plan-mode
+ *  `ExitPlanMode` approval through the runner's own `canUseTool`, then wedges until
+ *  teardown aborts — reproducing a run sitting at `waiting_approval`. The idle
+ *  watchdog must NEVER auto-fail this run (T6 #147: a parked plan waits indefinitely
+ *  for a human decision). Distinct from `stallStream`, which wedges with NO pending
+ *  approval (a genuine crash the watchdog SHOULD trip). */
+let parkPlanThenStall = false;
 mock.module('@anthropic-ai/claude-agent-sdk', () => ({
   ...realSdk,
   query: (args: { options?: Record<string, unknown> }) => {
@@ -77,6 +84,32 @@ mock.module('@anthropic-ai/claude-agent-sdk', () => ({
     const iterator: AsyncGenerator<unknown> = {
       async next() {
         const value = pending.shift();
+        if (value === undefined && parkPlanThenStall) {
+          // Park a plan-mode approval (fire-and-forget — it stays pending until a
+          // surface decides), then wedge until teardown aborts. This is exactly the
+          // shape of a run parked at `waiting_approval`: the SDK is blocked awaiting
+          // `canUseTool`, so it stops yielding — the state the idle watchdog must NOT
+          // treat as a stall. The wedge resolves on abort so the run can terminate.
+          const opts = args?.options as
+            | {
+                canUseTool?: (t: string, i: unknown, o: { signal: AbortSignal }) => unknown;
+                abortController?: AbortController;
+              }
+            | undefined;
+          const signal = opts?.abortController?.signal ?? new AbortController().signal;
+          void opts?.canUseTool?.('ExitPlanMode', { plan: 'Step 1: do X' }, { signal });
+          return new Promise<IteratorResult<unknown>>((resolve) => {
+            if (signal.aborted) {
+              resolve({ value: undefined, done: true });
+              return;
+            }
+            signal.addEventListener(
+              'abort',
+              () => resolve({ value: undefined, done: true }),
+              { once: true },
+            );
+          });
+        }
         if (value === undefined && stallStream) {
           // Wedge: never resolve, never reject — the watchdog is the only exit.
           return new Promise<IteratorResult<unknown>>(() => {});
@@ -269,6 +302,62 @@ describe('SessionRunner — idle watchdog frees a wedged subprocess', () => {
       expect(failed.message).toContain('stalled');
     }
     // The wedged subprocess is torn down (abort + interrupt), not leaked.
+    expect(interruptCalls).toBeGreaterThanOrEqual(1);
+  });
+
+  test('a run parked on a plan (pending approval) is NEVER idle-failed (T6 #147)', async () => {
+    // The T6 guarantee's engine half: a plan sitting at `waiting_approval` blocks the
+    // SDK on `canUseTool`, so the stream stops yielding — but that is a human wait,
+    // NOT a wedge. The idle watchdog must re-arm indefinitely, never emitting a
+    // session-failed that would effectively auto-reject the parked plan.
+    resolvedClaudePath = '/usr/local/bin/claude';
+    queryCalls = 0;
+    interruptCalls = 0;
+    parkPlanThenStall = true;
+    queuedMessages = [];
+    const events: NightcoreEvent[] = [];
+
+    const runner = new SessionRunner(
+      {
+        sessionId: 44,
+        prompt: 'plan this',
+        model: 'claude-opus-4-8',
+        permissionMode: 'plan',
+        permissionPolicy: policy,
+        cwd: process.cwd(),
+        apiKeyFallback: false,
+        settingSources,
+        todoFeatureEnabled: false,
+        // A tiny deadline so many windows elapse fast; without the exclusion the
+        // watchdog would trip on the FIRST window (~15ms).
+        idleTimeoutMs: 15,
+      },
+      (e) => events.push(e),
+    );
+
+    // A parked plan never terminates on its own — start the run, do NOT await it.
+    const runPromise = runner.run();
+
+    // Let ~10 idle windows elapse. If the exclusion were missing, the watchdog would
+    // have fired several times over and emitted session-failed(stalled).
+    await new Promise((resolve) => setTimeout(resolve, 150));
+
+    // The plan parked (a permission-required surfaced) and the idle watchdog did NOT
+    // auto-fail the waiting run despite the many elapsed windows.
+    expect(events.some((e) => e.type === 'permission-required')).toBe(true);
+    expect(events.some((e) => e.type === 'session-failed')).toBe(false);
+
+    // Tear down so the test terminates: interrupt aborts the query, which settles the
+    // parked approval and resolves the wedge — a normal (non-stall) end.
+    await runner.interrupt();
+    await runPromise;
+    parkPlanThenStall = false;
+
+    // Teardown produced no phantom "stalled" failure either.
+    expect(
+      events.some((e) => e.type === 'session-failed' && e.message.includes('stalled')),
+    ).toBe(false);
+    // The parked run was torn down on interrupt, not leaked.
     expect(interruptCalls).toBeGreaterThanOrEqual(1);
   });
 

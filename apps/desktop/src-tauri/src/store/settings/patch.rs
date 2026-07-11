@@ -170,6 +170,11 @@ pub struct SettingsPatch {
     /// [`super::model::Settings::sandbox_sessions`].
     #[cfg_attr(test, ts(optional))]
     pub sandbox_sessions: Option<bool>,
+    /// T6 (#147): toggle the default-on plan-approval gate for Build tasks.
+    /// Global-only (ignored for a per-project override target), like
+    /// `auto_commit_on_verified`. See [`super::model::Settings::plan_gate_default`].
+    #[cfg_attr(test, ts(optional))]
+    pub plan_gate_default: Option<bool>,
     /// #97: toggle GitHub two-way issue sync (writeback). Global-only (ignored for a
     /// per-project override target), like `sandbox_sessions`. See
     /// [`super::model::Settings::issue_sync_enabled`].
@@ -329,6 +334,11 @@ impl Settings {
         // Mode option above.
         if let Some(v) = patch.sandbox_sessions {
             self.sandbox_sessions = v;
+        }
+        // T6 (#147): global-only plan-approval-gate default toggle (no per-project
+        // override), like `auto_commit_on_verified` / `sandbox_sessions`.
+        if let Some(v) = patch.plan_gate_default {
+            self.plan_gate_default = v;
         }
         // #97: global-only writeback toggle (no per-project override), like the two
         // network/OS-mutating opt-ins above.

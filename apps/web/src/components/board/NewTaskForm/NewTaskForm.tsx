@@ -9,6 +9,7 @@ import {
   ModelSelectField,
   slideIn,
   Spinner,
+  Toggle,
   useProviderCapabilities,
 } from '@/components/ui';
 import { imageDataUrl, MAX_IMAGES_PER_TASK } from '@/lib/attachments';
@@ -26,7 +27,7 @@ const LABEL_CLASS =
   'font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground';
 
 /** The create-task dialog reached from the board's "New task" affordance. */
-export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
+export function NewTaskForm({ open, planGateDefault, onCreate, onClose }: NewTaskFormProps) {
   const capabilities = useProviderCapabilities();
   const {
     title,
@@ -37,6 +38,8 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
     baseBranch,
     branches,
     permissionMode,
+    planFirst,
+    providerSupportsPlanGate,
     model,
     providerId,
     effort,
@@ -54,6 +57,7 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
     setBranch,
     setBaseBranch,
     setPermissionMode,
+    setPlanFirst,
     setModel,
     setProviderId,
     setEffort,
@@ -64,7 +68,7 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
     submit,
     onDescKeyDown,
     onDescPaste,
-  } = useNewTaskForm({ open, onCreate, onClose });
+  } = useNewTaskForm({ open, planGateDefault, onCreate, onClose });
 
   return (
     <Modal
@@ -128,6 +132,33 @@ export function NewTaskForm({ open, onCreate, onClose }: NewTaskFormProps) {
           <div className="flex flex-col gap-1.5">
             <span className={LABEL_CLASS}>Kind</span>
             <KindPicker value={kind} onChange={setKind} />
+          </div>
+          {/* Plan-approval gate (T6, #147): review a plan before the agent writes
+              code. Seeded from the kind + the global default (Build defaults on);
+              overridable per task — force it on any kind, or skip it for a trivial
+              Build task. On a provider without the plan-approval channel (no hooks,
+              e.g. Codex) the toggle is non-interactive so a plan can't be forced into a
+              silent no-op. */}
+          <div className="flex items-center justify-between gap-3">
+            <div className="flex min-w-0 flex-col gap-0.5">
+              <span className={LABEL_CLASS}>Plan first</span>
+              <span className="text-[11px] leading-snug text-muted-foreground">
+                {providerSupportsPlanGate
+                  ? 'Review a plan before the agent writes code'
+                  : 'Plan approval isn’t supported on this provider'}
+              </span>
+            </div>
+            {providerSupportsPlanGate ? (
+              <Toggle
+                on={planFirst}
+                onChange={setPlanFirst}
+                label="Plan first — review a plan before the agent writes code"
+              />
+            ) : (
+              <span className="font-mono text-[10px] uppercase tracking-[0.1em] text-muted-foreground/60">
+                Unavailable
+              </span>
+            )}
           </div>
           <div className="flex flex-col gap-1.5">
             <span className={LABEL_CLASS}>Run mode</span>

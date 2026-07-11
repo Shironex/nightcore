@@ -244,6 +244,7 @@ export function AppShell() {
 
       <NewTaskForm
         open={routing.newTaskOpen}
+        planGateDefault={settings.settings?.planGateDefault ?? true}
         onCreate={board.handleCreate}
         onClose={routing.closeNewTask}
       />

@@ -2,6 +2,7 @@
  *  dialog. */
 import { useCallback, useEffect, useState } from 'react';
 
+import { useProviderCapabilities } from '@/components/ui';
 import {
   imageFilesFrom,
   MAX_IMAGES_PER_TASK,
@@ -11,6 +12,7 @@ import {
 } from '@/lib/attachments';
 import type { BranchInfo, PermissionMode, RunMode, TaskKind } from '@/lib/bridge';
 import { listBranches } from '@/lib/bridge';
+import { capabilitiesForProvider } from '@/lib/provider-capabilities';
 
 import type { NewTaskFormProps } from './NewTaskForm.types';
 
@@ -31,6 +33,22 @@ function parseNonNegativeFloat(raw: string): number | null {
   return Number.isFinite(n) && n >= 0 ? n : null;
 }
 
+/**
+ * The resolved default for the "Plan first" toggle (T6, #147). The plan-approval gate
+ * is default-ON at the INTERACTIVE create seam, but ONLY for a `build` task, ONLY when
+ * the studio-wide `planGateDefault` is on, AND ONLY when the resolved provider supports
+ * the gate (its hooks / `canUseTool` channel parks `ExitPlanMode`). A non-Build kind, a
+ * disabled gate, or a hookless provider (Codex) all default OFF — the last one is Fix 3:
+ * a plan-mode run there would surface no plan and silently no-op.
+ */
+export function planFirstDefault(
+  kind: TaskKind,
+  planGateDefault: boolean,
+  providerSupportsPlanGate: boolean,
+): boolean {
+  return kind === 'build' && planGateDefault && providerSupportsPlanGate;
+}
+
 /** The create-task form's full state plus its field setters and action
  *  handlers, returned by {@link useNewTaskForm}. */
 export interface NewTaskFormState {
@@ -45,6 +63,14 @@ export interface NewTaskFormState {
   /** Available branches for the picker (local + remote-tracking). */
   branches: BranchInfo[];
   permissionMode: PermissionMode | null;
+  /** Plan-approval gate (T6, #147): the "Plan first" toggle. Seeded from the kind +
+   *  the global `planGateDefault` + the provider capability (Build defaults on),
+   *  overridable per task. */
+  planFirst: boolean;
+  /** Whether the resolved provider supports the plan-approval gate (has the hooks /
+   *  `canUseTool` channel that parks `ExitPlanMode`). `false` on Codex — the toggle is
+   *  rendered non-interactive so a plan can't be forced into a silent no-op. */
+  providerSupportsPlanGate: boolean;
   model: string | null;
   /** The provider the picked model belongs to (B5), stamped so a created task
    *  round-trips its selection's provider. `undefined` ⇒ derive from the model id. */
@@ -69,6 +95,7 @@ export interface NewTaskFormState {
   setBranch: (value: string) => void;
   setBaseBranch: (value: string) => void;
   setPermissionMode: (value: PermissionMode | null) => void;
+  setPlanFirst: (value: boolean) => void;
   setModel: (value: string | null) => void;
   setProviderId: (value: string | undefined) => void;
   setEffort: (value: string | null) => void;
@@ -89,6 +116,7 @@ export interface NewTaskFormState {
 /** State, submit, and keyboard handling for the create-task dialog. */
 export function useNewTaskForm({
   open,
+  planGateDefault,
   onCreate,
   onClose,
 }: NewTaskFormProps): NewTaskFormState {
@@ -100,6 +128,7 @@ export function useNewTaskForm({
   const [baseBranch, setBaseBranch] = useState('');
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode | null>(null);
+  const [planFirst, setPlanFirst] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   const [providerId, setProviderId] = useState<string | undefined>(undefined);
   const [effort, setEffort] = useState<string | null>(null);
@@ -109,6 +138,16 @@ export function useNewTaskForm({
   const [attachError, setAttachError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // T6 (#147) — Fix 3: the plan-approval gate needs the provider's hooks capability
+  // (the `canUseTool` channel that parks `ExitPlanMode`). Codex declares `plan` in its
+  // autonomy levels but `supportsHooks: false` — a plan-mode run there surfaces no plan
+  // and silently no-ops. Resolve the TASK's provider (its picked `providerId`, else the
+  // default's capabilities) and gate the toggle on `supportsHooks`. Fail-open: `null`
+  // capabilities (still loading / probe failed) ⇒ assume supported (Claude default).
+  const capabilities = useProviderCapabilities();
+  const providerSupportsPlanGate =
+    capabilitiesForProvider(providerId, capabilities)?.supportsHooks ?? true;
 
   // Load the project's branches once for the branch picker (worktree mode). Returns
   // [] outside Tauri; a failure just leaves free-form entry.
@@ -145,6 +184,20 @@ export function useNewTaskForm({
     setAttachError(null);
     setError(null);
   }, [open]);
+
+  // Plan-approval gate (T6, #147): the "Plan first" toggle follows the kind + the
+  // global default + the provider capability — a Build task defaults ON (when the gate
+  // is on AND the provider supports the plan gate), other kinds / non-hooks providers
+  // default OFF. Recomputed when the dialog (re)opens, the kind changes, or the picked
+  // provider changes, so the sensible default tracks all three; a manual toggle after
+  // that is preserved until one of them changes. Keyed on `open` too so a reopen
+  // re-seeds even when nothing else changed. On a non-hooks provider this forces the
+  // toggle OFF (and the .tsx makes it non-interactive), so a plan can never be forced
+  // into a silent no-op.
+  useEffect(() => {
+    if (!open) return;
+    setPlanFirst(planFirstDefault(kind, planGateDefault, providerSupportsPlanGate));
+  }, [open, kind, planGateDefault, providerSupportsPlanGate]);
 
   const canSubmit = title.trim().length > 0 && !busy;
 
@@ -184,6 +237,11 @@ export function useNewTaskForm({
     try {
       await onCreate(title.trim(), description.trim(), kind, runMode, {
         permissionMode,
+        // T6 (#147): the resolved "Plan first" toggle. The Rust submit path lowers
+        // `true` → plan mode; `false` runs straight through. Never send `true` for a
+        // provider without the plan gate (Fix 3) — belt-and-suspenders against a
+        // provider-switch timing race, on top of the seed effect forcing it OFF.
+        planFirst: providerSupportsPlanGate ? planFirst : false,
         model,
         providerId,
         effort,
@@ -211,6 +269,8 @@ export function useNewTaskForm({
     branch,
     baseBranch,
     permissionMode,
+    planFirst,
+    providerSupportsPlanGate,
     model,
     providerId,
     effort,
@@ -242,6 +302,8 @@ export function useNewTaskForm({
     baseBranch,
     branches,
     permissionMode,
+    planFirst,
+    providerSupportsPlanGate,
     model,
     providerId,
     effort,
@@ -259,6 +321,7 @@ export function useNewTaskForm({
     setBranch,
     setBaseBranch,
     setPermissionMode,
+    setPlanFirst,
     setModel,
     setProviderId,
     setEffort,

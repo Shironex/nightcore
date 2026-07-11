@@ -114,6 +114,12 @@ const PROBE_TIMEOUT_MS = 30 * 1000;
  *  watchdog fires before the SDK yields the next message. */
 const IDLE_STALLED = Symbol('idle-stalled');
 
+/** Internal sentinel for one elapsed idle window inside
+ *  [`SessionRunner.nextWithIdleDeadline`]. Distinct from [`IDLE_STALLED`]: an
+ *  elapsed window only STALLS when no human decision is pending; otherwise the
+ *  deadline re-arms (a parked plan/question may wait indefinitely — T6 #147). */
+const IDLE_TICK = Symbol('idle-tick');
+
 /**
  * Owns a single SDK `query()` loop and translates each `SDKMessage` into a
  * `NightcoreEvent`. Control methods (`interrupt`, `setModel`,
@@ -332,32 +338,61 @@ export class SessionRunner implements AgentSession {
   }
 
   /**
+   * True while the run is legitimately parked awaiting a HUMAN decision — a pending
+   * interactive permission (which includes a plan-mode `ExitPlanMode` awaiting
+   * approve/refine/reject) or a pending `AskUserQuestion` dialog. The idle watchdog
+   * consults this so it NEVER trips while a person is being waited on.
+   *
+   * This is the T6 (#147) guarantee's engine half: a parked plan waits INDEFINITELY
+   * for a human decision — no idle/timeout path may ever auto-fail (and thereby
+   * effectively auto-reject) it. Blocking on `canUseTool`/`onUserDialog` is exactly
+   * how the SDK stops yielding while parked, which is why the raw idle timer would
+   * otherwise fire.
+   */
+  private awaitingHumanDecision(): boolean {
+    return this.permissions.hasPending() || this.questions.hasPending();
+  }
+
+  /**
    * Await the iterator's next message under an idle deadline. Returns the
    * `IteratorResult` when the SDK yields (or completes) in time, or
-   * [`IDLE_STALLED`] when [`idleTimeoutMs`] elapses first. The deadline is a
-   * fresh timer per call, so it resets on every yielded message — only a
-   * genuinely quiet (wedged) stream trips it. When the timer wins, the pending
-   * `next()` is left dangling but its eventual rejection (from the teardown
-   * abort) is swallowed so it never surfaces as an unhandled rejection.
+   * [`IDLE_STALLED`] when [`idleTimeoutMs`] elapses with the stream genuinely
+   * wedged. The deadline is a fresh timer per elapsed window, so it resets on every
+   * yielded message — only a genuinely quiet (wedged) stream trips it.
+   *
+   * CRITICAL (T6 #147): an elapsed window while a human decision is pending (a parked
+   * plan, permission, or question — see {@link awaitingHumanDecision}) is NOT a stall.
+   * A run may wait indefinitely for the user, so the deadline re-arms and keeps
+   * awaiting the SAME `next()` instead of failing the run. The exclusion covers a
+   * decision that becomes pending mid-window too: the check runs when the timer
+   * fires, not just at entry. When the SDK finally yields (or the timer wins with no
+   * pending decision) the dangling `next()` rejection from teardown is swallowed so
+   * it never surfaces as an unhandled rejection.
    */
   private async nextWithIdleDeadline(
     iterator: AsyncIterator<SDKMessage>,
   ): Promise<IteratorResult<SDKMessage> | typeof IDLE_STALLED> {
     const nextPromise = iterator.next();
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    const idle = new Promise<typeof IDLE_STALLED>((resolve) => {
-      timer = setTimeout(() => resolve(IDLE_STALLED), this.idleTimeoutMs);
-    });
-    try {
-      const result = await Promise.race([nextPromise, idle]);
-      if (result === IDLE_STALLED) {
+    for (;;) {
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const idle = new Promise<typeof IDLE_TICK>((resolve) => {
+        timer = setTimeout(() => resolve(IDLE_TICK), this.idleTimeoutMs);
+      });
+      try {
+        const result = await Promise.race([nextPromise, idle]);
+        // The SDK yielded or completed in time — hand it straight back.
+        if (result !== IDLE_TICK) return result;
+        // A full idle window elapsed. If a human decision is pending, this is BY
+        // DESIGN — re-arm the deadline and keep awaiting the same next() (never
+        // stall a parked plan). Otherwise the stream is genuinely wedged.
+        if (this.awaitingHumanDecision()) continue;
         // The next() promise may reject later when teardown aborts the query —
         // attach a no-op catch now so it never bubbles as unhandled.
         void Promise.resolve(nextPromise).catch(() => {});
+        return IDLE_STALLED;
+      } finally {
+        if (timer !== undefined) clearTimeout(timer);
       }
-      return result;
-    } finally {
-      if (timer !== undefined) clearTimeout(timer);
     }
   }
 
