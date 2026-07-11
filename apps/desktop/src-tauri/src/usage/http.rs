@@ -99,10 +99,11 @@ pub(crate) fn parse_retry_after(header: Option<&str>) -> Option<Duration> {
 }
 
 /// Strip anything token-shaped from a string before it can reach a log line or a
-/// stored `message` (spec §3.7). Redacts: the word after a `Bearer`, and any token
-/// starting with a known secret prefix (`sk-ant-` Claude OAuth, `eyJ` JWT) or that
-/// is a long opaque run. Whitespace is normalized to single spaces — acceptable for
-/// a log/diagnostic string.
+/// stored `message` (spec §3.7). Redacts: the word after a `Bearer`, any token
+/// starting with a known provider/JWT prefix ([`SECRET_PREFIXES`] — GitHub `ghp_`/…,
+/// OpenAI/Claude `sk-…`, Slack `xox…`, `eyJ` JWT) with a non-trivial body, and any
+/// long opaque run. Whitespace is normalized to single spaces — acceptable for a
+/// log/diagnostic string.
 pub(crate) fn redact(input: &str) -> String {
     let mut out: Vec<String> = Vec::new();
     let mut redact_next = false;
@@ -127,22 +128,55 @@ pub(crate) fn redact(input: &str) -> String {
     out.join(" ")
 }
 
+/// Known credential prefixes for the providers Nightcore's diagnostics may touch:
+/// OpenAI/Claude API keys (`sk-…`, incl. `sk-ant-…`), the GitHub token family
+/// (`ghp_`/`gho_`/`ghu_`/`ghs_`/`ghr_`/`github_pat_`), Slack tokens (`xoxb-`/`xoxp-`/
+/// `xoxa-`/`xoxr-`), and JWTs (the `eyJ` base64url header). A token beginning with any
+/// of these is treated as a secret once it carries at least
+/// [`MIN_PREFIXED_SECRET_BODY`] chars of body — far below the ≥24 opaque-run rule,
+/// which on its own missed a short prefixed token like a ~20-char `ghp_…` (#224).
+const SECRET_PREFIXES: &[&str] = &[
+    "sk-",         // OpenAI + Claude (`sk-ant-…`) API keys
+    "ghp_",        // GitHub personal access token
+    "gho_",        // GitHub OAuth token
+    "ghu_",        // GitHub user-to-server token
+    "ghs_",        // GitHub server-to-server token
+    "ghr_",        // GitHub refresh token
+    "github_pat_", // GitHub fine-grained PAT
+    "xoxb-",       // Slack bot token
+    "xoxp-",       // Slack user token
+    "xoxa-",       // Slack app-level token
+    "xoxr-",       // Slack refresh token
+    "eyJ",         // JWT header (`{"…` base64url-encoded)
+];
+
+/// Minimum secret-body length after a known [`SECRET_PREFIXES`] entry for a token to
+/// count as credential material — low enough to catch a short prefixed token that the
+/// ≥24 opaque-run rule misses, high enough that a bare `sk-` / `eyJ` word in prose
+/// does not trip.
+const MIN_PREFIXED_SECRET_BODY: usize = 8;
+
 /// Whether a whitespace-delimited token looks like credential material: a known
-/// OAuth/JWT prefix, or a long opaque alphanumeric run (defence-in-depth). Judges the
-/// value side of a `key=value` pair (so `token=eyJ…` / `ChatGPT-Account-Id=…` redact)
-/// and trims surrounding punctuation so `Bearer(sk-ant-…)` / trailing commas redact.
+/// provider/JWT prefix followed by a non-trivial body, or a long opaque alphanumeric
+/// run (defence-in-depth). Judges the value side of a `key=value` pair (so
+/// `token=eyJ…` / `ChatGPT-Account-Id=…` redact) and trims surrounding punctuation so
+/// `Bearer(sk-ant-…)` / trailing commas redact.
 fn looks_secret(tok: &str) -> bool {
     // For a `key=value` token, judge the value (the part after the last `=`).
     let candidate = tok.rsplit('=').next().unwrap_or(tok);
     let t = candidate.trim_matches(|c: char| !c.is_alphanumeric());
-    if t.len() < 12 {
-        return false;
+    // A known provider/JWT prefix with a non-trivial body — catches SHORT prefixed
+    // tokens (e.g. a ~20-char `ghp_…`) that the opaque-run rule below misses because
+    // they are under 24 chars.
+    for prefix in SECRET_PREFIXES {
+        if let Some(body) = t.strip_prefix(prefix) {
+            if body.len() >= MIN_PREFIXED_SECRET_BODY {
+                return true;
+            }
+        }
     }
-    if t.starts_with("sk-ant-") || t.starts_with("eyJ") {
-        return true;
-    }
-    // A long run of URL-safe base64-ish characters with no spaces is almost never
-    // legitimate diagnostic prose — redact it.
+    // For an UNKNOWN token: a long run of URL-safe base64-ish characters with no
+    // spaces is almost never legitimate diagnostic prose — redact it.
     t.len() >= 24
         && t.chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
@@ -185,6 +219,45 @@ mod tests {
             line,
             "short ordinary words are never redacted"
         );
+    }
+
+    #[test]
+    fn redact_strips_short_prefixed_provider_tokens() {
+        // #224: a ~20-char `ghp_…` PAT is under the 24-char opaque-run threshold and
+        // is not `sk-ant-`/`eyJ`, so it previously leaked. It must now redact — and a
+        // GitHub OAuth `gho_` token and a Slack `xoxb-` token alongside it.
+        let ghp = "ghp_ABCdef0123456789klmn"; // full-length PAT
+        let short_ghp = "ghp_ABCdef0123456"; // ~17 chars — under the old ≥24 opaque-run rule, the regression case
+        let gho = "gho_16C7e42F292c6912E7710c838347Ae178B4a";
+        let slack = "xoxb-1234-5678-abcdEFGHijklMNOP";
+        let red = redact(&format!(
+            "gh push failed token={short_ghp} also {ghp} {gho} {slack} ok"
+        ));
+        assert!(!red.contains(short_ghp), "short ghp leaked: {red}");
+        assert!(!red.contains(ghp), "ghp leaked: {red}");
+        assert!(!red.contains(gho), "gho leaked: {red}");
+        assert!(!red.contains(slack), "slack token leaked: {red}");
+        assert!(red.contains("ok"), "prose survives: {red}");
+    }
+
+    #[test]
+    fn looks_secret_covers_prefixes_and_still_redacts_the_old_cases() {
+        // New: short prefixed provider tokens.
+        assert!(looks_secret("ghp_ABCdef0123456"));
+        assert!(looks_secret("github_pat_11ABCDEFG0abcdefghij"));
+        assert!(looks_secret("sk-ant-oat01-SECRETVALUE12345"));
+        assert!(looks_secret("xoxb-1234-5678-abcdEFGH"));
+        // key=value form judges the value side.
+        assert!(looks_secret("token=ghp_ABCdef0123456"));
+        // Still redacts the pre-existing cases: a JWT and a long opaque run.
+        assert!(looks_secret(
+            "eyJhbGciOiJI.eyJzdWIiOiIxMjM0NTY.SflKxwRJSMeKKF2QT4fwpM"
+        ));
+        assert!(looks_secret("AKIAIOSFODNN7EXAMPLEabcdEFGH"));
+        // A bare prefix with too little body, and ordinary prose, are NOT secrets.
+        assert!(!looks_secret("sk-"));
+        assert!(!looks_secret("returned"));
+        assert!(!looks_secret("500"));
     }
 
     #[test]
