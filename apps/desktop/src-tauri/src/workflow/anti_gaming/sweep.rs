@@ -66,6 +66,7 @@ pub fn append_anti_gaming_check(
         status: StepStatus::Failed,
         exit_code: None,
         output: Some(render_evidence(&findings)),
+        duration_ms: None,
     });
     result.passed = false;
     if result.failed_check.is_none() {

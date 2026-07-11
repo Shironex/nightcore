@@ -42,6 +42,7 @@ fn structure_lock() -> StructureLockResult {
                 status: StepStatus::Passed,
                 exit_code: Some(0),
                 output: None,
+                duration_ms: None,
             },
             StructureLockCheck {
                 name: "coverage".into(),
@@ -50,6 +51,7 @@ fn structure_lock() -> StructureLockResult {
                 status: StepStatus::Failed,
                 exit_code: Some(1),
                 output: Some("below threshold".into()),
+                duration_ms: None,
             },
         ],
         failed_check: Some("coverage".into()),

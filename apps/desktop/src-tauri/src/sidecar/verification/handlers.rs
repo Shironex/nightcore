@@ -570,6 +570,7 @@ mod tests {
             status,
             exit_code: None,
             output: None,
+            duration_ms: None,
         }
     }
 

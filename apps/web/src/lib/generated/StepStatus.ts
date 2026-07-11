@@ -3,4 +3,4 @@
 /**
  * The outcome of one gauntlet step.
  */
-export type StepStatus = "passed" | "failed" | "skipped";
+export type StepStatus = "passed" | "failed" | "skipped" | "flaky";

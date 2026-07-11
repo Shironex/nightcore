@@ -29,4 +29,5 @@ mod runner;
 #[cfg(test)]
 mod tests;
 
+pub(crate) use config::{is_armable_kind, ARMABLE_CHECK_KINDS};
 pub(crate) use runner::*;

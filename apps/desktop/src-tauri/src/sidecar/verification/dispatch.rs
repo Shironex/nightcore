@@ -290,6 +290,10 @@ fn format_check_results(result: &GauntletResult) -> String {
     for step in &result.steps {
         let status = match step.status {
             StepStatus::Passed => "PASSED".to_string(),
+            // The readiness gauntlet never retries, so it never emits `Flaky`; the
+            // arm exists for exhaustiveness (the shared `StepStatus` also serves the
+            // armed-check runner). Render it as a passing-but-flaky note.
+            StepStatus::Flaky => "PASSED (flaky — failed once, passed on retry)".to_string(),
             StepStatus::Failed => match step.exit_code {
                 Some(code) => format!("FAILED (exit {code})"),
                 None => "FAILED".to_string(),

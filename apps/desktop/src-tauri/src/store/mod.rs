@@ -10,6 +10,7 @@
 
 pub(crate) mod attachments;
 pub(crate) mod board_background;
+pub(crate) mod checks_state;
 pub(crate) mod harness;
 pub(crate) mod harness_manifest;
 pub(crate) mod harness_policy;
