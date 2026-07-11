@@ -30,6 +30,10 @@ const claudeLaunched = new Set<string>();
  *  activate on mount. Consumed once (not part of the subscribable snapshot). */
 let pendingActivateSession: string | null = null;
 
+/** A worktree→terminal hand-off (spec PR 5b): the cwd an "open terminal here" action
+ *  asked the Terminal view to spawn a shell in on mount. Consumed once. */
+let pendingOpenTerminalCwd: string | null = null;
+
 type Listener = () => void;
 const listeners = new Set<Listener>();
 
@@ -146,6 +150,21 @@ export function consumePendingActivateSession(): string | null {
   return id;
 }
 
+/** Ask the Terminal view to spawn a shell in `cwd` when it next mounts (spec PR 5b — the
+ *  Worktrees view's "open terminal here" → route → spawn hand-off). Web-side, module-level
+ *  so it survives the routed view's remount, exactly like {@link requestActivateSession}. */
+export function requestOpenTerminalInCwd(cwd: string): void {
+  pendingOpenTerminalCwd = cwd;
+}
+
+/** Take (and clear) any pending "open terminal here" cwd. The Terminal view calls this on
+ *  mount, after its live sessions load, to spawn the requested shell. */
+export function consumePendingOpenTerminal(): string | null {
+  const cwd = pendingOpenTerminalCwd;
+  pendingOpenTerminalCwd = null;
+  return cwd;
+}
+
 /** React binding for the board card: the live session linked to `taskId`, or `null`,
  *  re-rendering the card whenever the link changes. */
 export function useLinkedSessionId(taskId: string): string | null {
@@ -162,4 +181,5 @@ export function resetTerminalLinksForTest(): void {
   taskToSession.clear();
   claudeLaunched.clear();
   pendingActivateSession = null;
+  pendingOpenTerminalCwd = null;
 }

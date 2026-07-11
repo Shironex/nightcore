@@ -29,6 +29,7 @@ import type {
   PersistedTerminalInfo,
   PersistedTerminalScrollback,
   TerminalSessionInfo,
+  WorktreeInfo,
 } from '../types';
 
 export type { TerminalByteHandler } from '../mocks';
@@ -105,6 +106,39 @@ export async function setTerminalTitle(id: string, title: string | null): Promis
   if (!isTauri()) return;
   const { invoke } = await import('@tauri-apps/api/core');
   await invoke('terminal_set_title', { id, title });
+}
+
+/** Create a user-driven terminal worktree from the new-tab picker (spec PR 5a): slug the
+ *  `name` server-side, allocate a worktree under the separate `term/` namespace (a new
+ *  `term/<slug>` branch off `base` when `createBranch`, else a detached checkout at
+ *  `base`), and return its `WorktreeInfo` — the picker then spawns a terminal into its
+ *  `path`. Rejects on a real failure (bad name, git error) so the dialog can surface it.
+ *  Dynamic import per the bridge's Tauri-core isolation rule (§9 trap f). Outside Tauri it
+ *  fabricates a plausible worktree so Storybook / `dogfood:ui` open an echo tab. */
+export async function terminalCreateWorktree(
+  name: string,
+  createBranch: boolean,
+  base: string | null,
+): Promise<WorktreeInfo> {
+  if (!isTauri()) {
+    // Echo mode: a synthetic worktree under a fake project so the echo spawn opens.
+    const slug = name.trim().toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'worktree';
+    return {
+      branch: `term/${slug}`,
+      path: `/echo/.nightcore/worktrees-term/${slug}`,
+      taskIds: [],
+      dirty: false,
+      aheadOfBase: 0,
+      behindOfBase: 0,
+      changedFiles: 0,
+    };
+  }
+  const { invoke } = await import('@tauri-apps/api/core');
+  return invoke<WorktreeInfo>('terminal_create_worktree', {
+    name,
+    createBranch,
+    base: base ?? null,
+  });
 }
 
 /** Resize a session's PTY (fit addon + ResizeObserver → SIGWINCH). No-op outside
