@@ -87,6 +87,22 @@ test('gotoSourceRef routes each legacy scheme to its remapped stage view', async
   }
 });
 
+test('gotoScanTarget preselects a run-level target and routes to its stage', async () => {
+  const router = await mountRouter();
+  // Run-level (empty itemId) — the seam the History row click funnels through,
+  // no token synthesis. Routes to the target's stage carrying the whole target.
+  const target = {
+    view: 'enforce',
+    family: 'harness',
+    kind: 'finding',
+    runId: 'run-9',
+    itemId: '',
+  } as const;
+  router().gotoScanTarget(target);
+  await vi.waitFor(() => expect(router().view).toBe('enforce'));
+  expect(router().scanTarget).toEqual(target);
+});
+
 test('gotoSourceRef ignores a malformed token (defensive no-op)', async () => {
   const router = await mountRouter();
   router().gotoSourceRef('not-a-valid-ref');

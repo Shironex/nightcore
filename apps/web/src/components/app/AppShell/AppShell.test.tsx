@@ -19,6 +19,25 @@ vi.mock('@/lib/bridge', async (importOriginal) => {
         sourceRef: 'insight:run-1:f-1',
       }),
     ],
+    // Seed one completed Insight run for the active mock project so the global
+    // History view has a row to click in the routing integration test below.
+    listInsightRuns: async () => [
+      {
+        id: 'run-hist-1',
+        projectPath: '~/dev/nightcore',
+        scope: 'repo',
+        status: 'completed',
+        categories: [],
+        model: 'm',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        costUsd: 0,
+        durationMs: 0,
+        usage: { inputTokens: 0, outputTokens: 0 },
+        findings: [],
+        error: null,
+      },
+    ],
   };
 });
 
@@ -71,6 +90,22 @@ test('a legacy insight provenance chip routes through to the Understand surface'
   (chip.element() as HTMLElement).click();
   // The Understand stage shell mounted (its Find | Grade toggle group) — proof the
   // token → REGISTRY → union → render-branch chain resolved (no blank screen).
+  await expect
+    .element(screen.getByRole('group', { name: 'Understand lens' }))
+    .toBeInTheDocument();
+});
+
+test('a History row opens its run on the owning stage', async () => {
+  // End-to-end run-level routing: navigate to the global History view, click the
+  // seeded Insight run, and land on the Understand stage with the run selected —
+  // proving the History → `gotoScanTarget` → `view === 'understand'` render-branch
+  // chain resolves (no blank screen, no token synthesis).
+  const screen = render(<Default />);
+  await screen.getByRole('button', { name: /^History R$/ }).click();
+  // The seeded run renders as a clickable row (its family badge names Insight).
+  const row = screen.getByRole('button', { name: /Insight/ });
+  await expect.element(row).toBeInTheDocument();
+  (row.element() as HTMLElement).click();
   await expect
     .element(screen.getByRole('group', { name: 'Understand lens' }))
     .toBeInTheDocument();

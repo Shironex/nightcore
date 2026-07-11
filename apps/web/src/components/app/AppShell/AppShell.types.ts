@@ -7,6 +7,11 @@ export type AppView =
   // destination, NOT a source-ref REGISTRY view — so `nav-render-parity` is
   // unaffected — but its render branch lands in the SAME commit as this member.
   | 'terminal'
+  // The global cross-family run History view (Views Phase 2). A Project-group
+  // destination, NOT a source-ref REGISTRY view (History routes run-level into the
+  // stage shells, it isn't a provenance target) — so `nav-render-parity` is
+  // unaffected, but its render branch lands in the SAME commit as this member.
+  | 'history'
   // The five stage destinations (Phase-1 view rethink, PR 3): Understand hosts
   // Insight's Find + Scorecard's Grade behind one shell; Harden / Enforce are two
   // view filters over the ONE HarnessView run/store; PR Review + Issue Triage keep
