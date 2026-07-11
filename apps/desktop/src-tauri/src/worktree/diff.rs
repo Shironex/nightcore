@@ -102,8 +102,19 @@ pub struct WorktreeDiff {
 pub fn base_diff(dir: &Path, base: &str) -> Result<String, String> {
     crate::git::validate_ref(base)?;
     // `--no-ext-diff` refuses any repo-configured external diff driver (belt-and-
-    // suspenders over the `diff.external=` neutralizer in `git_command`).
-    git(dir, &["diff", "--no-ext-diff", &format!("{base}...HEAD")])
+    // suspenders over the `diff.external=` neutralizer in `git_command`); `--no-textconv`
+    // refuses an attacker-configured `[diff "x"] textconv=<cmd>` binding (a SEPARATE host-
+    // RCE that `--no-ext-diff` does NOT cover and that cannot be neutralized via a `-c`
+    // override — the driver name is attacker-chosen and git has no textconv-disable key).
+    git(
+        dir,
+        &[
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            &format!("{base}...HEAD"),
+        ],
+    )
 }
 
 /// Cap on the synthesized-patch read for an untracked file — a huge generated file
@@ -126,12 +137,15 @@ pub fn file_diff(dir: &Path, base: &str, path: &str) -> Result<String, String> {
     // Tracked changes vs base (committed + staged + unstaged); `--` fences the path so a
     // pathspec starting with `-` can't be read as an option. `--no-ext-diff` refuses any
     // repo-configured external diff driver (belt-and-suspenders over the `diff.external=`
-    // neutralizer in `git_command`).
+    // neutralizer in `git_command`); `--no-textconv` refuses an attacker-configured
+    // `[diff "x"] textconv=<cmd>` binding — a SEPARATE host-RCE that `--no-ext-diff` does
+    // NOT cover and that has no `-c` neutralizer (the driver name is attacker-chosen).
     let patch = git(
         dir,
         &[
             "diff",
             "--no-ext-diff",
+            "--no-textconv",
             "--end-of-options",
             base,
             "--",

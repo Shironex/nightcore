@@ -1100,3 +1100,64 @@ fn file_diff_untracked_regular_file_still_shows_as_added() {
         "a normal untracked file must diff as added: {patch}"
     );
 }
+
+/// #220 follow-up (adversarial review): a `diff.<driver>.textconv` binding is a
+/// SECOND host-RCE in the same class as `diff.external`. An agent plants
+/// `[diff "x"] textconv=<cmd>` in `.git/config` + `* diff=x` in
+/// `.git/info/attributes` — both inside `.git/`, writable through the documented
+/// Bash-redirect confinement gap — and git then runs `<cmd>` on the trusted host to
+/// render EVERY patch. `--no-ext-diff` does NOT disable textconv (only `--no-textconv`
+/// does), and there is no `-c` config neutralizer for it (the driver name is
+/// attacker-chosen). Every patch-producing diff site must carry `--no-textconv`, so
+/// the planted command never fires. Exercises `staged_diff`, `file_diff`, `base_diff`.
+#[test]
+fn patch_diff_sites_ignore_a_planted_textconv_command() {
+    let Some((tmp, repo)) = temp_repo() else {
+        return;
+    };
+    // A textconv driver that drops a sentinel file when git runs it, bound to every
+    // path via `.git/info/attributes` — the exact confinement-gap attack primitive.
+    let pwned = tmp.path().join("PWNED");
+    let textconv = format!("sh -c 'touch \"{}\"'", pwned.display());
+    assert!(git_ok(&repo, &["config", "diff.x.textconv", &textconv]));
+    let info = repo.join(".git").join("info");
+    std::fs::create_dir_all(&info).expect("info dir");
+    std::fs::write(info.join("attributes"), "* diff=x\n").expect("attrs");
+
+    let base = base_branch(&repo);
+    let c0 = git_stdout(&repo, &["rev-parse", "HEAD"]); // base for base_diff once HEAD advances
+
+    // Stage a change so the working/index patch sites have content to render.
+    std::fs::write(repo.join("README.md"), "changed\n").expect("write");
+    assert!(git_ok(&repo, &["add", "-A"]));
+
+    // Control: a RAW `git diff` (the fixture spawns git with neither our flags nor the
+    // config neutralizer) DOES execute the planted textconv — proving the attack is
+    // live in this repo before we assert the production sites neutralize it.
+    let _ = git_stdout(&repo, &["diff", "--cached"]);
+    assert!(
+        pwned.exists(),
+        "control: an unguarded raw `git diff` must fire the planted textconv"
+    );
+    std::fs::remove_file(&pwned).expect("reset sentinel");
+
+    // staged_diff (`diff --cached`): renders the change WITHOUT running textconv.
+    let staged = staged_diff(&repo).expect("staged_diff");
+    assert!(
+        staged.contains("README.md"),
+        "staged_diff renders: {staged}"
+    );
+    assert!(!pwned.exists(), "staged_diff must not execute textconv");
+
+    // file_diff (`diff <base> -- <path>`, working+index vs base): must not run it.
+    let fd = file_diff(&repo, &base, "README.md").expect("file_diff");
+    assert!(fd.contains("README.md"), "file_diff renders: {fd}");
+    assert!(!pwned.exists(), "file_diff must not execute textconv");
+
+    // Commit so HEAD is ahead of c0, giving base_diff (`<base>...HEAD`) a non-empty
+    // range that actually renders a patch — the only way textconv could be reached.
+    assert!(git_ok(&repo, &["commit", "-q", "-m", "change"]));
+    let bd = base_diff(&repo, c0.trim()).expect("base_diff");
+    assert!(bd.contains("README.md"), "base_diff renders: {bd}");
+    assert!(!pwned.exists(), "base_diff must not execute textconv");
+}

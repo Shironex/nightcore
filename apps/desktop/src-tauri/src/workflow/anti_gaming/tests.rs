@@ -400,6 +400,41 @@ fn sweep_over_a_real_worktree_diff() {
     );
 }
 
+/// #220 follow-up: the sweep renders a range PATCH, so a planted
+/// `diff.<x>.textconv` would execute on the host on every sweep unless the diff
+/// carries `--no-textconv` (which `--no-ext-diff` does NOT imply, and which has no
+/// `-c` config neutralizer). Plant the attack inside the shared `.git/` and assert
+/// the sweep does not run it.
+#[test]
+fn sweep_does_not_execute_a_planted_textconv_command() {
+    let Some((tmp, repo)) = temp_repo() else {
+        return;
+    };
+    let run = |dir: &Path, args: &[&str]| crate::git::testutil::git_ok(dir, args);
+    // A textconv driver that drops a sentinel when git runs it, bound to every path.
+    // Config + `info/attributes` live in the common `.git/`, shared by linked worktrees.
+    let pwned = tmp.path().join("PWNED");
+    let textconv = format!("sh -c 'touch \"{}\"'", pwned.display());
+    assert!(run(&repo, &["config", "diff.x.textconv", &textconv]));
+    let info = repo.join(".git").join("info");
+    std::fs::create_dir_all(&info).expect("info dir");
+    std::fs::write(info.join("attributes"), "* diff=x\n").expect("attrs");
+
+    // A worktree branch one commit ahead of base, so the sweep's `merge_base..HEAD`
+    // diff renders a patch (the only way the planted textconv could be reached).
+    assert!(run(&repo, &["worktree", "add", "wt", "-b", "feature"]));
+    let wt = repo.join("wt");
+    std::fs::write(wt.join("math.test.ts"), "expect(add(1, 1)).toBe(2)\n").expect("write");
+    assert!(run(&wt, &["add", "."]) && run(&wt, &["commit", "-q", "-m", "work"]));
+
+    let mut result = StructureLockResult::empty_pass();
+    append_anti_gaming_check(&mut result, &wt, &repo, None);
+    assert!(
+        !pwned.exists(),
+        "the anti-gaming sweep must not execute a planted textconv command"
+    );
+}
+
 /// Real git repo with one commit, or `None` when git is unavailable
 /// (mirrors `worktree/tests.rs::temp_repo`).
 fn temp_repo() -> Option<(tempfile::TempDir, std::path::PathBuf)> {
