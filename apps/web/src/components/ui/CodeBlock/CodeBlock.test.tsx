@@ -41,6 +41,8 @@ test('resolveLang maps aliases/extensions to grammars and unknowns to text', () 
   expect(resolveLang('JS')).toBe('javascript');
   expect(resolveLang('md')).toBe('markdown');
   expect(resolveLang('sh')).toBe('bash');
+  expect(resolveLang('diff')).toBe('diff');
+  expect(resolveLang('patch')).toBe('diff');
   expect(resolveLang(undefined)).toBe('text');
   expect(resolveLang('cobol')).toBe('text');
 });

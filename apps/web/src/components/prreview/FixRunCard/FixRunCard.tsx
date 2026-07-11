@@ -22,6 +22,7 @@ import {
   UploadIcon,
 } from '@/components/ui';
 
+import { FixDiffPreview } from '../FixDiffPreview';
 import { LOCAL_COMMIT_NOTE, runningLabel } from './FixRunCard.hooks';
 import type { FixRunCardProps } from './FixRunCard.types';
 
@@ -93,6 +94,9 @@ export function FixRunCard({
             Push to PR
           </Button>
         </div>
+        {/* The push-gate trust view: the ACTUAL local commit diff, so the human
+            approves the real change rather than the model's prose below. */}
+        <FixDiffPreview fixId={fix.id} />
         {fix.summary !== null && fix.summary.trim().length > 0 && (
           // Model-authored result text through the SANITIZING Markdown
           // primitive (headings/lists/inline code render; scripts/handlers

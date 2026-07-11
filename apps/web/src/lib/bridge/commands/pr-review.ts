@@ -11,7 +11,17 @@ import type {
   PrSummary,
   ReviewLens,
   Task,
+  WorktreeDiff,
 } from '../types';
+
+/** The empty diff both fix-diff commands resolve to outside Tauri (browser
+ *  preview / tests), so a call site renders its empty state rather than throwing. */
+const EMPTY_FIX_DIFF: WorktreeDiff = {
+  files: [],
+  summary: '',
+  additions: 0,
+  deletions: 0,
+};
 
 // --- PR Review (fourth scan sibling) --------------------------------------
 
@@ -195,5 +205,20 @@ export async function listPrFixes(): Promise<PrFixState[]> {
  *  `failed("cancelled")` on `nc:pr-fix`). No-op outside Tauri. */
 export async function cancelPrFix(fixId: string): Promise<void> {
   await tauriInvoke<void>('cancel_pr_fix', { fixId }, undefined);
+}
+
+/** The local fix commit's changed-file list vs its resolved base (the remote
+ *  head, else the commit's parent) — the push-gate TRUST VIEW so the human
+ *  approves the real diff, not the model's prose summary. Pure local git,
+ *  read-only. Empty diff outside Tauri. */
+export async function prFixDiff(fixId: string): Promise<WorktreeDiff> {
+  return tauriInvoke<WorktreeDiff>('pr_fix_diff', { fixId }, EMPTY_FIX_DIFF);
+}
+
+/** The unified-diff patch for ONE file of the fix commit vs its resolved base —
+ *  the per-file payload the push-gate viewer renders (lazily, on expand). `path`
+ *  is one of {@link prFixDiff}'s file entries. Empty string outside Tauri. */
+export async function prFixFileDiff(fixId: string, path: string): Promise<string> {
+  return tauriInvoke<string>('pr_fix_file_diff', { fixId, path }, '');
 }
 
