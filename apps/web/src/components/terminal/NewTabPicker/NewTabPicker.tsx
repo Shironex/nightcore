@@ -53,6 +53,7 @@ export function NewTabPicker({
   targets,
   onPick,
   onBrowse,
+  onCreateWorktree,
   onClose,
   error,
   busy = false,
@@ -111,6 +112,27 @@ export function NewTabPicker({
             </span>
           </span>
         </button>
+
+        {/* Create a fresh worktree and open a shell in it (spec PR 5a). Rendered only
+            when the parent supplies the handler — i.e. inside an active project. */}
+        {onCreateWorktree !== undefined && (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCreateWorktree}
+            className="flex w-full items-center gap-2.5 rounded-[9px] border border-dashed border-border/70 bg-transparent px-3 py-2.5 text-left transition-colors hover:border-primary/40 hover:bg-accent/40 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <BranchIcon size={15} className="shrink-0 text-muted-foreground" />
+            <span className="flex min-w-0 flex-col">
+              <span className="truncate text-[13px] font-medium text-foreground">
+                Create new worktree…
+              </span>
+              <span className="truncate text-[11px] text-muted-foreground">
+                Branch off a base and open a shell in the new worktree
+              </span>
+            </span>
+          </button>
+        )}
       </div>
 
       {confinedAvailable && (

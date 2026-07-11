@@ -28,6 +28,10 @@ export interface NewTabPickerProps {
   /** Open the folder browser to choose ANY directory (not just the repo root or a
    *  worktree). The confined choice made here carries into the browsed spawn. */
   onBrowse: () => void;
+  /** Open the "Create new worktree…" dialog (spec PR 5a). Rendered as a picker entry
+   *  only when provided — the parent passes it just when a project is active (creating a
+   *  worktree needs a repo). Undefined outside a project, so the entry is hidden. */
+  onCreateWorktree?: () => void;
   /** Fired on Esc, click-outside, or Cancel. */
   onClose: () => void;
   /** A spawn error to surface inline (e.g. the 8-session cap, or a fail-closed

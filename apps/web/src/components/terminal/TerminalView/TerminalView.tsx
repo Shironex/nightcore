@@ -7,6 +7,7 @@ import {
 } from '@/components/ui';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
+import { CreateWorktreeDialog } from '../CreateWorktreeDialog';
 import { NewTabPicker } from '../NewTabPicker';
 import { TerminalGrid } from '../TerminalGrid';
 import { TerminalPane } from '../TerminalPane';
@@ -127,12 +128,22 @@ export function TerminalView({
         targets={v.picker.targets}
         onPick={v.picker.pickTarget}
         onBrowse={v.picker.onBrowse}
+        onCreateWorktree={v.picker.onCreateWorktree}
         onClose={v.picker.closePicker}
         error={v.picker.error}
         busy={v.picker.busy}
         confinedAvailable={v.picker.confinedAvailable}
         confined={v.picker.confined}
         onConfinedChange={v.picker.onConfinedChange}
+      />
+
+      <CreateWorktreeDialog
+        open={v.createWorktree.open}
+        branches={v.createWorktree.branches}
+        busy={v.createWorktree.busy}
+        error={v.createWorktree.error}
+        onConfirm={(req) => void v.createWorktree.submit(req)}
+        onClose={v.createWorktree.closeCreate}
       />
 
       <FolderBrowserDialog

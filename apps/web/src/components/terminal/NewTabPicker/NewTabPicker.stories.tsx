@@ -79,3 +79,13 @@ export const PicksTarget: Story = {
     );
   },
 };
+
+/** Inside a project: the "Create new worktree…" entry (spec PR 5a) is offered. */
+export const WithCreateWorktree: Story = {
+  args: { onCreateWorktree: fn() },
+  play: async ({ args }) => {
+    const canvas = portaledSurface();
+    await userEvent.click(canvas.getByRole('button', { name: /Create new worktree/ }));
+    await expect(args.onCreateWorktree).toHaveBeenCalled();
+  },
+};
