@@ -40,6 +40,7 @@ import {
 import { writeToTargets } from './terminal-broadcast';
 import { forgetCommandCapture, recordCommandInput } from './terminal-command-capture';
 import { installKeymap } from './terminal-keymap';
+import { forgetProcessTitle, recordProcessTitle } from './terminal-process-title';
 import {
   buildTerminalOptions,
   openTerminalLink,
@@ -194,6 +195,9 @@ async function installSession(
   // (output-side only; never touches the PTY, so the USER-ONLY seam holds). Disposed
   // with the terminal on `closeSession`.
   installCompletionSignals(term, handle.session.id);
+  // T11: the shell's own process-title (OSC 0/2) as the lowest-precedence auto title —
+  // a better default than the cwd leaf, refused server-side over any chosen name.
+  term.onTitleChange((title) => recordProcessTitle(handle.session.id, title));
 
   const host = document.createElement('div');
   host.style.width = '100%';
@@ -315,6 +319,7 @@ export async function closeSession(id: string): Promise<void> {
   const entry = cache.get(id);
   cache.delete(id);
   forgetCommandCapture(id); // drop any AI-naming capture state (round-2 PR A)
+  forgetProcessTitle(id); // drop any pending process-title debounce (T11)
   forgetAttention(id); // drop the 3-state attention counters (T11)
   if (entry === undefined) return;
   try {

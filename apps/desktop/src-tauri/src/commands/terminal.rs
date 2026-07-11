@@ -145,6 +145,42 @@ pub async fn terminal_set_title(
     .map_err(|e| format!("terminal set_title failed to run: {e}"))?
 }
 
+/// Apply the shell's own process-title (OSC 0/2) to a session's tab (T11) with the
+/// LOWEST `ProcessTitle` precedence, GUARDED under the registry lock — so a Manual /
+/// Task / AI name always wins and the process-title only fills an Unset session (or
+/// replaces a prior process-title). A blank title is a no-op. Returns the title it
+/// ACTUALLY applied (`Some`), or `None` when it was refused (a higher-ranked name is
+/// set) or was blank — so the web reflects only a name that stuck, exactly like
+/// `terminal_suggest_title`. USER-only + async + `spawn_blocking` like every terminal
+/// command; the web debounces the noisy `onTitleChange` stream before calling this.
+#[tauri::command]
+pub async fn terminal_set_process_title(
+    app: AppHandle,
+    id: String,
+    title: String,
+) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(title) = normalize_title(Some(title)) else {
+            return Ok(None);
+        };
+        let be = backend(&app)?;
+        be.set_title(&id, Some(title), TitleSource::ProcessTitle)?;
+        // Read the AUTHORITATIVE post-write state: return the title only if the
+        // ProcessTitle write actually landed (source is still ProcessTitle). A
+        // higher-ranked name that raced in / is already set yields None, so the web
+        // never reflects a process-title that didn't stick.
+        let applied = be
+            .list()
+            .into_iter()
+            .find(|s| s.id == id)
+            .filter(|s| s.title_source == Some(TitleSource::ProcessTitle))
+            .and_then(|s| s.title);
+        Ok(applied)
+    })
+    .await
+    .map_err(|e| format!("terminal set_process_title failed to run: {e}"))?
+}
+
 /// The AI tab-naming instruction (round-2 PR A): a tiny, deterministic prompt. The
 /// last command rides the one-shot's stdin; every tool is disallowed (the seam's
 /// least-privilege), so this can never read or exfiltrate anything beyond that input.
