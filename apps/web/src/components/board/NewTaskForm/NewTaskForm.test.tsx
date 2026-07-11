@@ -20,6 +20,8 @@ test('gates create on a non-empty title, then fires onCreate', async () => {
 
   expect(onCreate).toHaveBeenCalledWith('Add a panel', '', 'build', 'main', {
     permissionMode: null,
+    // Build + the default-on plan gate ⇒ the "Plan first" toggle seeds true.
+    planFirst: true,
     model: null,
     effort: null,
     maxTurns: null,
@@ -40,6 +42,7 @@ test('threads an explicit max-turns ceiling through onCreate', async () => {
 
   expect(onCreate).toHaveBeenCalledWith('Bounded run', '', 'build', 'main', {
     permissionMode: null,
+    planFirst: true,
     model: null,
     effort: null,
     maxTurns: 40,

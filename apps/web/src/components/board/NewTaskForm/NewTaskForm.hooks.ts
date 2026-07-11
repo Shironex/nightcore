@@ -45,6 +45,9 @@ export interface NewTaskFormState {
   /** Available branches for the picker (local + remote-tracking). */
   branches: BranchInfo[];
   permissionMode: PermissionMode | null;
+  /** Plan-approval gate (T6, #147): the "Plan first" toggle. Seeded from the kind +
+   *  the global `planGateDefault` (Build defaults on), overridable per task. */
+  planFirst: boolean;
   model: string | null;
   /** The provider the picked model belongs to (B5), stamped so a created task
    *  round-trips its selection's provider. `undefined` ⇒ derive from the model id. */
@@ -69,6 +72,7 @@ export interface NewTaskFormState {
   setBranch: (value: string) => void;
   setBaseBranch: (value: string) => void;
   setPermissionMode: (value: PermissionMode | null) => void;
+  setPlanFirst: (value: boolean) => void;
   setModel: (value: string | null) => void;
   setProviderId: (value: string | undefined) => void;
   setEffort: (value: string | null) => void;
@@ -89,6 +93,7 @@ export interface NewTaskFormState {
 /** State, submit, and keyboard handling for the create-task dialog. */
 export function useNewTaskForm({
   open,
+  planGateDefault,
   onCreate,
   onClose,
 }: NewTaskFormProps): NewTaskFormState {
@@ -100,6 +105,7 @@ export function useNewTaskForm({
   const [baseBranch, setBaseBranch] = useState('');
   const [branches, setBranches] = useState<BranchInfo[]>([]);
   const [permissionMode, setPermissionMode] = useState<PermissionMode | null>(null);
+  const [planFirst, setPlanFirst] = useState(false);
   const [model, setModel] = useState<string | null>(null);
   const [providerId, setProviderId] = useState<string | undefined>(undefined);
   const [effort, setEffort] = useState<string | null>(null);
@@ -146,6 +152,17 @@ export function useNewTaskForm({
     setError(null);
   }, [open]);
 
+  // Plan-approval gate (T6, #147): the "Plan first" toggle follows the kind + the
+  // global default — a Build task defaults ON (when the gate is on), other kinds
+  // default OFF. Recomputed when the dialog (re)opens or the kind changes, so the
+  // sensible default tracks the picked kind; a manual toggle after that is preserved
+  // until the kind changes again. Keyed on `open` too so a reopen re-seeds the
+  // default even when the kind is unchanged.
+  useEffect(() => {
+    if (!open) return;
+    setPlanFirst(kind === 'build' && planGateDefault);
+  }, [open, kind, planGateDefault]);
+
   const canSubmit = title.trim().length > 0 && !busy;
 
   const addFiles = useCallback(
@@ -184,6 +201,9 @@ export function useNewTaskForm({
     try {
       await onCreate(title.trim(), description.trim(), kind, runMode, {
         permissionMode,
+        // T6 (#147): the resolved "Plan first" toggle. The Rust submit path lowers
+        // `true` → plan mode; `false` waives the Build default.
+        planFirst,
         model,
         providerId,
         effort,
@@ -211,6 +231,7 @@ export function useNewTaskForm({
     branch,
     baseBranch,
     permissionMode,
+    planFirst,
     model,
     providerId,
     effort,
@@ -242,6 +263,7 @@ export function useNewTaskForm({
     baseBranch,
     branches,
     permissionMode,
+    planFirst,
     model,
     providerId,
     effort,
@@ -259,6 +281,7 @@ export function useNewTaskForm({
     setBranch,
     setBaseBranch,
     setPermissionMode,
+    setPlanFirst,
     setModel,
     setProviderId,
     setEffort,

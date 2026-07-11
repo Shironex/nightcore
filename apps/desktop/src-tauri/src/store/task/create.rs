@@ -9,6 +9,11 @@
 
 use super::model::{RunMode, Task, TaskKind};
 
+/// The neutral autonomy string that puts a run in plan-before-code mode. The launch
+/// path (`sidecar::resolve_autonomy` → `settings::parse_autonomy`) lowers it to
+/// `AutonomyLevel::Plan`, which the Claude provider maps to the SDK `plan` mode.
+const PLAN_MODE: &str = "plan";
+
 /// The optional create-time overrides for a new task. Each `None` field falls
 /// back to the resolved Settings default (per-project override → global → the
 /// engine's `@nightcore/config` default).
@@ -24,6 +29,11 @@ pub(crate) struct CreateInputs {
     pub(crate) provider_id: Option<String>,
     pub(crate) effort: Option<String>,
     pub(crate) permission_mode: Option<String>,
+    /// T6 (#147): the per-task "Plan first" toggle. `Some(true)` FORCES plan mode
+    /// (any kind), `Some(false)` WAIVES the Build plan-gate default, `None` means
+    /// "no per-task signal" — a non-form create path, or the form leaving the toggle
+    /// at its resolved default. See [`resolve_plan_mode`].
+    pub(crate) plan_first: Option<bool>,
     pub(crate) max_turns: Option<u32>,
     pub(crate) max_budget_usd: Option<f64>,
     /// Worktree branch name chosen in the branch picker (worktree mode). `None` ⇒
@@ -100,7 +110,18 @@ pub(crate) fn build_new_task(
             .effort
             .unwrap_or_else(|| settings.default_effort(pid)),
     );
-    task.permission_mode = inputs.permission_mode;
+    // T6 (#147): the plan-approval gate. A `Build` task with no per-task override
+    // defaults to `plan` mode (agent plans → parks at `waiting_approval` before it
+    // writes code) when the studio-wide `plan_gate_default` is on; the per-task
+    // "Plan first" toggle forces or waives it. `None` ⇒ inherit the resolved Settings
+    // autonomy at launch, exactly as before this feature. `plan_gate_default` is a
+    // global-only stance, so it isn't project-scoped.
+    task.permission_mode = resolve_plan_mode(
+        task.kind,
+        inputs.permission_mode,
+        inputs.plan_first,
+        settings.plan_gate_default(),
+    );
     // SDK-guardrails: an explicit per-task ceiling wins; absent ⇒ stamp the
     // resolved Settings default (per-project override → global), so the Settings
     // "Limits" knob is authoritative for a new task. When Settings has no ceiling
@@ -111,6 +132,39 @@ pub(crate) fn build_new_task(
         .max_budget_usd
         .or_else(|| settings.default_max_budget_usd(pid));
     task
+}
+
+/// Resolve a new task's `permission_mode` under the plan-approval gate (T6, #147).
+///
+/// The plan gate runs a task in `plan` mode — the agent produces a reviewable plan
+/// and parks at `waiting_approval` before writing any code. Precedence:
+///
+///  - `plan_first == Some(true)` — the per-task "Plan first" toggle FORCES the gate:
+///    always `plan`, so ANY kind can be made to plan first.
+///  - `plan_first == Some(false)` — the toggle WAIVES the Build default: fall back to
+///    the explicit picker value (an explicit `plan` pick is still honoured, but the
+///    kind default no longer applies), so a trivial Build task can skip the plan.
+///  - `plan_first == None` — no per-task signal (non-form create paths like
+///    convert/decompose, or the form leaving the toggle at its resolved default): an
+///    explicit picker value wins; otherwise a `Build` task defaults to `plan` iff the
+///    studio-wide `plan_gate_default` is on. Non-Build kinds keep their existing
+///    default (`None` ⇒ inherit) — this is "default-on for **Build**".
+///
+/// `None` means "inherit the resolved Settings autonomy at launch" — the unchanged
+/// pre-T6 behaviour. Pure (no `SettingsStore`), so the resolution is unit-testable.
+fn resolve_plan_mode(
+    kind: TaskKind,
+    explicit: Option<String>,
+    plan_first: Option<bool>,
+    plan_gate_default: bool,
+) -> Option<String> {
+    match plan_first {
+        Some(true) => Some(PLAN_MODE.to_string()),
+        Some(false) => explicit,
+        None => explicit.or_else(|| {
+            (kind == TaskKind::Build && plan_gate_default).then(|| PLAN_MODE.to_string())
+        }),
+    }
 }
 
 #[cfg(test)]
@@ -308,6 +362,149 @@ mod tests {
         assert!(
             task.model.is_none(),
             "an empty resolved default must leave the task model None, not Some(\"\")"
+        );
+    }
+
+    // ── Plan-approval gate (T6, #147) ──────────────────────────────────────────
+
+    #[test]
+    fn resolve_plan_mode_defaults_build_to_plan_only_when_gate_on() {
+        // Default-on: a Build task with no per-task signal plans first iff the gate is on.
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Build, None, None, true).as_deref(),
+            Some("plan"),
+            "Build + gate on + no override ⇒ plan"
+        );
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Build, None, None, false),
+            None,
+            "Build + gate OFF ⇒ inherit (no plan)"
+        );
+    }
+
+    #[test]
+    fn resolve_plan_mode_only_defaults_build_not_other_kinds() {
+        // The default is "default-on for Build" — Research/TDD/Decompose are untouched
+        // even with the gate on and no per-task signal.
+        for kind in [TaskKind::Research, TaskKind::Tdd, TaskKind::Decompose] {
+            assert_eq!(
+                resolve_plan_mode(kind, None, None, true),
+                None,
+                "{kind:?} keeps its default (inherit) even with the gate on"
+            );
+        }
+    }
+
+    #[test]
+    fn resolve_plan_mode_per_task_toggle_forces_or_waives() {
+        // Toggle ON forces a plan on ANY kind, regardless of the gate default…
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Research, None, Some(true), false).as_deref(),
+            Some("plan"),
+            "Plan-first ON forces plan even for a non-Build kind with the gate off"
+        );
+        // …and OFF waives the Build default (a trivial Build task runs straight through).
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Build, None, Some(false), true),
+            None,
+            "Plan-first OFF waives the Build default ⇒ inherit"
+        );
+    }
+
+    #[test]
+    fn resolve_plan_mode_explicit_pick_wins_over_default() {
+        // An explicit picker value (e.g. bypass) is honoured over the Build gate default.
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Build, Some("bypass".into()), None, true).as_deref(),
+            Some("bypass"),
+            "an explicit permission-mode pick wins over the Build gate default"
+        );
+        // Waiving the toggle still honours an explicit plan pick (no contradiction).
+        assert_eq!(
+            resolve_plan_mode(TaskKind::Build, Some("plan".into()), Some(false), true).as_deref(),
+            Some("plan"),
+            "an explicit plan pick survives a waived toggle"
+        );
+    }
+
+    #[test]
+    fn build_new_task_default_on_plan_gate_for_build() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        // Fresh settings ship with the gate ON. A Build task with no override plans first.
+        let build = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Build),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            build.permission_mode.as_deref(),
+            Some("plan"),
+            "a Build task defaults to plan mode when the gate is on"
+        );
+
+        // A non-Build kind is unaffected by the default (inherits).
+        let research = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Research),
+                ..Default::default()
+            },
+        );
+        assert!(
+            research.permission_mode.is_none(),
+            "a Research task is not plan-gated by the Build default"
+        );
+    }
+
+    #[test]
+    fn build_new_task_plan_gate_off_leaves_build_uninherited() {
+        use crate::settings::SettingsStore;
+        let tmp = tempfile::TempDir::new().expect("temp dir");
+        let settings = SettingsStore::load_from(tmp.path().join("config"));
+        settings
+            .update_for_test(serde_json::from_str(r#"{"planGateDefault":false}"#).unwrap())
+            .expect("disable the gate");
+        let build = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Build),
+                ..Default::default()
+            },
+        );
+        assert!(
+            build.permission_mode.is_none(),
+            "with the gate off, a Build task inherits (no plan) unless per-task forced"
+        );
+
+        // …but a per-task toggle can still force the plan with the gate off.
+        let forced = build_new_task(
+            &settings,
+            None,
+            "t".into(),
+            String::new(),
+            CreateInputs {
+                kind: Some(TaskKind::Build),
+                plan_first: Some(true),
+                ..Default::default()
+            },
+        );
+        assert_eq!(
+            forced.permission_mode.as_deref(),
+            Some("plan"),
+            "the per-task toggle forces a plan even with the gate off"
         );
     }
 }

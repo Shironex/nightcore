@@ -26,6 +26,10 @@ export async function listTasks(): Promise<Task[]> {
  *  default to `null` = inherit the resolved project/global default. */
 export interface CreateTaskOptions {
   permissionMode?: PermissionMode | null;
+  /** Plan-approval gate (T6, #147): the per-task "Plan first" toggle. `true` FORCES
+   *  plan mode, `false` WAIVES the Build default, `undefined`/`null` = no per-task
+   *  signal (the Rust submit path applies the Build + `planGateDefault` default). */
+  planFirst?: boolean | null;
   model?: string | null;
   /** The provider the picked model belongs to (B5), so a created task round-trips
    *  its selection's provider. `undefined` ⇒ omit (derive from the model id). */
@@ -62,6 +66,7 @@ export async function createTask(
     kind,
     runMode,
     permissionMode: options.permissionMode ?? null,
+    planFirst: options.planFirst ?? null,
     model: options.model ?? null,
     providerId: options.providerId ?? null,
     effort: options.effort ?? null,

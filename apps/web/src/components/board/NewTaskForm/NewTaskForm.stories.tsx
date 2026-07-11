@@ -10,6 +10,8 @@ const meta = {
   parameters: { layout: 'fullscreen' },
   args: {
     open: true,
+    // T6 (#147): the studio default is ON, so a fresh Build task seeds "Plan first".
+    planGateDefault: true,
     onCreate: fn(async () => {}),
     onClose: fn(),
   },
@@ -46,7 +48,7 @@ export const CreatesTask: Story = {
         'Build the settings surface.',
         'build',
         'main',
-        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
+        { permissionMode: null, planFirst: true, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
       ),
     );
   },
@@ -63,6 +65,8 @@ export const CreatesResearchTask: Story = {
     await waitFor(() =>
       expect(args.onCreate).toHaveBeenCalledWith('Survey caching options', '', 'research', 'main', {
         permissionMode: null,
+        // Research is not a Build task, so the plan-first default is OFF.
+        planFirst: false,
         model: null,
         effort: null,
         maxTurns: null,
@@ -89,7 +93,7 @@ export const CreatesWorktreeTask: Story = {
         '',
         'build',
         'worktree',
-        { permissionMode: null, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
+        { permissionMode: null, planFirst: true, model: null, effort: null, maxTurns: null, maxBudgetUsd: null, branch: null, baseBranch: null, attachments: [] },
       ),
     );
   },
@@ -113,6 +117,7 @@ export const CreatesWithOverrides: Story = {
     await waitFor(() =>
       expect(args.onCreate).toHaveBeenCalledWith('Apply a migration', '', 'build', 'main', {
         permissionMode: 'plan',
+        planFirst: true,
         model: 'claude-sonnet-4-6',
         providerId: 'claude',
         effort: 'high',
@@ -139,10 +144,40 @@ export const CreatesWithLimits: Story = {
     await waitFor(() =>
       expect(args.onCreate).toHaveBeenCalledWith('Bounded autonomous run', '', 'build', 'main', {
         permissionMode: null,
+        planFirst: true,
         model: null,
         effort: null,
         maxTurns: 40,
         maxBudgetUsd: 2.5,
+        branch: null,
+        baseBranch: null,
+        attachments: [],
+      }),
+    );
+  },
+};
+
+/** Play test: turning "Plan first" OFF for a Build task waives the plan gate — the
+ *  toggle threads `planFirst: false` so the Rust submit path skips the plan. */
+export const CreatesWithoutPlanGate: Story = {
+  play: async ({ args }) => {
+    const canvas = portaledSurface();
+    await userEvent.type(canvas.getByLabelText('Title'), 'A trivial tweak');
+    await userEvent.click(
+      canvas.getByRole('switch', {
+        name: 'Plan first — review a plan before the agent writes code',
+      }),
+    );
+    await userEvent.click(canvas.getByRole('button', { name: /create task/i }));
+
+    await waitFor(() =>
+      expect(args.onCreate).toHaveBeenCalledWith('A trivial tweak', '', 'build', 'main', {
+        permissionMode: null,
+        planFirst: false,
+        model: null,
+        effort: null,
+        maxTurns: null,
+        maxBudgetUsd: null,
         branch: null,
         baseBranch: null,
         attachments: [],
