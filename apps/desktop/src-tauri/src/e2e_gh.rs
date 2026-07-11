@@ -111,6 +111,39 @@ fn e2e_gh_review_post_rejects_a_bad_line_anchor() {
     );
 }
 
+/// Target 6 — review-post SURVIVABILITY (roadmap T10): the SAME out-of-diff anchor that
+/// Target 1 proves 422s the raw payload, run through `post_review_survivable_with`, now
+/// LANDS. The production seam fetches the PR's real diff, finds the bad `(path, line)`
+/// isn't anchorable, DEMOTES it into the review body, and posts one atomic COMMENT review
+/// (allowed on an own PR) — so the review survives instead of the whole post failing. Only
+/// real gh + a real reviews endpoint can prove the demotion actually clears GitHub's
+/// validation; a fake accepts any anchor and can't model the 422 this sidesteps.
+#[test]
+#[ignore = "needs a scratch GitHub repo + GH_TOKEN + PR number; posts a real review — run via `bun run dogfood:gh`"]
+fn e2e_gh_review_post_survives_a_bad_line_anchor() {
+    let (Some(dir), Some(pr)) = (scratch_dir(), env_number("NIGHTCORE_E2E_GH_PR")) else {
+        return;
+    };
+    // The exact anchor Target 1 shows the reviews endpoint rejects outright.
+    let comments = vec![crate::workflow::pr_review_post::InlineComment {
+        path: "README.md".to_string(),
+        line: 999_999,
+        body: "nightcore e2e ring-1: anchored to a non-existent line (must be demoted, not 422)"
+            .to_string(),
+    }];
+    crate::workflow::pr_review_post::post_review_survivable_with(
+        &dir,
+        "gh",
+        pr,
+        "comment",
+        "nightcore e2e ring-1 survivability probe (should POST, not 422)",
+        &comments,
+        None,
+        GH_DEADLINE,
+    )
+    .expect("the survivable path must demote the bad anchor and land the review (not 422)");
+}
+
 /// Target 2 — `gh api graphql -F owner={owner} -F name={repo} …` placeholder
 /// expansion. `workflow::issue_triage::list_open_issues` issues exactly this graphql
 /// call; only real gh substitutes `{owner}`/`{repo}` from the checkout's remote and
