@@ -4,7 +4,7 @@ import { render } from 'vitest-browser-react';
 
 import * as stories from './NewTabPicker.stories';
 
-const { Default, Empty, CapReached, Busy, Confined, NonMac, ConfinedRefused } =
+const { Default, Empty, CapReached, Busy, Confined, NonMac, ConfinedRefused, WithCreateWorktree } =
   composeStories(stories);
 
 test('lists the repo root and worktrees as pickable targets', async () => {
@@ -33,6 +33,20 @@ test('the Browse entry fires onBrowse', async () => {
   const screen = render(<Default onBrowse={onBrowse} />);
   await screen.getByRole('button', { name: /Browse/ }).click();
   expect(onBrowse).toHaveBeenCalled();
+});
+
+test('hides the "Create new worktree" entry when no handler is given (no project)', async () => {
+  const screen = render(<Default />);
+  await expect
+    .element(screen.getByRole('button', { name: /Create new worktree/ }))
+    .not.toBeInTheDocument();
+});
+
+test('the "Create new worktree" entry fires its handler when provided', async () => {
+  const onCreateWorktree = vi.fn();
+  const screen = render(<WithCreateWorktree onCreateWorktree={onCreateWorktree} />);
+  await screen.getByRole('button', { name: /Create new worktree/ }).click();
+  expect(onCreateWorktree).toHaveBeenCalled();
 });
 
 test('surfaces the session-cap error inline without closing', async () => {

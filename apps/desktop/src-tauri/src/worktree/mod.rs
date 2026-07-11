@@ -55,11 +55,18 @@ pub use branch::{
 };
 pub use commit::{commit, commit_staged, has_staged_changes, stage_all, staged_diff};
 pub use diff::{base_diff, worktree_diff, WorktreeDiff};
-pub use lifecycle::{allocate, allocate_branch, reconcile, remove};
+pub use lifecycle::{
+    allocate, allocate_branch, allocate_terminal, reconcile, remove, remove_terminal,
+};
 pub use merge::{merge_branch, merge_preview, MergeOutcome, MergePreview};
-pub use path::{branch_name, is_under, worktree_path, worktrees_base};
+pub use path::{
+    branch_name, is_under, slugify, terminal_branch_name, worktree_path, worktrees_base,
+};
 pub use provision::provision_deps;
-pub use status::{is_worktree_clean, list_worktree_statuses, WorktreeStatus};
+pub use status::{
+    is_worktree_clean, list_terminal_worktree_statuses, list_worktree_statuses,
+    terminal_worktree_status, WorktreeStatus,
+};
 
 // Facade names below are consumed only by cfg(test) code today (the module tests
 // and the `contracts::ts_bindings` exporter reach them as `crate::worktree::X`),
@@ -70,6 +77,10 @@ pub use commit::commit_in;
 pub use diff::{DiffFileStat, DiffStatus, WorktreeDiffFile};
 #[allow(unused_imports)]
 pub use lifecycle::list_worktree_task_ids;
+// Reached only via `super::lifecycle::` (status.rs) + the module tests (`super::*`); no
+// crate-facade caller, so the re-export would otherwise read as unused.
+#[allow(unused_imports)]
+pub use lifecycle::list_terminal_worktree_slugs;
 #[allow(unused_imports)]
 pub use merge::MergePreviewStatus;
 #[allow(unused_imports)]

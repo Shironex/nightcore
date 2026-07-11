@@ -174,6 +174,89 @@ fn discard_worktree_blocking(app: &AppHandle, id: &str) -> Result<(), String> {
     Ok(())
 }
 
+// ─── Terminal-created worktrees (spec PR 5) ─────────────────────────────────────
+// A SEPARATE surface from the task worktrees above: the terminal new-tab picker's
+// "Create new worktree…" path creates one, the Worktrees manager lists + discards them,
+// and the cleanup interlock (web-side, keyed on `terminalSessionsInDir(path)`) covers
+// them for free. They live under `.nightcore/worktrees-term/<slug>` with a `term/<slug>`
+// branch — outside the `nc/<taskId>` namespace the board monitor + startup reconcile key
+// on — so relaunch never garbage-collects them (spec §10 flag 3). USER-only, like every
+// terminal seam.
+
+/// Create a user-driven terminal worktree from the new-tab picker (spec PR 5a). Slugs the
+/// display `name` SERVER-SIDE (the webview value is never trusted), then allocates a
+/// worktree under the terminal base — a new `term/<slug>` branch off `base` when
+/// `create_branch`, else a detached checkout at `base`. Returns the new worktree's status
+/// (the `WorktreeInfo` the picker spawns a terminal into + the manager lists). Async +
+/// `spawn_blocking` (git off the UI thread).
+#[tauri::command]
+pub async fn terminal_create_worktree(
+    app: AppHandle,
+    name: String,
+    create_branch: bool,
+    base: Option<String>,
+) -> Result<worktree::WorktreeStatus, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = active_project_path(&app)?;
+        let slug = worktree::slugify(&name)
+            .ok_or_else(|| "enter a name with at least one letter or number".to_string())?;
+        // Default the base to the project's base branch when the picker left it blank.
+        let base_ref = base
+            .filter(|b| !b.trim().is_empty())
+            .unwrap_or_else(|| worktree::base_branch(&project));
+        let dir = worktree::allocate_terminal(&project, &slug, create_branch, &base_ref)?;
+        // Report status diffed against the project's base branch (matching the manager
+        // list), regardless of the chosen create base.
+        Ok(worktree::terminal_worktree_status(
+            &dir,
+            &slug,
+            &worktree::base_branch(&project),
+        ))
+    })
+    .await
+    .map_err(|e| format!("terminal create worktree failed to run: {e}"))?
+}
+
+/// The active project's user-created terminal worktrees (spec PR 5) — the "Terminal
+/// worktrees" group in the Worktrees manager. Read-only git status; tolerant. Empty when
+/// there is no active project. Async + `spawn_blocking`.
+#[tauri::command]
+pub async fn list_terminal_worktrees(
+    app: AppHandle,
+) -> Result<Vec<worktree::WorktreeStatus>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let Some(project) = app.state::<ProjectStore>().active() else {
+            return Ok(Vec::new());
+        };
+        Ok(worktree::list_terminal_worktree_statuses(
+            &std::path::PathBuf::from(&project.path),
+        ))
+    })
+    .await
+    .map_err(|e| format!("list terminal worktrees failed to run: {e}"))?
+}
+
+/// Discard a user-created terminal worktree by `slug` and delete its `term/<slug>` branch
+/// (spec PR 5c) — the terminal counterpart of [`discard_worktree`]. The slug is
+/// re-validated + the removal is `is_under`-guarded to the terminal base SERVER-SIDE, so a
+/// webview-supplied value can never escape it. The web closes any live terminal in the
+/// worktree first (the cleanup interlock), mirroring the task discard order. Async +
+/// `spawn_blocking`; rejects on a real failure so the caller can surface it.
+#[tauri::command]
+pub async fn discard_terminal_worktree(app: AppHandle, slug: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let project = active_project_path(&app)?;
+        // Remove the worktree first (frees its checked-out branch), then delete the
+        // branch — the load-bearing order (deleting a checked-out branch fails). Branch
+        // delete is best-effort: a `--detach` (no-branch) worktree has no `term/<slug>`.
+        worktree::remove_terminal(&project, &slug)?;
+        let _ = worktree::delete_branch_named(&project, &worktree::terminal_branch_name(&slug));
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("discard terminal worktree failed to run: {e}"))?
+}
+
 /// Resolve a task's worktree dir from the store and confirm it exists AND lives
 /// under the project's `.nightcore/worktrees/` base — the shared guard for the
 /// reveal / open-in-editor conveniences. The path is computed server-side from the

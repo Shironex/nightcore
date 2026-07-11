@@ -22,7 +22,6 @@ import {
   reconcileTerminalLinks,
 } from '@/lib/terminal-links';
 
-import type { TerminalTarget } from '../NewTabPicker';
 import { subscribePasteRejected } from '../terminal-keymap';
 import { useTerminalLayout } from '../terminal-layout';
 import { setTerminalPlatform } from '../terminal-platform';
@@ -39,42 +38,15 @@ import {
   atSessionCap,
   DEFAULT_TERMINAL_COLS,
   DEFAULT_TERMINAL_ROWS,
-  displayPath,
   resolveFontSize,
   resolveScrollback,
   supportsConfinedTerminal,
 } from '../terminal-shared';
 import { useTerminalShortcuts } from '../terminal-shortcuts';
 import { useTerminalTasks } from '../terminal-tasks';
+import { buildTargets, spawnErrorText } from '../terminal-view-helpers';
+import { useCreateWorktree, useTerminalOpenRequest } from '../terminal-worktree-open';
 import type { UseTerminalViewInput } from './TerminalView.types';
-
-/** A Rust command rejection arrives as a string; normalize any thrown value to a
- *  user-facing line for the picker's inline error. */
-function spawnErrorText(err: unknown): string {
-  if (typeof err === 'string') return err;
-  if (err instanceof Error) return err.message;
-  return 'Could not open the terminal.';
-}
-
-/** Build the picker's target list: the repo root first, then each live worktree. */
-function buildTargets(input: UseTerminalViewInput): TerminalTarget[] {
-  const targets: TerminalTarget[] = [];
-  if (input.projectPath !== null) {
-    targets.push({
-      kind: 'repo',
-      label: input.projectName ?? 'Repo root',
-      // `path` stays canonical — it is the spawn cwd (re-canonicalized server-side)
-      // and the fresh-shell restore-membership key. Only `detail` is prettified for
-      // display, so a Windows verbatim path (`\\?\X:\dev\nightcore`) shows cleanly.
-      path: input.projectPath,
-      detail: displayPath(input.projectPath),
-    });
-  }
-  for (const wt of input.worktrees) {
-    targets.push({ kind: 'worktree', label: wt.branch, path: wt.path });
-  }
-  return targets;
-}
 
 export function useTerminalView(input: UseTerminalViewInput) {
   const toast = useToast();
@@ -104,7 +76,10 @@ export function useTerminalView(input: UseTerminalViewInput) {
   // localStorage blob and the session-manager visible-set / ⌘⇧E zoom wiring.
   const layout = useTerminalLayout({ sessions, activeId, loaded });
 
-  const targets = useMemo(() => buildTargets(input), [input]);
+  const targets = useMemo(
+    () => buildTargets(input.projectPath, input.projectName, input.worktrees),
+    [input.projectPath, input.projectName, input.worktrees],
+  );
   const confinedAvailable = supportsConfinedTerminal(hostOs);
 
   // On mount, reconcile the manager cache + link store with server truth, show the
@@ -343,6 +318,14 @@ export function useTerminalView(input: UseTerminalViewInput) {
     consumeRestored,
   });
 
+  // Create-new-worktree flow (spec PR 5a): the picker's "Create new worktree…" dialog +
+  // its create-then-spawn. Carries the picker's current confined choice into the shell.
+  const createWorktree = useCreateWorktree({ spawnInto, confined });
+
+  // Open-terminal-here (spec PR 5b): consume a pending request from the Worktrees view
+  // once the initial load settles, spawning a shell in that cwd (sticky-default confined).
+  useTerminalOpenRequest({ loaded, spawnInto, confined: confinedDefault });
+
   const canAddTab = !atSessionCap(sessions);
 
   // Cockpit shortcuts (spec PR 3a): ⌘T opens the picker, ⌘W closes the active tab
@@ -381,6 +364,15 @@ export function useTerminalView(input: UseTerminalViewInput) {
       closePicker,
       pickTarget,
       onBrowse: openBrowse,
+      // The "Create new worktree…" entry only shows inside a project (worktrees need a
+      // repo); undefined otherwise so the picker hides it. Closes the picker first.
+      onCreateWorktree:
+        input.projectPath !== null
+          ? () => {
+              closePicker();
+              createWorktree.openCreate();
+            }
+          : undefined,
       onConfinedChange,
     },
     browse: {
@@ -395,5 +387,6 @@ export function useTerminalView(input: UseTerminalViewInput) {
       startFresh,
     },
     tasks,
+    createWorktree,
   };
 }

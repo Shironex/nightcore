@@ -31,6 +31,23 @@ export async function refreshWorktrees(): Promise<WorktreeInfo[]> {
   return tauriInvoke<WorktreeInfo[]>('refresh_worktrees', {}, []);
 }
 
+/** The active project's user-created *terminal* worktrees (spec PR 5) — the "Terminal
+ *  worktrees" group in the Worktrees manager. These live under the separate `term/`
+ *  namespace (never garbage-collected by the task reconcile sweep) and carry no task ids.
+ *  Read-only git status; returns `[]` outside Tauri (browser preview). */
+export async function listTerminalWorktrees(): Promise<WorktreeInfo[]> {
+  return tauriInvoke<WorktreeInfo[]>('list_terminal_worktrees', {}, []);
+}
+
+/** Discard a user-created terminal worktree by `slug` and delete its `term/<slug>` branch
+ *  (spec PR 5c). The slug is re-validated + `is_under`-guarded to the terminal base
+ *  server-side. Rejects on a real failure (uses raw `invoke`, no silent fallback) so the
+ *  discard dialog can surface it; the caller closes any live terminal in the worktree
+ *  first (the cleanup interlock). */
+export async function discardTerminalWorktree(slug: string): Promise<void> {
+  await invoke('discard_terminal_worktree', { slug });
+}
+
 /** The active project's branches (local + remote-tracking) for the branch picker:
  *  name, remote flag, current flag, upstream, ahead/behind. Returns `[]` outside
  *  Tauri (browser preview) so the picker degrades to free-form entry. */
