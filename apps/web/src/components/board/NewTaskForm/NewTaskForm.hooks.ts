@@ -25,12 +25,14 @@ function parsePositiveInt(raw: string): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
-/** Parse a non-negative float ceiling from free text; `null` for blank/invalid. */
-function parseNonNegativeFloat(raw: string): number | null {
+/** Parse a positive float ceiling from free text; `null` for blank/invalid input
+ *  (⇒ inherit the resolved default). `0` is invalid — the wire contract is
+ *  `maxBudgetUsd: positive().optional()`, and a $0 ceiling would be unrunnable. */
+function parsePositiveFloat(raw: string): number | null {
   const trimmed = raw.trim();
   if (trimmed.length === 0) return null;
   const n = Number(trimmed);
-  return Number.isFinite(n) && n >= 0 ? n : null;
+  return Number.isFinite(n) && n > 0 ? n : null;
 }
 
 /**
@@ -208,7 +210,12 @@ export function useNewTaskForm({
         files,
         MAX_IMAGES_PER_TASK - attachments.length,
       );
-      if (accepted.length > 0) setAttachments((prev) => [...prev, ...accepted]);
+      // Clamp inside the functional update: capacity is derived from the
+      // closure-captured `attachments.length`, but two adds in one render (drop +
+      // paste) would each pass their own budget check and could overshoot the cap.
+      // Re-clamping against the live `prev` keeps the total at `MAX_IMAGES_PER_TASK`.
+      if (accepted.length > 0)
+        setAttachments((prev) => [...prev, ...accepted].slice(0, MAX_IMAGES_PER_TASK));
       if (errors.length > 0) setAttachError(errors.join(' '));
     },
     [attachments],
@@ -247,7 +254,7 @@ export function useNewTaskForm({
         effort,
         // Empty/blank/invalid input ⇒ inherit (omit the override → null at the seam).
         maxTurns: parsePositiveInt(maxTurns),
-        maxBudgetUsd: parseNonNegativeFloat(maxBudget),
+        maxBudgetUsd: parsePositiveFloat(maxBudget),
         // Branch + base only apply in worktree mode; blank ⇒ inherit the defaults.
         branch: runMode === 'worktree' ? branch.trim() || null : null,
         baseBranch: runMode === 'worktree' ? baseBranch.trim() || null : null,
