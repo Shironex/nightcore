@@ -82,6 +82,17 @@ export const EMPTY_REVIEW_STREAM: ReviewStream = {
   failureReason: null,
 };
 
+/** The lenses whose pass ERRORED in this run (`LensProgress === 'error'`), in the
+ *  requested order. A run with any errored lens is DEGRADED: some lens's findings
+ *  are missing, so the review is incomplete and must not read as a clean full
+ *  review. Live-derived from the fold's per-lens state — a reloaded persisted run
+ *  carries no per-lens error state (the store keeps only findings + cost), so this
+ *  is empty after a reload (the review-run store does not yet persist which lenses
+ *  errored). */
+export function degradedLenses(stream: ReviewStream): ReviewLens[] {
+  return stream.requestedLenses.filter((lens) => stream.lensState[lens] === 'error');
+}
+
 /** Map a live wire `ReviewFinding` (contract) into the view shape — it is always
  *  `open` and unlinked when it streams in (lifecycle is applied on persist). */
 export function wireToFinding(f: ReviewFinding): ReviewFindingView {

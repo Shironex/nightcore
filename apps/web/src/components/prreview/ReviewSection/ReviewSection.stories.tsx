@@ -47,6 +47,32 @@ function completedStream(): ReviewStream {
     requestedLenses: LENSES,
     lensState: { security: 'done', logic: 'done' },
     findings: [finding(), finding({ id: 'f2', severity: 'medium', line: null })],
+    // Realistic usage so a healthy run never trips the $0 usage-limit banner.
+    costUsd: 0.42,
+    usage: { inputTokens: 12_000, outputTokens: 3_000 },
+  };
+}
+
+/** A completed run where the security lens errored — the degraded signal: the
+ *  logic lens finished, security did not, so the review is incomplete. */
+function degradedStream(): ReviewStream {
+  return {
+    ...completedStream(),
+    runId: 'run-3',
+    lensState: { security: 'error', logic: 'done' },
+    findings: [finding({ id: 'f2', lens: 'logic', severity: 'medium', line: null })],
+  };
+}
+
+/** A completed run that spent $0 with zero input tokens — the usage-limit
+ *  signature (every lens session refused before any billable work). */
+function usageLimitStream(): ReviewStream {
+  return {
+    ...completedStream(),
+    runId: 'run-4',
+    findings: [],
+    costUsd: 0,
+    usage: { inputTokens: 0, outputTokens: 0 },
   };
 }
 
@@ -280,11 +306,28 @@ export const CompletedJustPosted: Story = {
   },
 };
 
-/** A completed run that surfaced nothing gets the celebratory clean empty state. */
+/** A completed run that surfaced nothing gets the celebratory clean empty state.
+ *  Note it still spent tokens — so it is NOT the usage-limit case (no banner). */
 export const CompletedClean: Story = {
   args: {
     mode: 'results',
     stream: { ...completedStream(), findings: [] },
+    toolbar: { ...TOOLBAR, openCount: 0, selectedCount: 0, canPost: false, addressCount: 0, canAddress: false },
+  },
+};
+
+/** A DEGRADED run: one lens errored, so the review is incomplete. The warning
+ *  chip must appear so it never reads as a clean, full review (T10). */
+export const CompletedDegraded: Story = {
+  args: { mode: 'results', stream: degradedStream() },
+};
+
+/** The $0 / zero-token usage-limit signature: a "completed" run that spent
+ *  nothing. The banner must appear so empty findings aren't misread as clean (T10). */
+export const CompletedUsageLimit: Story = {
+  args: {
+    mode: 'results',
+    stream: usageLimitStream(),
     toolbar: { ...TOOLBAR, openCount: 0, selectedCount: 0, canPost: false, addressCount: 0, canAddress: false },
   },
 };
