@@ -299,6 +299,9 @@ pub fn run() {
             sidecar::preview_issue_comment,
             sidecar::post_issue_validation_comment,
             sidecar::convert_issue_validation_to_task,
+            // GitHub two-way sync (#97): project a task's lifecycle onto its linked issue
+            // (labels + terminal comments). Async + spawn_blocking (it shells to `gh`).
+            sidecar::sync_issue_status,
             // Issue-map export (wayfinder #112): the human-gated full preview + the
             // GitHub write. Both async + spawn_blocking (they shell to `gh`).
             sidecar::preview_issue_map,
