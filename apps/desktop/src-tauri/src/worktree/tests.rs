@@ -69,6 +69,162 @@ fn allocate_remove_and_reconcile_round_trip() {
 }
 
 #[test]
+fn allocate_terminal_creates_under_a_separate_base_and_survives_reconcile() {
+    // Spec PR 5a: a terminal worktree lives under `.nightcore/worktrees-term/<slug>` with
+    // a `term/<slug>` branch — OUTSIDE the `nc/<taskId>` namespace the reconcile sweep
+    // keys on — so relaunch (reconcile with an empty live-task set) never deletes it.
+    let Some((_tmp, repo)) = temp_repo() else {
+        return; // git unavailable; pure-logic tests still cover slug/path
+    };
+    let base = base_branch(&repo);
+
+    let dir = allocate_terminal(&repo, "my-shell", true, &base).expect("allocate_terminal");
+    assert!(dir.is_dir(), "terminal worktree dir exists");
+    assert!(dir.join("README.md").exists(), "it has the repo content");
+    // It lives under the SEPARATE terminal base, not the task base.
+    assert!(super::path::is_under(
+        &super::path::terminal_worktrees_base(&repo),
+        &dir
+    ));
+    assert_eq!(
+        list_terminal_worktree_slugs(&repo),
+        vec!["my-shell".to_string()]
+    );
+    // It is checked out on the `term/<slug>` branch.
+    let head = git_stdout(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "term/my-shell");
+    // It must NOT appear as a task worktree (the board monitor reads the task base).
+    assert!(
+        list_worktree_task_ids(&repo).is_empty(),
+        "a terminal worktree is not a task worktree"
+    );
+
+    // Re-allocating the same slug is idempotent (reuses the dir).
+    let again = allocate_terminal(&repo, "my-shell", true, &base).expect("re-allocate");
+    assert_eq!(again, dir);
+
+    // THE RECONCILE TRAP: a startup reconcile with NO live tasks must not touch the
+    // terminal worktree (it is outside the swept task base).
+    let pruned = reconcile(&repo, &[]);
+    assert!(
+        pruned.is_empty(),
+        "reconcile prunes only task worktrees, got {pruned:?}"
+    );
+    assert_eq!(
+        list_terminal_worktree_slugs(&repo),
+        vec!["my-shell".to_string()],
+        "the terminal worktree survives reconcile"
+    );
+    assert!(
+        dir.is_dir(),
+        "the terminal worktree dir still exists after reconcile"
+    );
+
+    // Its status reports the `term/` branch and NO task ids.
+    let statuses = list_terminal_worktree_statuses(&repo);
+    assert_eq!(statuses.len(), 1);
+    assert_eq!(statuses[0].branch, "term/my-shell");
+    assert!(statuses[0].task_ids.is_empty(), "no task masquerade");
+}
+
+#[test]
+fn allocate_terminal_without_branch_detaches_at_base() {
+    // Spec PR 5a: the "create branch" toggle OFF path — a scratch worktree at base on a
+    // detached HEAD, with no new `term/<slug>` branch created.
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    let base = base_branch(&repo);
+    let dir =
+        allocate_terminal(&repo, "scratch", false, &base).expect("allocate_terminal detached");
+    assert!(dir.is_dir());
+    let head = git_stdout(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "HEAD", "a no-branch terminal worktree is detached");
+    // No `term/scratch` branch was created.
+    assert!(
+        !run_in(&repo, &["rev-parse", "--verify", "--quiet", "term/scratch"]),
+        "the detached path creates no term/ branch"
+    );
+    // Its status falls back to the `term/<slug>` label (so the tab reads sensibly).
+    let statuses = list_terminal_worktree_statuses(&repo);
+    assert_eq!(statuses[0].branch, "term/scratch");
+}
+
+#[test]
+fn allocate_terminal_off_a_custom_base() {
+    // Spec PR 5a: create off a custom (non-default) base branch.
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    // Cut a second branch with its own commit to use as a custom base.
+    assert!(run_in(&repo, &["checkout", "-q", "-b", "dev"]));
+    std::fs::write(repo.join("dev.txt"), "on dev").expect("write");
+    assert!(run_in(&repo, &["add", "."]));
+    assert!(run_in(&repo, &["commit", "-q", "-m", "dev commit"]));
+    let base = base_branch(&repo); // back on the checked-out branch is fine; base ref is explicit
+    let _ = base;
+
+    let dir = allocate_terminal(&repo, "off-dev", true, "dev").expect("allocate off dev");
+    // The worktree carries the custom base's content.
+    assert!(
+        dir.join("dev.txt").exists(),
+        "the term worktree branched off dev"
+    );
+    let head = git_stdout(&dir, &["rev-parse", "--abbrev-ref", "HEAD"]);
+    assert_eq!(head, "term/off-dev");
+}
+
+#[test]
+fn remove_terminal_removes_the_worktree_and_frees_its_branch() {
+    // Spec PR 5c: the discard path removes the terminal worktree + its branch deletes.
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    let base = base_branch(&repo);
+    allocate_terminal(&repo, "gone", true, &base).expect("allocate_terminal");
+    assert!(run_in(
+        &repo,
+        &["rev-parse", "--verify", "--quiet", "term/gone"]
+    ));
+
+    remove_terminal(&repo, "gone").expect("remove_terminal");
+    delete_branch_named(&repo, &terminal_branch_name("gone")).expect("delete term branch");
+
+    assert!(
+        list_terminal_worktree_slugs(&repo).is_empty(),
+        "no orphaned terminal worktree"
+    );
+    assert!(
+        !run_in(&repo, &["rev-parse", "--verify", "--quiet", "term/gone"]),
+        "no orphaned term/ branch"
+    );
+    // Idempotent on a second remove.
+    remove_terminal(&repo, "gone").expect("remove_terminal is idempotent");
+}
+
+#[test]
+fn terminal_worktree_ops_reject_a_traversal_slug_before_touching_git() {
+    // Defence in depth: a webview-supplied slug with `..`/`/` is refused up front, so it
+    // can never escape the terminal worktrees base (the `is_under` guard also catches it).
+    let Some((_tmp, repo)) = temp_repo() else {
+        return;
+    };
+    let base = base_branch(&repo);
+    for bad in ["../escape", "a/b", "a.b", ""] {
+        assert!(
+            allocate_terminal(&repo, bad, true, &base).is_err(),
+            "allocate_terminal must reject slug {bad:?}"
+        );
+        assert!(
+            remove_terminal(&repo, bad).is_err(),
+            "remove_terminal must reject slug {bad:?}"
+        );
+    }
+    // Nothing was allocated under the terminal base.
+    assert!(list_terminal_worktree_slugs(&repo).is_empty());
+}
+
+#[test]
 fn clean_then_dirty_worktree_detection() {
     let Some((_tmp, repo)) = temp_repo() else {
         return;

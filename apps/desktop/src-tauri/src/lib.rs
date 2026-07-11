@@ -362,6 +362,9 @@ pub fn run() {
             commands::worktree::discard_worktree,
             commands::worktree::reveal_worktree,
             commands::worktree::open_in_editor,
+            commands::worktree::terminal_create_worktree,
+            commands::worktree::list_terminal_worktrees,
+            commands::worktree::discard_terminal_worktree,
             commands::settings::list_editors,
             // The integrated USER terminal (PTY). All async (a sync command would
             // freeze the WKWebView); output streams over a per-session binary
