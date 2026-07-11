@@ -25,6 +25,7 @@ mod apply;
 mod commands;
 mod convert;
 mod events;
+mod lint_wiring;
 
 // Module facade: preserve the historical `crate::sidecar::harness::*` paths after the
 // god-file split so call sites elsewhere keep resolving unchanged — `sidecar/mod.rs`'s

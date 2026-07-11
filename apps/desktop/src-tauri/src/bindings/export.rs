@@ -23,6 +23,9 @@ use ts_rs::TS;
 /// codegen fails the test rather than silently skipping a type.
 fn export_all_bindings() {
     use crate::analysis::injection_scan::InjectionFlag;
+    use crate::commands::checks::{
+        ArmedCheck, ArmedCheckOutcome, ArmedChecksLastRun, ArmedChecksState,
+    };
     use crate::gauntlet::{GauntletResult, GauntletStep};
     use crate::infra::browse::{DirectoryEntry, DirectoryListing};
     use crate::infra::editor::DetectedEditor;
@@ -33,7 +36,9 @@ fn export_all_bindings() {
         SettingsOverride, SettingsPatch,
     };
     use crate::sidecar::{ProviderConfigSnapshotView, SessionInfoView, SessionMessageView};
-    use crate::store::harness_manifest::{HarnessPolicyFile, HarnessPolicyPatch, PolicyDiffBudget};
+    use crate::store::harness_manifest::{
+        ArmedCheckFile, HarnessPolicyFile, HarnessPolicyPatch, PolicyDiffBudget,
+    };
     use crate::store::insight::{FindingLocation, InsightRun, InsightUsage, StoredFinding};
     use crate::store::pr_review::{PrReviewRun, StoredReviewFinding};
     use crate::store::scorecard::{ScorecardEvidence, ScorecardRun, StoredReading};
@@ -151,6 +156,13 @@ fn export_all_bindings() {
         HarnessPolicyFile,
         HarnessPolicyPatch,
         PolicyDiffBudget,
+        // Checks Manager (Enforce, T7): the armed-check manifest descriptor + the
+        // list view (checks with folded last results + the run-level summary).
+        ArmedCheckFile,
+        ArmedCheck,
+        ArmedCheckOutcome,
+        ArmedChecksLastRun,
+        ArmedChecksState,
         InjectionFlag,
         // PR arc (phase 1): the capability probe + the editable draft shape.
         PrSupport,
@@ -289,6 +301,11 @@ mod tests {
             "HarnessPolicyFile.ts",
             "HarnessPolicyPatch.ts",
             "PolicyDiffBudget.ts",
+            "ArmedCheckFile.ts",
+            "ArmedCheck.ts",
+            "ArmedCheckOutcome.ts",
+            "ArmedChecksLastRun.ts",
+            "ArmedChecksState.ts",
             "InjectionFlag.ts",
             "PrSupport.ts",
             "PrDraft.ts",

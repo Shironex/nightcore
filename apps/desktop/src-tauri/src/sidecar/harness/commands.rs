@@ -27,24 +27,15 @@ use crate::store::harness::{
 
 use super::apply::{safe_join, write_create, write_merge_manifest, write_merge_section};
 
-/// The check kinds the Structure-Lock gauntlet knows how to run (kept in lockstep with
-/// `workflow::gauntlet_project::HarnessCheckKind`). Arming is restricted to these so a
-/// stray kind can't land an entry the gauntlet will only warn-and-skip. Beyond the three
-/// original gauntlet kinds, the rest are the hardening-catalog producers: `lockfile-lint`
+/// The check kinds the Structure-Lock gauntlet knows how to run — the single source
+/// of truth lives beside the runner (`workflow::gauntlet_project::ARMABLE_CHECK_KINDS`,
+/// kept in lockstep with its `HarnessCheckKind`). Arming is restricted to these so a
+/// stray kind can't land an entry the gauntlet will only warn-and-skip. The set: the
+/// three original gauntlet kinds plus the hardening-catalog producers `lockfile-lint`
 /// (#11 dependency firewall), `env-contract` (#13 env-var contract), `secret-scan`
 /// (#4 secret hygiene), `mutation-score` (#17 mutation audit), `ast-grep` (#18 policy
 /// pack), `api-extractor` (#18 API surface lock).
-const ARMABLE_CHECK_KINDS: &[&str] = &[
-    "lint-plugin",
-    "dependency-cruiser",
-    "coverage-threshold",
-    "lockfile-lint",
-    "env-contract",
-    "secret-scan",
-    "mutation-score",
-    "ast-grep",
-    "api-extractor",
-];
+use crate::workflow::gauntlet_project::ARMABLE_CHECK_KINDS;
 
 /// Validate a requested gauntlet-check kind against the armable allowlist. Factored out
 /// of [`arm_harness_gauntlet_check`] so the security-relevant gate — a stray or injected
@@ -434,6 +425,14 @@ fn apply_harness_proposal_blocking(
 /// gate or, worse, injected code the gauntlet would then execute under every reviewer). The
 /// destination is hard-pinned to `.nightcore/harness.json` in [`write_merge_manifest`] and
 /// merged by check `name` (idempotent + re-armable), so hand-authored checks are preserved.
+///
+/// **Placebo-gate fix (T7).** Applying a generated ESLint plugin FILE does not WIRE it
+/// into the project's `eslint.config.*` (that is a separate human-reviewed agent task),
+/// so a `lint-plugin` check armed against an unwired plugin is a GREEN gate that enforces
+/// nothing. When the caller arms from an applied plugin artifact it passes that artifact's
+/// repo-relative path as `require_wired`; for a `lint-plugin` kind we then verify an ESLint
+/// config actually references it and REFUSE (fail-closed) otherwise. A hand-authored arm
+/// (no `require_wired`) is trusted as before — the human confirm dialog is its gate.
 #[tauri::command]
 pub fn arm_harness_gauntlet_check(
     app: AppHandle,
@@ -442,6 +441,7 @@ pub fn arm_harness_gauntlet_check(
     name: String,
     kind: String,
     command: String,
+    require_wired: Option<String>,
 ) -> Result<(), String> {
     let name = name.trim();
     let command = command.trim();
@@ -455,6 +455,21 @@ pub fn arm_harness_gauntlet_check(
     let run = harness_store
         .get(&run_id)
         .ok_or_else(|| format!("no harness run with id {run_id}"))?;
+
+    // Plugin-wired preflight: an ESLint check armed from an applied-but-unwired plugin
+    // would be a placebo gate. Only fires for `lint-plugin` arms that name the plugin.
+    if kind == "lint-plugin" {
+        if let Some(plugin_path) = require_wired
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+        {
+            super::lint_wiring::assert_plugin_wired(Path::new(&run.project_path), plugin_path)
+                .inspect_err(|_e| {
+                    tracing::warn!(target: "nightcore", run_id = %run_id, name = %name, plugin = %plugin_path, "refused to arm an unwired lint-plugin check (placebo gate)");
+                })?;
+        }
+    }
 
     // The entry is built HERE, in Rust, from validated inputs — the manifest is never
     // handed a model-authored object. `enabled: true` so a freshly-armed check is live.

@@ -297,6 +297,219 @@ pub fn write_policy_patch(
     Ok(read_policy_file(project_path))
 }
 
+// --- Armed checks (the `checks` block) --------------------------------------
+//
+// The Checks Manager (T7) reads and edits the manifest's `checks` array — the
+// same array the gauntlet runs and `sidecar::harness::apply` ARMS. Arming a NEW
+// check (a fresh command → the gauntlet spawns it) stays on the hardened,
+// containment-defended `apply::write_merge_manifest` path — never here. THESE
+// helpers only READ the armed set and EDIT existing entries (disable / retarget /
+// remove), where the risk is not a new execution sink but corrupting a manifest,
+// so they mirror the policy writer's posture: server-resolved path, atomic write,
+// and a HARD error on a malformed manifest (never clobber the user's config).
+
+/// One armed structure-lock check as the Checks Manager lists + edits it — the
+/// on-disk `checks[]` entry shape (`kind`/`command` un-enumerated wire strings the
+/// web casts). Distinct from the runtime `PlannedCheck` (which drops disabled
+/// entries): the manager shows EVERY check, including disabled ones.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[cfg_attr(test, derive(TS))]
+#[serde(rename_all = "camelCase")]
+#[cfg_attr(test, ts(export, export_to = "ArmedCheckFile.ts"))]
+pub struct ArmedCheckFile {
+    pub name: String,
+    /// `lint-plugin` | `dependency-cruiser` | … (validated at arm/edit time).
+    pub kind: String,
+    /// The exact command line the gauntlet spawns (whitespace-split).
+    pub command: String,
+    /// Whether the check participates in the gate (absent ⇒ `true`).
+    pub enabled: bool,
+    /// Per-check wall-clock timeout in ms (`timeoutMs`); `None` ⇒ the runner default.
+    pub timeout_ms: Option<u64>,
+    /// Informational tool config path, when the entry declares one.
+    pub config_path: Option<String>,
+}
+
+/// Read one `checks[]` entry leniently: skip any entry missing the three required
+/// fields (a malformed entry never sinks the list — mirrors the runtime planner).
+fn armed_check_from_value(v: &Value) -> Option<ArmedCheckFile> {
+    let s = |k: &str| v.get(k).and_then(Value::as_str).map(str::to_string);
+    Some(ArmedCheckFile {
+        name: s("name")?,
+        kind: s("kind")?,
+        command: s("command")?,
+        // Absent / non-bool `enabled` reads as ON (the runtime planner's default).
+        enabled: v.get("enabled").and_then(Value::as_bool) != Some(false),
+        timeout_ms: v.get("timeoutMs").and_then(Value::as_u64),
+        config_path: s("configPath"),
+    })
+}
+
+/// Read the active project's armed checks for the manager UI. Lenient like the
+/// policy reader: an absent / malformed manifest or a non-array `checks` yields an
+/// empty list (nothing armed), never an error — the manager opens on a blank slate.
+pub fn read_armed_checks(project_path: &str) -> Vec<ArmedCheckFile> {
+    let path = manifest_file(std::path::Path::new(project_path));
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let root: Value = match serde_json::from_str(&raw) {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::warn!(
+                target: "nightcore::checks_manager",
+                error = %e,
+                "malformed .nightcore/harness.json; showing no armed checks"
+            );
+            return Vec::new();
+        }
+    };
+    root.get("checks")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(armed_check_from_value).collect())
+        .unwrap_or_default()
+}
+
+/// Load the manifest as a mutable root object, run `edit` over its `checks` array,
+/// persist atomically, and return the re-read armed list. A malformed / non-object
+/// manifest, or a non-array `checks`, is a HARD error (there is no safely-mergeable
+/// intent) — the file is preserved for the user to fix, exactly like the policy
+/// writer. Every other root key and every unknown per-check key survives verbatim.
+fn mutate_armed_checks(
+    project_path: &str,
+    edit: impl FnOnce(&mut Vec<Value>) -> Result<(), String>,
+) -> Result<Vec<ArmedCheckFile>, String> {
+    let path = manifest_file(std::path::Path::new(project_path));
+    let mut root: Value = match std::fs::read_to_string(&path) {
+        Ok(raw) => serde_json::from_str(&raw).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({e}); fix it by hand before editing checks",
+                path.display()
+            )
+        })?,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => json!({}),
+        Err(e) => return Err(format!("cannot read {}: {e}", path.display())),
+    };
+    let Some(root_map) = root.as_object_mut() else {
+        return Err(format!(
+            "{} has a non-object root; fix it by hand before editing checks",
+            path.display()
+        ));
+    };
+
+    let mut checks: Vec<Value> = match root_map.remove("checks") {
+        Some(Value::Array(items)) => items,
+        None => Vec::new(),
+        // A present, non-array `checks` can't be safely merged — refuse rather than
+        // silently discard whatever the user has there.
+        Some(_) => {
+            return Err(format!(
+                "{} has a non-array `checks`; fix it by hand before editing checks",
+                path.display()
+            ))
+        }
+    };
+
+    edit(&mut checks)?;
+
+    root_map.insert("checks".to_string(), Value::Array(checks));
+    let json = serde_json::to_string_pretty(&root)
+        .map_err(|e| format!("failed to serialize harness manifest: {e}"))?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .map_err(|e| format!("failed to create {}: {e}", parent.display()))?;
+    }
+    crate::store::write_atomic(&path, json.as_bytes())
+        .map_err(|e| format!("failed to write {}: {e}", path.display()))?;
+    Ok(read_armed_checks(project_path))
+}
+
+/// Find the mutable `checks[]` entry with the given `name`, or `None`.
+fn find_check_mut<'a>(checks: &'a mut [Value], name: &str) -> Option<&'a mut Value> {
+    checks
+        .iter_mut()
+        .find(|c| c.get("name").and_then(Value::as_str) == Some(name))
+}
+
+/// Enable or disable an existing armed check by name (merge-by-key: only `enabled`
+/// is touched; the command, kind, timeout, and any unknown keys survive).
+pub fn set_check_enabled(
+    project_path: &str,
+    name: &str,
+    enabled: bool,
+) -> Result<Vec<ArmedCheckFile>, String> {
+    mutate_armed_checks(project_path, |checks| {
+        let entry =
+            find_check_mut(checks, name).ok_or_else(|| format!("no armed check named `{name}`"))?;
+        entry
+            .as_object_mut()
+            .ok_or_else(|| format!("armed check `{name}` is not an object"))?
+            .insert("enabled".to_string(), json!(enabled));
+        Ok(())
+    })
+}
+
+/// Remove an existing armed check by name (disarm it entirely).
+pub fn remove_check(project_path: &str, name: &str) -> Result<Vec<ArmedCheckFile>, String> {
+    mutate_armed_checks(project_path, |checks| {
+        let before = checks.len();
+        checks.retain(|c| c.get("name").and_then(Value::as_str) != Some(name));
+        if checks.len() == before {
+            return Err(format!("no armed check named `{name}`"));
+        }
+        Ok(())
+    })
+}
+
+/// Edit an existing armed check identified by `original_name`. Merge-by-key: the
+/// known fields (name/kind/command/enabled + timeoutMs/configPath set-or-remove)
+/// are updated in place; every unknown per-check key survives. Renaming to a name
+/// another check already uses is rejected (names are the merge identity).
+pub fn update_check(
+    project_path: &str,
+    original_name: &str,
+    updated: &ArmedCheckFile,
+) -> Result<Vec<ArmedCheckFile>, String> {
+    mutate_armed_checks(project_path, |checks| {
+        // A rename that collides with a DIFFERENT existing check is rejected.
+        if updated.name != original_name
+            && checks
+                .iter()
+                .any(|c| c.get("name").and_then(Value::as_str) == Some(updated.name.as_str()))
+        {
+            return Err(format!(
+                "an armed check named `{}` already exists",
+                updated.name
+            ));
+        }
+        let entry = find_check_mut(checks, original_name)
+            .ok_or_else(|| format!("no armed check named `{original_name}`"))?
+            .as_object_mut()
+            .ok_or_else(|| format!("armed check `{original_name}` is not an object"))?;
+        entry.insert("name".to_string(), json!(updated.name));
+        entry.insert("kind".to_string(), json!(updated.kind));
+        entry.insert("command".to_string(), json!(updated.command));
+        entry.insert("enabled".to_string(), json!(updated.enabled));
+        match updated.timeout_ms {
+            Some(ms) => {
+                entry.insert("timeoutMs".to_string(), json!(ms));
+            }
+            None => {
+                entry.remove("timeoutMs");
+            }
+        }
+        match &updated.config_path {
+            Some(p) => {
+                entry.insert("configPath".to_string(), json!(p));
+            }
+            None => {
+                entry.remove("configPath");
+            }
+        }
+        Ok(())
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -527,5 +740,152 @@ mod tests {
             .expect("runtime reader arms the layer");
         assert_eq!(armed.deny_read_paths, vec!["secrets/**"]);
         assert_eq!(armed.deny_bash_patterns, vec!["--no-verify"]);
+    }
+
+    // --- armed checks (Checks Manager) --------------------------------------
+
+    const TWO_CHECKS: &str = r#"{
+      "checks": [
+        { "name": "lint", "kind": "lint-plugin", "command": "npx eslint .", "timeoutMs": 60000 },
+        { "name": "arch", "kind": "dependency-cruiser", "command": "npx depcruise src", "enabled": false, "extraKey": 7 }
+      ],
+      "policy": { "enabled": true },
+      "rootExtra": true
+    }"#;
+
+    #[test]
+    fn read_armed_checks_lists_every_check_including_disabled() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let checks = read_armed_checks(&root_of(&tmp));
+        assert_eq!(checks.len(), 2, "disabled checks are listed too");
+        assert_eq!(checks[0].name, "lint");
+        assert!(checks[0].enabled, "absent/true enabled reads on");
+        assert_eq!(checks[0].timeout_ms, Some(60000));
+        assert_eq!(checks[1].name, "arch");
+        assert!(!checks[1].enabled, "explicit false reads off");
+        assert!(checks[1].timeout_ms.is_none());
+    }
+
+    #[test]
+    fn read_armed_checks_absent_or_malformed_is_empty() {
+        let tmp = TempDir::new().expect("temp dir");
+        assert!(
+            read_armed_checks(&root_of(&tmp)).is_empty(),
+            "absent ⇒ empty"
+        );
+        write_manifest(&tmp, "{ not json");
+        assert!(
+            read_armed_checks(&root_of(&tmp)).is_empty(),
+            "malformed ⇒ empty, never an error"
+        );
+    }
+
+    #[test]
+    fn set_check_enabled_flips_one_and_preserves_the_rest() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let after = set_check_enabled(&root_of(&tmp), "arch", true).expect("enable");
+        assert!(after.iter().find(|c| c.name == "arch").unwrap().enabled);
+        // Siblings + unknown keys + other root keys survive verbatim.
+        let value = read_manifest_value(&tmp);
+        assert_eq!(
+            value["checks"][1]["extraKey"], 7,
+            "unknown per-check key kept"
+        );
+        assert_eq!(
+            value["checks"][0]["command"], "npx eslint .",
+            "sibling untouched"
+        );
+        assert_eq!(value["rootExtra"], true, "root sibling kept");
+        assert_eq!(value["policy"]["enabled"], true, "policy block kept");
+    }
+
+    #[test]
+    fn set_check_enabled_unknown_name_errors() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let err = set_check_enabled(&root_of(&tmp), "ghost", false).expect_err("no such check");
+        assert!(err.contains("no armed check named `ghost`"), "got: {err}");
+    }
+
+    #[test]
+    fn remove_check_drops_it() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let after = remove_check(&root_of(&tmp), "lint").expect("remove");
+        assert_eq!(after.len(), 1);
+        assert_eq!(after[0].name, "arch");
+        // Removing an absent check errors (nothing removed).
+        assert!(remove_check(&root_of(&tmp), "lint").is_err());
+    }
+
+    #[test]
+    fn update_check_edits_in_place_and_can_retarget_and_clear_timeout() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let updated = ArmedCheckFile {
+            name: "lint".into(),
+            kind: "lint-plugin".into(),
+            command: "npx eslint . --max-warnings 0".into(),
+            enabled: false,
+            timeout_ms: None, // clears the existing timeoutMs
+            config_path: Some(".eslintrc".into()),
+        };
+        let after = update_check(&root_of(&tmp), "lint", &updated).expect("update");
+        let lint = after.iter().find(|c| c.name == "lint").unwrap();
+        assert_eq!(lint.command, "npx eslint . --max-warnings 0");
+        assert!(!lint.enabled);
+        assert!(lint.timeout_ms.is_none(), "timeoutMs cleared");
+        assert_eq!(lint.config_path.as_deref(), Some(".eslintrc"));
+        let value = read_manifest_value(&tmp);
+        assert!(
+            value["checks"][0].get("timeoutMs").is_none(),
+            "the timeoutMs key is removed, not zeroed"
+        );
+    }
+
+    #[test]
+    fn update_check_rename_collision_is_rejected() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, TWO_CHECKS);
+        let renamed = ArmedCheckFile {
+            name: "arch".into(), // collides with the other check
+            kind: "lint-plugin".into(),
+            command: "npx eslint .".into(),
+            enabled: true,
+            timeout_ms: None,
+            config_path: None,
+        };
+        let err = update_check(&root_of(&tmp), "lint", &renamed).expect_err("collision");
+        assert!(err.contains("already exists"), "got: {err}");
+    }
+
+    #[test]
+    fn mutating_a_malformed_manifest_refuses_the_write() {
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(&tmp, "{ not json");
+        let err = remove_check(&root_of(&tmp), "lint").expect_err("must not clobber");
+        assert!(err.contains("not valid JSON"), "got: {err}");
+        let raw =
+            std::fs::read_to_string(tmp.path().join(".nightcore/harness.json")).expect("kept");
+        assert_eq!(raw, "{ not json", "the broken file is preserved");
+    }
+
+    #[test]
+    fn edited_check_is_honored_by_the_runtime_gauntlet() {
+        // The manager writes; the gauntlet reads: disabling a check drops it from the
+        // run, and a re-enabled one runs again.
+        let tmp = TempDir::new().expect("temp dir");
+        write_manifest(
+            &tmp,
+            r#"{ "checks": [ { "name": "ok", "kind": "lint-plugin", "command": "sh -c true" } ] }"#,
+        );
+        set_check_enabled(&root_of(&tmp), "ok", false).expect("disable");
+        let disabled = crate::workflow::gauntlet_project::run(tmp.path());
+        assert!(disabled.checks.is_empty(), "a disabled check does not run");
+        set_check_enabled(&root_of(&tmp), "ok", true).expect("enable");
+        let enabled = crate::workflow::gauntlet_project::run(tmp.path());
+        assert_eq!(enabled.checks.len(), 1, "the re-enabled check runs again");
     }
 }
