@@ -68,18 +68,20 @@ const encoder = new TextEncoder();
  *  tiny subscription bridges its counters to the React hook that renders badges. */
 type ActivityListener = () => void;
 const activityListeners = new Set<ActivityListener>();
-/** The session id currently visible/active. Output for this id never badges; every
- *  other session's output bumps its unread count. `null` when no tab is active. */
-let visibleId: string | null = null;
+/** The session ids currently visible on screen. Output for a visible id never
+ *  badges; every other session's output bumps its unread count. In tabs mode this
+ *  is the single active tab; in grid mode (PR 2) it is EVERY mounted pane (or just
+ *  the zoomed one) — so only zoomed-away / off-screen panes badge. */
+let visibleIds: Set<string> = new Set();
 
 function notifyActivity(): void {
   for (const fn of activityListeners) fn();
 }
 
 /** Record one output batch for `id`: bump its unread badge + notify, unless it is
- *  the visible tab (which never accrues unread). A no-op for an unknown id. */
+ *  currently visible (which never accrues unread). A no-op for an unknown id. */
 function recordActivity(id: string): void {
-  if (id === visibleId) return;
+  if (visibleIds.has(id)) return;
   const entry = cache.get(id);
   if (entry === undefined) return;
   entry.unread += 1;
@@ -109,12 +111,40 @@ export function clearUnread(id: string): void {
   notifyActivity();
 }
 
-/** Mark `id` the visible/active session: it stops accruing unread and its badge
- *  clears immediately. `null` (no active tab) leaves every session eligible to
- *  badge. In grid mode (PR 2) the visible set widens to every mounted pane. */
+/** Mark the set of currently-visible sessions (grid mode, PR 2): each stops
+ *  accruing unread and its badge clears immediately; every other session keeps
+ *  badging its background output. Passing every mounted pane's id in grid mode, or
+ *  just the zoomed pane's id, is what makes only off-screen panes badge. */
+export function setVisibleTerminals(ids: readonly string[]): void {
+  visibleIds = new Set(ids);
+  for (const id of ids) clearUnread(id);
+}
+
+/** Mark `id` the single visible/active session (tabs mode): it stops accruing
+ *  unread and its badge clears immediately; `null` (no active tab) leaves every
+ *  session eligible to badge. A thin wrapper over {@link setVisibleTerminals}. */
 export function setActiveTerminal(id: string | null): void {
-  visibleId = id;
-  if (id !== null) clearUnread(id);
+  setVisibleTerminals(id === null ? [] : [id]);
+}
+
+/** Re-fit a live session's terminal to its (now resized) host and repaint it — used
+ *  after a grid relayout / drag-drop / zoom transition, where a pane's cell changed
+ *  size (or transiently collapsed to 0px during a drag) and `fit()` alone, seeing no
+ *  net dimension change, would leave a blank/stale canvas. Fits, tells the PTY the
+ *  new geometry, then forces a full `refresh`. A no-op for an unopened / unknown id
+ *  or a zero-size host (the ResizeObserver settles the latter). */
+export function refitSession(id: string): void {
+  const entry = cache.get(id);
+  if (entry === undefined || !entry.opened) return;
+  if (entry.host.clientWidth === 0 || entry.host.clientHeight === 0) return;
+  try {
+    entry.fit.fit();
+  } catch {
+    // A detached/zero host can throw mid-teardown; the observer settles it.
+    return;
+  }
+  void resizeTerminal(id, entry.term.cols, entry.term.rows);
+  entry.term.refresh(0, Math.max(0, entry.term.rows - 1));
 }
 
 /** Spawn a shell and cache a live xterm bound to its output stream. The xterm is

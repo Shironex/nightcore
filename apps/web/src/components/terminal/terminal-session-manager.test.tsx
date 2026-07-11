@@ -10,6 +10,7 @@ import {
   getUnread,
   openSession,
   setActiveTerminal,
+  setVisibleTerminals,
   subscribeActivity,
 } from './terminal-session-manager';
 import { setWebglLoader, type WebglController } from './terminal-webgl';
@@ -102,6 +103,27 @@ test('output for a non-visible session accrues an unread badge, cleared on activ
   unsub();
   setActiveTerminal(null);
   await closeSession(session.id);
+});
+
+test('setVisibleTerminals gates badges to the OFF-screen set (grid mode)', async () => {
+  // Grid mode makes every mounted pane visible except the zoomed-away ones. With
+  // only `a` marked visible, background output on `b` badges while `a` stays clear.
+  const a = await openSession({ cwd: '/tmp/a', confined: false, cols: 80, rows: 24 }, false);
+  const b = await openSession({ cwd: '/tmp/b', confined: false, cols: 80, rows: 24 }, false);
+  setVisibleTerminals([a.id]);
+
+  await writeTerminal(a.id, new TextEncoder().encode('a\r'));
+  await writeTerminal(b.id, new TextEncoder().encode('b\r'));
+  await vi.waitFor(() => expect(getUnread(b.id)).toBeGreaterThan(0));
+  expect(getUnread(a.id)).toBe(0);
+
+  // Widening the visible set to include `b` clears its badge immediately.
+  setVisibleTerminals([a.id, b.id]);
+  expect(getUnread(b.id)).toBe(0);
+
+  setVisibleTerminals([]);
+  await closeSession(a.id);
+  await closeSession(b.id);
 });
 
 test('a DOM session never invokes the WebGL loader', async () => {
