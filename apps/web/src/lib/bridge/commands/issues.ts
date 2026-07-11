@@ -132,3 +132,21 @@ export async function convertIssueValidationToTask(runId: string): Promise<Task>
 export async function syncIssueStatus(taskId: string): Promise<void> {
   await tauriInvoke<void>('sync_issue_status', { taskId }, undefined);
 }
+
+/** GitHub two-way sync (#97 PR 4, §5): projection-IN. Poll the upstream state of every
+ *  issue-linked task's GitHub issue and project close/reopen onto `task.issueState` (the
+ *  "closed upstream" chip's data). READS ONLY — no lease, no mutation beyond the last-
+ *  observed state; a merged task is skipped. The board updates via the `nc:task` echoes
+ *  the Rust command emits; the returned `[issueNumber, state]` pairs are the ones that
+ *  CHANGED this poll. Resolves `[]` outside Tauri. */
+export async function pollIssueStates(): Promise<[number, string][]> {
+  return tauriInvoke<[number, string][]>('poll_issue_states', {}, []);
+}
+
+/** GitHub two-way sync (#97 PR 4, §5): open a linked issue on GitHub in the system
+ *  browser (the "closed upstream" chip's click action). READ-ONLY — `gh issue view <n>
+ *  --web` resolves the repo from the active project's remote and opens the page; it never
+ *  mutates the issue. No-op outside Tauri. */
+export async function openIssueInBrowser(issueNumber: number): Promise<void> {
+  await tauriInvoke<void>('open_issue_in_browser', { issueNumber }, undefined);
+}
