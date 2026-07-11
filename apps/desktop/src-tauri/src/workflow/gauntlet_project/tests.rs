@@ -1,15 +1,11 @@
 //! Unit tests for the Structure-Lock Gauntlet, kept together so the config-parse,
-//! sequencing, worktree-parity, and verify-command cases share the
-//! `temp_project_with_config` / `run_planned` fixtures.
+//! full-run sequencing, worktree-parity, timeout, flaky-retry, and verify-command
+//! cases share the `temp_project_with_config` fixtures.
 
-use std::path::Path;
-use std::process::Command;
-
-use super::config::{load_checks, HarnessCheckKind, PlannedCheck};
+use super::config::{is_armable_kind, load_checks, HarnessCheckKind, ARMABLE_CHECK_KINDS};
 use super::runner::{
     append_task_verify_command, empty_pass, fix_instruction, run, run_from, VERIFY_COMMAND_CHECK,
 };
-use crate::infra::text::tail_output;
 use crate::store::types::{StepStatus, StructureLockCheck, StructureLockResult};
 
 /// Write a `.nightcore/harness.json` with the given raw body into a fresh temp
@@ -20,6 +16,42 @@ fn temp_project_with_config(body: &str) -> tempfile::TempDir {
     std::fs::create_dir_all(&nc).expect("mkdir .nightcore");
     std::fs::write(nc.join("harness.json"), body).expect("write harness.json");
     tmp
+}
+
+/// Write an executable shell script into `dir` and return its absolute path — a
+/// single-token command the whitespace-splitting planner can reference (the
+/// manifest `command` has no shell quoting, so multi-word `sh -c '…'` scripts must
+/// live in a file). Unix-only (the runner tests that need scripts are gated).
+#[cfg(unix)]
+fn write_script(dir: &std::path::Path, name: &str, body: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let path = dir.join(name);
+    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write script");
+    let mut perms = std::fs::metadata(&path).expect("meta").permissions();
+    perms.set_mode(0o755);
+    std::fs::set_permissions(&path, perms).expect("chmod");
+    path
+}
+
+#[test]
+fn armable_kinds_are_exactly_the_runnable_kinds() {
+    // The shared armable allowlist is the single source of truth for both the arm
+    // command and the Checks Manager edit path; every entry must be a kind the
+    // runner actually knows how to run (parse as a `HarnessCheckKind`), and the
+    // helper agrees with the const.
+    for kind in ARMABLE_CHECK_KINDS {
+        assert!(is_armable_kind(kind), "{kind} must be armable");
+        let parsed: Result<HarnessCheckKind, _> = serde_json::from_value(serde_json::json!(kind));
+        assert!(
+            parsed.is_ok(),
+            "armable kind {kind} must be a runnable HarnessCheckKind"
+        );
+    }
+    assert!(!is_armable_kind("shell"), "a stray kind is not armable");
+    assert!(
+        !is_armable_kind("Lint-Plugin"),
+        "a case near-miss is not armable"
+    );
 }
 
 #[test]
@@ -148,135 +180,150 @@ fn an_entry_with_no_command_is_skipped() {
     assert_eq!(names, vec!["ok"], "a command-less check can't run");
 }
 
-/// Mirror `run()` over hand-built plans through `sh` directly, so the test does
-/// not depend on the platform resolver or a real tool being installed. Exercises
-/// the same sequencing + stop-at-first logic.
-fn run_planned(planned: Vec<PlannedCheck>, dir: &Path) -> StructureLockResult {
-    let mut checks = Vec::new();
-    let mut failed: Option<String> = None;
-    for check in planned {
-        let kind = check.kind.as_wire().to_string();
-        if failed.is_some() {
-            checks.push(StructureLockCheck {
-                name: check.name,
-                kind,
-                command: check.command,
-                status: StepStatus::Skipped,
-                exit_code: None,
-                output: None,
-            });
-            continue;
-        }
-        let output = Command::new(&check.program)
-            .args(&check.args)
-            .current_dir(dir)
-            .output()
-            .expect("spawn sh");
-        if output.status.success() {
-            checks.push(StructureLockCheck {
-                name: check.name,
-                kind,
-                command: check.command,
-                status: StepStatus::Passed,
-                exit_code: output.status.code(),
-                output: None,
-            });
-        } else {
-            failed = Some(check.name.clone());
-            checks.push(StructureLockCheck {
-                name: check.name,
-                kind,
-                command: check.command,
-                status: StepStatus::Failed,
-                exit_code: output.status.code(),
-                output: Some(tail_output(&output.stdout, &output.stderr)),
-            });
-        }
-    }
-    StructureLockResult {
-        passed: failed.is_none(),
-        checks,
-        failed_check: failed,
-    }
-}
-
-fn sh_check(name: &str, kind: HarnessCheckKind, script: &str) -> PlannedCheck {
-    PlannedCheck {
-        name: name.to_string(),
-        kind,
-        command: format!("sh -c {script}"),
-        program: "sh".to_string(),
-        args: vec!["-c".to_string(), script.to_string()],
-    }
-}
-
+#[cfg(unix)]
 #[test]
-fn a_passing_check_set_passes() {
-    let tmp = tempfile::TempDir::new().expect("temp dir");
-    let result = run_planned(
-        vec![
-            sh_check("lint", HarnessCheckKind::LintPlugin, "exit 0"),
-            sh_check("arch", HarnessCheckKind::DependencyCruiser, "exit 0"),
-        ],
-        tmp.path(),
+fn a_passing_check_set_passes_and_records_duration() {
+    // Two passing checks over the real runner: the gate is green and each check
+    // records a duration (per-check duration telemetry).
+    let tmp = temp_project_with_config(
+        r#"{ "checks": [
+            { "name": "lint", "kind": "lint-plugin", "command": "sh -c true" },
+            { "name": "arch", "kind": "dependency-cruiser", "command": "sh -c true" }
+        ] }"#,
     );
+    let result = run(tmp.path());
     assert!(result.passed);
     assert!(result.checks.iter().all(|c| c.status == StepStatus::Passed));
     assert!(result.failed_check.is_none());
+    assert!(
+        result.checks.iter().all(|c| c.duration_ms.is_some()),
+        "every check records its wall-clock duration"
+    );
 }
 
+#[cfg(unix)]
 #[test]
-fn a_failing_check_stops_the_run_and_reports_it() {
-    let tmp = tempfile::TempDir::new().expect("temp dir");
-    let result = run_planned(
-        vec![
-            sh_check(
-                "lint",
-                HarnessCheckKind::LintPlugin,
-                "echo boom 1>&2; exit 1",
-            ),
-            sh_check("arch", HarnessCheckKind::DependencyCruiser, "exit 0"),
-        ],
-        tmp.path(),
+fn full_run_records_every_failure_and_does_not_stop_at_first() {
+    // Full-run mode: a failing check does NOT skip its siblings — every check runs
+    // and records its own outcome, so one fix session sees the whole set.
+    let tmp = temp_project_with_config(
+        r#"{ "checks": [
+            { "name": "lint", "kind": "lint-plugin", "command": "false" },
+            { "name": "arch", "kind": "dependency-cruiser", "command": "false" },
+            { "name": "cov", "kind": "coverage-threshold", "command": "sh -c true" }
+        ] }"#,
     );
+    let result = run(tmp.path());
     assert!(!result.passed);
+    // `failed_check` names the FIRST failure (back-compat for fix-routing).
     assert_eq!(result.failed_check.as_deref(), Some("lint"));
-    let lint = result.checks.iter().find(|c| c.name == "lint").unwrap();
-    assert_eq!(lint.status, StepStatus::Failed);
-    assert!(lint.output.as_deref().unwrap().contains("boom"));
-    // Everything after a failure is skipped (stop-at-first).
-    let arch = result.checks.iter().find(|c| c.name == "arch").unwrap();
-    assert_eq!(arch.status, StepStatus::Skipped);
+    // No check is `Skipped` — the sibling after the first failure still ran.
+    assert!(
+        result
+            .checks
+            .iter()
+            .all(|c| c.status != StepStatus::Skipped),
+        "full-run never skips"
+    );
+    let by = |n: &str| result.checks.iter().find(|c| c.name == n).unwrap().status;
+    assert_eq!(by("lint"), StepStatus::Failed);
+    assert_eq!(by("arch"), StepStatus::Failed, "the second failure ran too");
+    assert_eq!(by("cov"), StepStatus::Passed);
+
+    // The aggregate fix instruction lists BOTH failing checks (the whole set).
+    let fix = fix_instruction(&result);
+    assert!(
+        fix.contains("lint") && fix.contains("arch"),
+        "aggregates all failures: {fix}"
+    );
+    assert!(
+        !fix.contains("\ncov"),
+        "a passing check is not in the fix set"
+    );
 }
 
+#[cfg(unix)]
 #[test]
-fn ast_grep_and_api_extractor_checks_run_like_any_other() {
-    // The runner arm for the two new kinds: a passing ast-grep check runs, a failing
-    // api-extractor check (an out-of-date API report exits non-zero) stops the gate
-    // and carries its wire kind onto the result.
-    let tmp = tempfile::TempDir::new().expect("temp dir");
-    let result = run_planned(
-        vec![
-            sh_check("policy", HarnessCheckKind::AstGrep, "exit 0"),
-            sh_check(
-                "surface",
-                HarnessCheckKind::ApiExtractor,
-                "echo drift 1>&2; exit 1",
-            ),
-        ],
+fn a_flaky_check_fails_then_passes_and_is_not_a_failure() {
+    // Retry-once: a check that fails on its first run but passes on the retry is
+    // `Flaky` — a non-failure the gate ignores, so a flake no longer burns a fix
+    // session. The script toggles on a marker file it creates in the run dir.
+    let tmp = temp_project_with_config("{}"); // config written below with the abs path
+    let script = write_script(
         tmp.path(),
+        "flaky.sh",
+        "if [ -f flaky-marker ]; then exit 0; else touch flaky-marker; exit 1; fi",
     );
+    std::fs::write(
+        tmp.path().join(".nightcore/harness.json"),
+        format!(
+            r#"{{ "checks": [ {{ "name": "flake", "kind": "lint-plugin", "command": "{}" }} ] }}"#,
+            script.display()
+        ),
+    )
+    .expect("rewrite manifest");
+
+    let result = run(tmp.path());
+    assert!(result.passed, "a flaky check does not fail the gate");
+    assert!(result.failed_check.is_none());
+    assert_eq!(result.checks.len(), 1);
+    assert_eq!(result.checks[0].status, StepStatus::Flaky);
+    assert!(
+        result.checks[0]
+            .output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("flaky"),
+        "the flaky note is surfaced"
+    );
+    // `fix_instruction` ignores a flake (it passed on retry).
+    assert!(!fix_instruction(&result).contains("flake"));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_hung_check_times_out_and_fails_closed() {
+    // A check that overruns its `timeoutMs` is killed and recorded as a FAILURE —
+    // never a silent pass, and never an unbounded block on verification.
+    let tmp = temp_project_with_config(
+        r#"{ "checks": [
+            { "name": "hang", "kind": "lint-plugin", "command": "sleep 30", "timeoutMs": 150 }
+        ] }"#,
+    );
+    let start = std::time::Instant::now();
+    let result = run(tmp.path());
+    // Retried once → ~2 * 150ms, plus spawn overhead. Comfortably under the 30s sleep.
+    assert!(
+        start.elapsed() < std::time::Duration::from_secs(10),
+        "the hung check is killed promptly, not waited out"
+    );
+    assert!(!result.passed, "a timeout fails the gate (fail-closed)");
+    assert_eq!(result.failed_check.as_deref(), Some("hang"));
+    assert_eq!(result.checks[0].status, StepStatus::Failed);
+    assert!(
+        result.checks[0]
+            .output
+            .as_deref()
+            .unwrap_or_default()
+            .contains("timed out"),
+        "the timeout is reported"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_failing_check_is_retried_before_being_marked_failed() {
+    // A check that fails BOTH times is a genuine failure carrying the retry's output.
+    let tmp = temp_project_with_config(
+        r#"{ "checks": [
+            { "name": "surface", "kind": "api-extractor", "command": "false" }
+        ] }"#,
+    );
+    let result = run(tmp.path());
     assert!(!result.passed);
-    assert_eq!(result.failed_check.as_deref(), Some("surface"));
-    assert_eq!(result.checks[0].status, StepStatus::Passed);
-    assert_eq!(result.checks[0].kind, "ast-grep");
-    assert_eq!(result.checks[1].status, StepStatus::Failed);
-    assert_eq!(result.checks[1].kind, "api-extractor");
-    assert!(result.checks[1]
-        .output
-        .as_deref()
-        .unwrap()
-        .contains("drift"));
+    assert_eq!(result.checks[0].status, StepStatus::Failed);
+    assert_eq!(result.checks[0].kind, "api-extractor");
+    assert!(result.checks[0].duration_ms.is_some());
 }
 
 #[test]
@@ -291,6 +338,7 @@ fn fix_instruction_names_the_failed_check_and_command() {
             status: StepStatus::Failed,
             exit_code: Some(1),
             output: Some("error: missing index".into()),
+            duration_ms: Some(42),
         }],
     };
     let text = fix_instruction(&result);
@@ -369,6 +417,7 @@ fn task_verify_command_appends_a_passing_check() {
     assert_eq!(result.checks[0].name, VERIFY_COMMAND_CHECK);
     assert_eq!(result.checks[0].kind, VERIFY_COMMAND_CHECK);
     assert_eq!(result.checks[0].status, StepStatus::Passed);
+    assert!(result.checks[0].duration_ms.is_some());
     assert!(result.failed_check.is_none());
 }
 

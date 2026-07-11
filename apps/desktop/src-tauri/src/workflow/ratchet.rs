@@ -108,6 +108,7 @@ pub fn append_ratchet_check(
             status: StepStatus::Passed,
             exit_code: None,
             output: None,
+            duration_ms: None,
         });
         return;
     }
@@ -129,6 +130,7 @@ pub fn append_ratchet_check(
         status: StepStatus::Failed,
         exit_code: None,
         output: Some(output),
+        duration_ms: None,
     });
     result.passed = false;
     if result.failed_check.is_none() {

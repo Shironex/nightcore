@@ -640,6 +640,7 @@ mod tests {
                 status: StepStatus::Failed,
                 exit_code: Some(1),
                 output: Some("Component must live in its own folder".to_string()),
+                duration_ms: None,
             }],
         };
         let msg = structure_lock_failure_message(&lock);

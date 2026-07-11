@@ -25,4 +25,10 @@ exitCode?: number,
 /**
  * Tail of combined stdout+stderr for a failing check (truncated; never logged).
  */
-output?: string, };
+output?: string, 
+/**
+ * Wall-clock the check took, in milliseconds (summed across the retry attempt
+ * when the check is `flaky`). Absent for a check that never ran (`skipped`).
+ * Additive: pre-duration on-disk tasks deserialize with `None`.
+ */
+durationMs?: number, };

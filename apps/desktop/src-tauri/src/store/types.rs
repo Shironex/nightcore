@@ -31,6 +31,14 @@ pub enum StepStatus {
     Failed,
     /// Detected but not run because an earlier step already failed (stop-at-first).
     Skipped,
+    /// Failed on its first run but PASSED on a single automatic retry — a flake,
+    /// not a real failure. Surfaced distinctly so a user can see an unreliable
+    /// check, but treated as a PASS for the gate (it never flips `passed` or burns
+    /// a fix session). Only the structure-lock armed-check runner
+    /// ([`crate::workflow::gauntlet_project`]) produces this; the readiness
+    /// gauntlet never retries. Additive wire variant (`"flaky"`): pre-flaky
+    /// on-disk tasks never carry it, so they deserialize unchanged.
+    Flaky,
 }
 
 /// The outcome of one structure-lock check — parallel to
@@ -61,6 +69,12 @@ pub struct StructureLockCheck {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[cfg_attr(test, ts(optional))]
     pub output: Option<String>,
+    /// Wall-clock the check took, in milliseconds (summed across the retry attempt
+    /// when the check is `flaky`). Absent for a check that never ran (`skipped`).
+    /// Additive: pre-duration on-disk tasks deserialize with `None`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[cfg_attr(test, ts(optional))]
+    pub duration_ms: Option<u64>,
 }
 
 /// The structured structure-lock result surfaced to the UI and stored on the task

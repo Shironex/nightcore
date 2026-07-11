@@ -5,8 +5,15 @@
 //! entry) yields nothing so the gate trivially passes.
 
 use std::path::Path;
+use std::time::Duration;
 
 use serde::Deserialize;
+
+/// The default per-check wall-clock timeout when a check declares no `timeoutMs`
+/// (or declares a zero/garbage one). Generous enough for a real whole-repo lint /
+/// coverage run, but bounded so a genuinely hung check (a watch mode, a stuck
+/// install) cannot pin the verification gate forever.
+pub(super) const DEFAULT_CHECK_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// The kind of structure-lock check, mirroring the `.nightcore/harness.json`
 /// `kind` vocabulary. Deserialized kebab-case so the on-disk config reads
@@ -36,6 +43,31 @@ pub(super) enum HarnessCheckKind {
     AstGrep,
     /// An api-extractor API-report drift gate (verify mode, i.e. `run` WITHOUT `--local`).
     ApiExtractor,
+}
+
+/// The wire kinds a Structure-Lock check may be ARMED / edited as — every kind the
+/// runner ([`HarnessCheckKind`]) knows how to run. This is the single source of
+/// truth for the arm-time allowlist (`sidecar::harness::commands`) AND the Checks
+/// Manager's edit validation (`commands::checks`): a kind outside it would land a
+/// manifest entry the gauntlet only warn-and-skips (a placebo gate). Kept in
+/// lockstep with the enum by [`super::tests`].
+pub(crate) const ARMABLE_CHECK_KINDS: &[&str] = &[
+    "lint-plugin",
+    "dependency-cruiser",
+    "coverage-threshold",
+    "lockfile-lint",
+    "env-contract",
+    "secret-scan",
+    "mutation-score",
+    "ast-grep",
+    "api-extractor",
+];
+
+/// Whether `kind` is a runnable/armable Structure-Lock check kind (exact,
+/// case-sensitive — wire kinds are kebab-case and a near-miss would arm a check
+/// that never runs).
+pub(crate) fn is_armable_kind(kind: &str) -> bool {
+    ARMABLE_CHECK_KINDS.contains(&kind)
 }
 
 impl HarnessCheckKind {
@@ -74,6 +106,13 @@ struct HarnessCheckConfig {
     #[serde(default)]
     #[allow(dead_code)]
     config_path: Option<String>,
+    /// Per-check wall-clock timeout in milliseconds (`timeoutMs` on disk). A check
+    /// that overruns is killed and recorded as a failure, so a hung check (an
+    /// ESLint watch, a stuck install) can never block verification unbounded.
+    /// Absent ⇒ [`DEFAULT_CHECK_TIMEOUT`]; a zero/garbage value falls back to the
+    /// default too (never "no timeout").
+    #[serde(default)]
+    timeout_ms: Option<u64>,
     /// Whether this check participates in the gate. Defaults to `true` (a listed
     /// check is on unless explicitly disabled); the file being ABSENT is the
     /// opt-OUT for a whole project.
@@ -94,6 +133,8 @@ pub(super) struct PlannedCheck {
     pub(super) command: String,
     pub(super) program: String,
     pub(super) args: Vec<String>,
+    /// The resolved per-check wall-clock timeout (config `timeoutMs` or the default).
+    pub(super) timeout: std::time::Duration,
 }
 
 /// Load + plan the enabled checks from `.nightcore/harness.json` in `dir`. Returns
@@ -154,11 +195,19 @@ fn plan_check(cfg: &HarnessCheckConfig) -> Option<PlannedCheck> {
     let mut tokens = command.split_whitespace();
     let program = tokens.next()?.to_string();
     let args: Vec<String> = tokens.map(|s| s.to_string()).collect();
+    // A declared `timeoutMs` of 0 (or absent) means "use the default" — never
+    // "no timeout"; the whole point is that every check is bounded.
+    let timeout = cfg
+        .timeout_ms
+        .filter(|ms| *ms > 0)
+        .map(Duration::from_millis)
+        .unwrap_or(DEFAULT_CHECK_TIMEOUT);
     Some(PlannedCheck {
         name: cfg.name.clone(),
         kind: cfg.kind,
         command,
         program,
         args,
+        timeout,
     })
 }

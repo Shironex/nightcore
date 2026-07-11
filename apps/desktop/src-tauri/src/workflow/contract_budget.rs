@@ -71,6 +71,7 @@ pub fn append_contract_budget_check(
                 "touched agent contracts within the {MAX_CONTRACT_LINES}-line budget: {}",
                 within.join(", ")
             )),
+            duration_ms: None,
         });
         return;
     }
@@ -88,6 +89,7 @@ pub fn append_contract_budget_check(
 Restructure the overflow into linked satellite docs instead of growing the contract.",
             over.join("\n")
         )),
+        duration_ms: None,
     });
     result.passed = false;
     if result.failed_check.is_none() {
