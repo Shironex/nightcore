@@ -8,17 +8,41 @@
 //! all the socket/spawn machinery below is `#[cfg(unix)]`; only [`daemon_supported`]
 //! is cross-platform.
 //!
-//! **Auth = filesystem permissions (§5.2).** The socket lives in a `0700`
-//! owner-only directory and is itself chmod'd `0600` after bind. There is no network
-//! transport and no token: the OS permission boundary IS the auth — only the owning
-//! user can open the path. (A `SO_PEERCRED`/`LOCAL_PEERCRED` uid double-check is a
-//! deferred nicety; it needs a `libc`/`nix` dep and the perms boundary already
-//! restricts to the owner. Flagged in the PR body, not silently skipped.)
+//! **Auth = filesystem permissions + a peer-cred uid check (§5.2).** The socket lives
+//! in a `0700` owner-only directory and is itself chmod'd `0600` after bind. There is
+//! no network transport and no token: the OS permission boundary IS the first line of
+//! auth — only the owning user can open the path. On top of that, [`peer_uid`] reads
+//! the connecting client's kernel-reported uid (`SO_PEERCRED` on Linux, `getpeereid`
+//! on macOS/BSD) on EVERY accepted connection (`server::Server::peer_authorized`), and
+//! a peer whose uid differs from the daemon's own [`euid`] is logged at WARN and
+//! dropped — never served (terminal round 2, PR D). The uid comparison is done against
+//! [`euid`] only, and any error reading the credential fails CLOSED (refuse), so a
+//! stray connection can only ever cost that one daemon connection — the app still
+//! degrades to the in-process PTY + read-only restore.
 
-/// Whether this platform supports the detached PTY daemon. macOS + Linux only in v1
-/// (§5.6); everywhere else the backend stays in-process and read-only-restores like
-/// today. The settings toggle is a no-op on an unsupported platform (no dead UI —
-/// the toggle explains the platform requirement).
+/// Whether this platform supports the detached PTY daemon. macOS + Linux only (§5.6);
+/// everywhere else the backend stays in-process and read-only-restores like today. The
+/// settings toggle is a no-op on an unsupported platform (no dead UI — the toggle
+/// explains the platform requirement).
+///
+/// **Windows parity is a planned follow-up (terminal round 2, PR D, deferred).** The
+/// Unix half of PR D — the per-connection peer-cred uid check ([`peer_uid`]) — shipped;
+/// the Windows daemon did not. Bringing live-PTY survival to Windows means mirroring
+/// the Unix seam WITHOUT touching it (§5.1, "do not rip out the working Unix socket"):
+///   1. a **named-pipe transport** (`\\.\pipe\nightcore-pty-<user-scoped-id>`) carrying
+///      the identical transport-agnostic [`super::protocol`] frames — a `Read + Write`
+///      pipe stream + one-thread-per-client accept loop mirroring the Unix
+///      `std::thread` model (server/client/fanout abstract over the stream type);
+///   2. a **`CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS`** detached spawn (std
+///      `CommandExt::creation_flags`) — the Windows analog of the Unix `setsid`
+///      re-invoke in [`spawn_detached`];
+///   3. an **owner-only DACL** (`SECURITY_ATTRIBUTES` restricting the pipe to the
+///      current-user SID) as the Windows analog of `0600` + this peer-cred check;
+///   4. flipping this fn to `true` on Windows ONLY once (1)-(3) exist and have passed an
+///      on-hardware create -> detach -> reattach -> kill dogfood pass.
+///
+/// Until then Windows keeps the shipped read-only restore — the degradation floor — so
+/// nothing regresses and no live shell can be orphaned by an unverified transport.
 pub(crate) const fn daemon_supported() -> bool {
     cfg!(unix)
 }
@@ -44,17 +68,65 @@ mod imp {
     /// still reattaches.
     pub(crate) const DEFAULT_IDLE_GRACE_SECS: u64 = 30;
 
-    /// The effective uid, for a per-user socket directory name in the shared temp
-    /// base. Linked from libc (always present on Unix); pure syscall, no crate.
-    fn euid() -> u32 {
+    /// The effective uid — used both for the per-user socket directory name and as the
+    /// authority the peer-cred check compares every connection against ([`peer_uid`]).
+    pub(crate) fn euid() -> u32 {
         // SAFETY: `geteuid` is a trivial, always-succeeds C syscall with no arguments
         // and no memory effects.
-        unsafe {
-            extern "C" {
-                fn geteuid() -> u32;
-            }
-            geteuid()
+        unsafe { libc::geteuid() }
+    }
+
+    /// The kernel-reported uid of the process on the other end of `stream` — the
+    /// peer-cred check (terminal round 2, PR D). The daemon compares this to its own
+    /// [`euid`] on every accepted connection and refuses a mismatch, closing the gap
+    /// left by the filesystem-perms-only auth. Errors are the caller's cue to fail
+    /// closed (refuse the connection), never to serve it.
+    ///
+    /// Platform split (per-OS, `#[cfg(target_os)]`): Linux uses `getsockopt` with
+    /// `SO_PEERCRED` → `struct ucred`; macOS/BSD use `getpeereid` (the portable
+    /// cross-BSD call). Both are read via `libc` — no hand-rolled struct layout.
+    pub(crate) fn peer_uid(stream: &std::os::unix::net::UnixStream) -> io::Result<u32> {
+        use std::os::unix::io::AsRawFd;
+        peer_uid_of_fd(stream.as_raw_fd())
+    }
+
+    #[cfg(target_os = "linux")]
+    fn peer_uid_of_fd(fd: std::os::unix::io::RawFd) -> io::Result<u32> {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: `getsockopt(SO_PEERCRED)` writes up to `len` bytes into `cred` on
+        // success; we pass a matching zero-initialized `ucred` and its exact size, and
+        // check the return code before reading the result.
+        let rc = unsafe {
+            libc::getsockopt(
+                fd,
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast::<libc::c_void>(),
+                &mut len,
+            )
+        };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
         }
+        Ok(cred.uid)
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn peer_uid_of_fd(fd: std::os::unix::io::RawFd) -> io::Result<u32> {
+        let mut uid: libc::uid_t = 0;
+        let mut gid: libc::gid_t = 0;
+        // SAFETY: `getpeereid` writes the peer's uid/gid into the two valid, initialized
+        // out-params on success; we check the return code before reading `uid`.
+        let rc = unsafe { libc::getpeereid(fd, &mut uid, &mut gid) };
+        if rc != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(uid)
     }
 
     /// The base directory holding this user's daemon sockets: `$XDG_RUNTIME_DIR` when
@@ -175,6 +247,18 @@ mod imp {
             let a = socket_path(Path::new("/tmp/nc-proj-a/.nightcore/terminals")).unwrap();
             let b = socket_path(Path::new("/tmp/nc-proj-b/.nightcore/terminals")).unwrap();
             assert_ne!(a, b);
+        }
+
+        #[test]
+        fn peer_uid_of_a_local_socket_is_our_own_euid() {
+            // The real `SO_PEERCRED`/`getpeereid` FFI: both ends of an in-process
+            // socketpair are this same process, so the kernel reports OUR euid — the
+            // value the daemon requires a peer to match. This exercises the syscall
+            // without a second OS user; the reject path (a mismatching expected uid) is
+            // covered in the daemon integration tests.
+            let (a, b) = std::os::unix::net::UnixStream::pair().expect("socketpair");
+            assert_eq!(peer_uid(&a).expect("peer uid of end a"), euid());
+            assert_eq!(peer_uid(&b).expect("peer uid of end b"), euid());
         }
     }
 }
