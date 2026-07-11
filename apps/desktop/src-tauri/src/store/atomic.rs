@@ -79,3 +79,79 @@ pub(crate) fn quarantine_corrupt(path: &std::path::Path) -> std::io::Result<std:
     std::fs::rename(path, &backup)?;
     Ok(backup)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::TempDir;
+
+    /// The failure-cleanup branch of [`write_atomic`]: when the final `rename` fails,
+    /// the sibling temp file it already created + fsynced must be removed, so a failed
+    /// (or crash-adjacent) write never litters the store dir with orphan
+    /// `.<name>.<pid>.<nonce>.tmp` droppings. The 0600 + atomic-rename invariants are
+    /// covered via re-export in `store/mod.rs`; this pins the ELSE arm they can't reach.
+    ///
+    /// We force the rename to fail deterministically by making the TARGET path a
+    /// directory (`rename(regular file, existing dir)` errors on every platform), so
+    /// the create+write+sync all succeed and control reaches the `remove_file` cleanup.
+    #[test]
+    fn write_atomic_removes_the_temp_file_when_rename_fails() {
+        let tmp = TempDir::new().expect("create temp dir");
+        // A directory sitting on the target path makes `rename(tmp, target)` fail.
+        let target = tmp.path().join("settings.json");
+        std::fs::create_dir(&target).expect("create the blocking directory");
+
+        let result = write_atomic(&target, b"{\"token\":\"s3cr3t\"}");
+        assert!(
+            result.is_err(),
+            "renaming the temp file onto a directory must fail"
+        );
+
+        // The invariant under test: no temp sibling survives the failed rename. The
+        // dir must hold ONLY the blocking directory — no `.settings.json.*.tmp` file.
+        let leftovers: Vec<_> = std::fs::read_dir(tmp.path())
+            .expect("read the store dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| {
+                let name = e.file_name();
+                let name = name.to_string_lossy();
+                name.starts_with(".settings.json.") && name.ends_with(".tmp")
+            })
+            .map(|e| e.file_name())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "the temp file must be cleaned up after a failed rename, found: {leftovers:?}"
+        );
+    }
+
+    /// Parity unit for [`quarantine_corrupt`] on a `settings.json` fixture (the loader
+    /// path in `store::settings` — projects.json parity lives in `store/project.rs`).
+    /// Pins the function's own contract: the original file is MOVED to a
+    /// non-clobbering `<name>.corrupt-<millis>` sibling whose bytes are preserved, and
+    /// the returned path is that backup.
+    #[test]
+    fn quarantine_corrupt_moves_settings_to_a_nonclobbering_backup() {
+        let tmp = TempDir::new().expect("create temp dir");
+        let path = tmp.path().join("settings.json");
+        std::fs::write(&path, b"{ not valid json").expect("seed a corrupt file");
+
+        let backup = quarantine_corrupt(&path).expect("quarantine the file");
+
+        // The original is moved aside so the next write can't overwrite it in place.
+        assert!(!path.exists(), "the corrupt file is moved off its path");
+        // The backup is a distinct, non-clobbering sibling with the corrupt- prefix.
+        assert_ne!(backup, path, "the backup must not be the original path");
+        assert_eq!(backup.parent(), path.parent());
+        assert!(backup
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("settings.json.corrupt-"));
+        // The bytes are preserved verbatim for recovery (incl. plaintext secrets).
+        assert_eq!(
+            std::fs::read(&backup).expect("read the backup"),
+            b"{ not valid json"
+        );
+    }
+}
