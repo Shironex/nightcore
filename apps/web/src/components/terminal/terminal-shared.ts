@@ -106,6 +106,29 @@ export function restoredIdentityTitle(): string {
   return 'This shell has ended. Its scrollback is shown read-only; start a fresh shell to continue in the same folder.';
 }
 
+/** The unread-output badge text (decision 6c): the raw count, clamped so a busy
+ *  background tab/pane shows `99+` rather than an ever-widening pill. Shared by the
+ *  tab strip and the grid pane header so both badge identically. */
+export function unreadBadge(count: number): string {
+  return count > 99 ? '99+' : String(count);
+}
+
+/** Accessible label for the unread badge. */
+export function unreadBadgeLabel(count: number): string {
+  return `${count} unread output ${count === 1 ? 'batch' : 'batches'}`;
+}
+
+/** Count-driven grid column count (decision 1, PR 2): 1→1, 2→2, ≤4→2, ≤6→3, ≤9→3,
+ *  else (up to the 12-session cap) →4. Rows follow from `ceil(n / gridColumns(n))`.
+ *  No free-form spans in v1. Pure + unit-tested. `n<=1` yields 1 (an empty grid
+ *  renders no cells anyway). */
+export function gridColumns(n: number): number {
+  if (n <= 2) return n <= 1 ? 1 : 2;
+  if (n <= 4) return 2;
+  if (n <= 9) return 3;
+  return 4;
+}
+
 /** Decode a base64 scrollback stream (the wire shape of a persisted session's
  *  bytes) into the raw `Uint8Array` fed verbatim to `term.write()`. Escape
  *  sequences survive because base64 is byte-exact. Returns an empty array for an

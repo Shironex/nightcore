@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'vitest';
 
-import { displayPath, terminalLabel } from './terminal-shared';
+import { displayPath, gridColumns, terminalLabel, unreadBadge } from './terminal-shared';
 
 // Pure-string tests (no PTY, no host dependence) — these prove the Windows
 // verbatim-prefix display fix on any CI host, including the Linux/macOS boxes that
@@ -43,5 +43,35 @@ describe('terminalLabel', () => {
     expect(
       terminalLabel('\\\\?\\X:\\dev\\nightcore\\.nightcore\\worktrees\\task-42'),
     ).toBe('task-42');
+  });
+});
+
+describe('gridColumns', () => {
+  test('maps the session count to the locked column count (decision 1)', () => {
+    // 1→1×1, 2→1×2, ≤4→2×2, ≤6→2×3, ≤9→3×3, else (10–12) 3×4.
+    expect(gridColumns(1)).toBe(1);
+    expect(gridColumns(2)).toBe(2);
+    expect(gridColumns(3)).toBe(2);
+    expect(gridColumns(4)).toBe(2);
+    expect(gridColumns(5)).toBe(3);
+    expect(gridColumns(6)).toBe(3);
+    expect(gridColumns(7)).toBe(3);
+    expect(gridColumns(9)).toBe(3);
+    expect(gridColumns(10)).toBe(4);
+    expect(gridColumns(12)).toBe(4);
+  });
+
+  test('clamps a zero/negative count to one column', () => {
+    expect(gridColumns(0)).toBe(1);
+    expect(gridColumns(-3)).toBe(1);
+  });
+});
+
+describe('unreadBadge', () => {
+  test('shows the raw count, clamping past 99 to 99+', () => {
+    expect(unreadBadge(0)).toBe('0');
+    expect(unreadBadge(7)).toBe('7');
+    expect(unreadBadge(99)).toBe('99');
+    expect(unreadBadge(128)).toBe('99+');
   });
 });
