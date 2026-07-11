@@ -166,4 +166,49 @@ describe('reading normalizers', () => {
     expect(s.status).toBe('completed');
     expect(s.dimensionState).toEqual({ security: 'done', tests: 'done' });
   });
+
+  it('storedToReading degrades corrupt enum fields to their neutral fallbacks', () => {
+    const stored = {
+      id: 'x-1',
+      dimension: 'bogus-dimension',
+      grade: 'Z',
+      title: 't',
+      summary: 's',
+      rationale: null,
+      location: null,
+      suggestion: null,
+      affectedFiles: [],
+      tags: [],
+      findings: [],
+      confidence: null,
+      fingerprint: 'fp',
+      status: 'nonsense',
+      linkedTaskId: null,
+    };
+    const v = storedToReading(stored);
+    // No 'bogus'/'Z'/'nonsense' leaks into the VM — each falls back.
+    expect(v.dimension).toBe('architecture');
+    expect(v.grade).toBe('C');
+    expect(v.status).toBe('open');
+  });
+
+  it('streamFromRun drops an unknown dimension from the stepper', () => {
+    const run: ScorecardRun = {
+      id: 'r',
+      projectPath: '/p',
+      status: 'completed',
+      dimensions: ['security', 'made-up', 'tests'],
+      model: 'm',
+      createdAt: 1,
+      updatedAt: 1,
+      costUsd: 0,
+      durationMs: 0,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      readings: [],
+      error: null,
+    };
+    const s = streamFromRun(run);
+    expect(s.requestedDimensions).toEqual(['security', 'tests']);
+    expect(s.dimensionState).toEqual({ security: 'done', tests: 'done' });
+  });
 });

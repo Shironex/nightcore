@@ -10,20 +10,23 @@
  * `StoredIssueValidationResult` (ts-rs, string-typed) — into the single
  * {@link IssueVerdictView} the UI renders.
  */
+import {
+  IssueComplexitySchema,
+  IssueConfidenceSchema,
+  IssueKindSchema,
+  IssuePrRecommendationSchema,
+  IssueVerdictSchema,
+} from '@nightcore/contracts';
 import type {
   IssueComplexity,
-  IssueConfidence,
-  IssueKind,
   IssuePrAnalysis,
-  IssuePrRecommendation,
   IssueTriageEvent,
   IssueValidationResult,
   IssueValidationRun,
-  IssueVerdict,
   StoredIssuePrAnalysis,
   StoredIssueValidationResult,
 } from '@/lib/bridge';
-import { makeScanFold, runStatusFromPersisted } from '@/lib/scan-run';
+import { makeScanFold, narrowOr, runStatusFromPersisted } from '@/lib/scan-run';
 
 import type {
   IssuePrAnalysisView,
@@ -88,14 +91,18 @@ function wirePrAnalysis(p: IssuePrAnalysis): IssuePrAnalysisView {
 }
 
 /** Project a persisted PR analysis (string-typed ts-rs) into the view shape,
- *  narrowing the wire strings to their unions (the engine guarantees valid values). */
+ *  narrowing the wire strings to their unions. The engine guarantees valid values on
+ *  write, so a well-formed store maps unchanged; a corrupt value degrades to a
+ *  documented fallback rather than leaking into the UI (see `@/lib/scan-run/narrow`). */
 function storedPrAnalysis(p: StoredIssuePrAnalysis): IssuePrAnalysisView {
   return {
     hasOpenPr: p.hasOpenPr,
     prNumber: p.prNumber ?? null,
     prFixesIssue: p.prFixesIssue ?? null,
     prSummary: p.prSummary ?? null,
-    recommendation: p.recommendation as IssuePrRecommendation,
+    // Fallback `no_pr`: the neutral recommendation (never falsely tells the user to
+    // wait for a merge or that the PR needs work) for an unrecognized value.
+    recommendation: narrowOr(IssuePrRecommendationSchema, p.recommendation, 'no_pr'),
   };
 }
 
@@ -116,16 +123,28 @@ export function wireToVerdict(r: IssueValidationResult): IssueVerdictView {
 }
 
 /** Map a persisted verdict (string-typed ts-rs) into the view shape, narrowing the
- *  unified wire strings to their unions (the engine guarantees valid values). */
+ *  unified wire strings to their unions. The engine guarantees valid values on write,
+ *  so a well-formed store maps unchanged; a corrupt value degrades to a documented
+ *  fallback rather than leaking into the UI (see `@/lib/scan-run/narrow`). */
 export function storedToVerdict(r: StoredIssueValidationResult): IssueVerdictView {
   return {
-    issueKind: r.issueKind as IssueKind,
-    verdict: r.verdict as IssueVerdict,
-    confidence: r.confidence as IssueConfidence,
+    // Fallback `unknown`: the schema's own unclassified member.
+    issueKind: narrowOr(IssueKindSchema, r.issueKind, 'unknown'),
+    // Fallback `needs_clarification`: the least-committal verdict (neither falsely
+    // valid nor invalid) for an unrecognized value.
+    verdict: narrowOr(IssueVerdictSchema, r.verdict, 'needs_clarification'),
+    // Fallback `low`: never overstate confidence in a corrupt value.
+    confidence: narrowOr(IssueConfidenceSchema, r.confidence, 'low'),
     reasoning: r.reasoning,
     bugConfirmed: r.bugConfirmed ?? null,
     relatedFiles: r.relatedFiles,
-    estimatedComplexity: (r.estimatedComplexity ?? null) as IssueComplexity | null,
+    // Nullable: an absent OR unrecognized complexity degrades to `null` (no estimate
+    // shown) rather than a fabricated bucket.
+    estimatedComplexity: narrowOr<IssueComplexity | null>(
+      IssueComplexitySchema,
+      r.estimatedComplexity,
+      null,
+    ),
     proposedPlan: r.proposedPlan ?? null,
     missingInfo: r.missingInfo,
     prAnalysis: r.prAnalysis ? storedPrAnalysis(r.prAnalysis) : null,

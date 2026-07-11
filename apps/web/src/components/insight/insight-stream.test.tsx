@@ -251,4 +251,54 @@ describe('normalizers', () => {
     expect(s.categoryState.bugs).toBe('done');
     expect(s.costUsd).toBe(0.5);
   });
+
+  it('storedToFinding degrades corrupt enum fields to their neutral fallbacks', () => {
+    const stored: StoredFinding = {
+      id: 'f1',
+      category: 'not-a-category',
+      severity: 'apocalyptic',
+      effort: 'herculean',
+      title: 't',
+      description: 'd',
+      rationale: null,
+      location: null,
+      suggestion: null,
+      codeBefore: null,
+      codeAfter: null,
+      affectedFiles: [],
+      tags: [],
+      confidence: null,
+      fingerprint: 'fp',
+      status: 'garbled',
+      linkedTaskId: null,
+    };
+    const f = storedToFinding(stored);
+    // Nothing corrupt leaks into the VM — each field falls back.
+    expect(f.category).toBe('refactor');
+    expect(f.severity).toBe('info');
+    expect(f.effort).toBe('medium');
+    expect(f.status).toBe('open');
+  });
+
+  it('streamFromRun drops an unknown category and falls back a corrupt scope', () => {
+    const run: InsightRun = {
+      id: 'run-1',
+      projectPath: '/proj',
+      scope: 'sideways',
+      status: 'completed',
+      categories: ['bugs', 'fictional', 'security'],
+      model: 'm',
+      createdAt: 1,
+      updatedAt: 2,
+      costUsd: 0,
+      durationMs: 0,
+      usage: { inputTokens: 0, outputTokens: 0 },
+      findings: [],
+      error: null,
+    };
+    const s = streamFromRun(run);
+    expect(s.scope).toBe('repo');
+    expect(s.requestedCategories).toEqual(['bugs', 'security']);
+    expect(s.categoryState).toEqual({ bugs: 'done', security: 'done' });
+  });
 });

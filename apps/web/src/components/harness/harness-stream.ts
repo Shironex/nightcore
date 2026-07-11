@@ -10,6 +10,7 @@
  * `harness-proposals-ready` near the end (the synthesized artifacts, drive the
  * proposed-harness panel) — both folded incrementally before the terminal event.
  */
+import { ConventionCategorySchema } from '@nightcore/contracts';
 import type {
   ConventionCategory,
   ConventionFinding,
@@ -18,31 +19,31 @@ import type {
   HarnessScanEvent,
   ProposedArtifact,
   RepoProfile,
-  StoredConventionFinding,
-  StoredHarnessProposal,
-  StoredProposedArtifact,
-  StoredRepoProfile,
 } from '@/lib/bridge';
 import {
   makeScanFold,
+  narrowMembers,
   normalizeLocation,
   runStatusFromPersisted,
   seedStepStateFromRun,
 } from '@/lib/scan-run';
 
 import type {
-  ArtifactStatus,
   CategoryProgress,
   ConventionFindingVM,
-  FindingStatus,
   HarnessProposalVM,
-  ProposalStatus,
   ProposedArtifactVM,
   RepoProfileVM,
   RuleCoverageGapVM,
   RunStatus,
 } from './harness.types';
 import { storedToCoverageGap, wireToCoverageGap } from './harness-coverage';
+import {
+  storedToArtifact,
+  storedToConventionFinding,
+  storedToProfile,
+  storedToProposal,
+} from './harness-stored';
 
 /** The stable `reason` carried on the terminal `harness-scan-failed` event — lets
  *  RESULTS tell a user cancel (`aborted`) apart from a real failure. */
@@ -117,30 +118,6 @@ export function wireToConventionFinding(f: ConventionFinding): ConventionFinding
   };
 }
 
-/** Map a persisted `StoredConventionFinding` (string-typed) into the view shape,
- *  narrowing the unified wire strings to their unions (the engine guarantees
- *  valid values). */
-export function storedToConventionFinding(
-  f: StoredConventionFinding,
-): ConventionFindingVM {
-  return {
-    id: f.id,
-    category: f.category as ConventionFindingVM['category'],
-    kind: f.kind as ConventionFindingVM['kind'],
-    severity: f.severity as ConventionFindingVM['severity'],
-    title: f.title,
-    description: f.description,
-    rationale: f.rationale,
-    evidence: f.evidence,
-    suggestion: f.suggestion,
-    tags: f.tags,
-    confidence: f.confidence,
-    fingerprint: f.fingerprint,
-    status: f.status as FindingStatus,
-    linkedTaskId: f.linkedTaskId,
-  };
-}
-
 /** Map a live wire `ProposedArtifact` (contract) into the view shape — it is
  *  always `proposed` (unapplied) when it streams in. */
 export function wireToArtifact(a: ProposedArtifact): ProposedArtifactVM {
@@ -166,31 +143,6 @@ export function wireToArtifact(a: ProposedArtifact): ProposedArtifactVM {
   };
 }
 
-/** Map a persisted `StoredProposedArtifact` (string-typed) into the view shape,
- *  narrowing the wire strings to their unions and carrying the applied lifecycle. */
-export function storedToArtifact(a: StoredProposedArtifact): ProposedArtifactVM {
-  return {
-    id: a.id,
-    kind: a.kind as ProposedArtifactVM['kind'],
-    group: a.group,
-    groupTitle: a.groupTitle,
-    title: a.title,
-    description: a.description,
-    rationale: a.rationale,
-    targetPath: a.targetPath,
-    writeMode: a.writeMode as ProposedArtifactVM['writeMode'],
-    content: a.content,
-    language: a.language,
-    sourceFindings: a.sourceFindings,
-    dependsOn: a.dependsOn,
-    confidence: a.confidence,
-    fingerprint: a.fingerprint,
-    status: a.status as ArtifactStatus,
-    appliedPath: a.appliedPath,
-    appliedAt: a.appliedAt,
-  };
-}
-
 /** Map a live wire `HarnessProposal` (contract) into the view shape — always
  *  `proposed` (unconverted) when it streams in (lifecycle is applied on persist). */
 export function wireToProposal(p: HarnessProposal): HarnessProposalVM {
@@ -211,26 +163,6 @@ export function wireToProposal(p: HarnessProposal): HarnessProposalVM {
   };
 }
 
-/** Map a persisted `StoredHarnessProposal` (string-typed) into the view shape,
- *  narrowing the wire strings to their unions and carrying the convert lifecycle. */
-export function storedToProposal(p: StoredHarnessProposal): HarnessProposalVM {
-  return {
-    id: p.id,
-    kind: p.kind as HarnessProposalVM['kind'],
-    title: p.title,
-    description: p.description,
-    rationale: p.rationale,
-    artifactIds: p.artifactIds,
-    prompt: p.prompt,
-    verifyCommand: p.verifyCommand,
-    harnessCheck: p.harnessCheck,
-    confidence: p.confidence,
-    fingerprint: p.fingerprint,
-    status: p.status as ProposalStatus,
-    linkedTaskId: p.linkedTaskId,
-  };
-}
-
 /** Map a live wire `RepoProfile` (contract) into the ProfileBanner view shape. */
 export function wireToProfile(p: RepoProfile): RepoProfileVM {
   return {
@@ -246,30 +178,13 @@ export function wireToProfile(p: RepoProfile): RepoProfileVM {
   };
 }
 
-/** Map a persisted `StoredRepoProfile` (string-typed enums) into the view shape. */
-export function storedToProfile(p: StoredRepoProfile): RepoProfileVM {
-  return {
-    isMonorepo: p.isMonorepo,
-    workspaceTool: p.workspaceTool as RepoProfileVM['workspaceTool'],
-    packages: p.packages.map((pkg) => ({
-      name: pkg.name,
-      path: pkg.path,
-      role: pkg.role as RepoProfileVM['packages'][number]['role'],
-    })),
-    languages: p.languages,
-    frameworks: p.frameworks,
-    hasEslintFlatConfig: p.hasEslintFlatConfig,
-    hasLintMeta: p.hasLintMeta,
-    hasAgentDocs: p.hasAgentDocs,
-    existingPlugins: p.existingPlugins,
-  };
-}
-
 /** Project a persisted run into the same `HarnessStream` shape the live fold
  *  produces, so the view renders both from one model. */
 export function streamFromRun(run: HarnessRun): HarnessStream {
   const status: RunStatus = runStatusFromPersisted(run.status);
-  const categories = run.categories as ConventionCategory[];
+  // Drop any persisted category that isn't a contract member rather than seed a
+  // bogus stepper lens.
+  const categories = narrowMembers(ConventionCategorySchema, run.categories);
   return {
     runId: run.id,
     status,
