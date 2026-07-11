@@ -85,6 +85,18 @@ pub struct Settings {
     /// Serde-additive: a settings file written before this field loads as `true`.
     #[serde(default = "default_true")]
     pub context_pack_enabled: bool,
+    /// Plan-approval gate (T6, #147) — the headline v0.3 governed-autonomy default.
+    /// When ON (the default), a `Build`-class task with no per-task override runs in
+    /// `plan` mode: the agent produces a reviewable plan and PARKS at
+    /// `waiting_approval` before it writes any code, so a human approves / refines /
+    /// rejects the plan first. Non-Build kinds (Research/TDD/Decompose) are
+    /// unaffected — this is "default-on for **Build**". A per-task "Plan first" toggle
+    /// overrides it either way (force a plan on any kind, or skip it for a trivial
+    /// Build task). Global-only (no per-project override) — a studio-wide governance
+    /// stance, like `auto_commit_on_verified`. Default `true` (governed by default);
+    /// serde-additive: a settings file written before this field loads as `true`.
+    #[serde(default = "default_true")]
+    pub plan_gate_default: bool,
     /// Auto Mode option: when the autonomous loop is running and this is enabled,
     /// the web observer fires the `commit_task` IPC for each task that reaches the
     /// verified state (`Done` + `verified`), so the loop commits its output as it
@@ -501,6 +513,10 @@ impl Default for Settings {
             // Lock (feature #4): the curated Constitution is injected by default; a
             // project with no `context.md` simply has nothing to inject (a no-op).
             context_pack_enabled: true,
+            // T6 (#147): the plan-approval gate is ON by default — a Build task
+            // reviews a plan before writing code. The headline governed-autonomy
+            // stance; a per-task "Plan first" toggle or this setting opts out.
+            plan_gate_default: true,
             // Auto Mode option: opt-in — the loop commits verified tasks only once
             // the user enables it in the Auto Mode options popover.
             auto_commit_on_verified: false,

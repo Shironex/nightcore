@@ -161,6 +161,7 @@ export const MOCK_SETTINGS: Settings = {
   maxBudgetUsd: null,
   mcpServers: [],
   contextPackEnabled: true,
+  planGateDefault: true,
   autoCommitOnVerified: false,
   sandboxSessions: false,
   issueSyncEnabled: false,

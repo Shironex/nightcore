@@ -32,6 +32,12 @@ autoCommitOnVerified?: boolean,
  */
 sandboxSessions?: boolean, 
 /**
+ * T6 (#147): toggle the default-on plan-approval gate for Build tasks.
+ * Global-only (ignored for a per-project override target), like
+ * `auto_commit_on_verified`. See [`super::model::Settings::plan_gate_default`].
+ */
+planGateDefault?: boolean, 
+/**
  * #97: toggle GitHub two-way issue sync (writeback). Global-only (ignored for a
  * per-project override target), like `sandbox_sessions`. See
  * [`super::model::Settings::issue_sync_enabled`].
