@@ -33,6 +33,7 @@ export function buildPermissionsCards(
           hint: 'auto-accept · plan · ask (persists; runtime still auto-denies)',
           control: (
             <Segmented
+              ariaLabel="Permission mode"
               options={PERMISSION_MODES}
               value={effective.permissionMode}
               onChange={(v) => patchScoped({ permissionMode: v })}

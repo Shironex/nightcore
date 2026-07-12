@@ -128,6 +128,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
               hint: 'Thinking budget per turn',
               control: (
                 <Segmented
+                  ariaLabel="Reasoning effort"
                   options={effortChoices(effective.defaultModel)}
                   value={effective.defaultEffort}
                   onChange={(v) => patchScoped({ defaultEffort: v })}
@@ -146,6 +147,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
               hint: 'Parallel agent runs',
               control: (
                 <Segmented
+                  ariaLabel="Max concurrency"
                   options={CONCURRENCY}
                   value={String(effective.maxConcurrency)}
                   onChange={(v) => patchScoped({ maxConcurrency: Number(v) })}
@@ -214,6 +216,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
               hint: 'Main runs in the project root; Worktree isolates on a branch',
               control: (
                 <Segmented
+                  ariaLabel="Default run mode"
                   options={RUN_MODES}
                   value={effective.defaultRunMode}
                   onChange={(v) =>
@@ -241,6 +244,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
                   : 'No supported editor detected on PATH — install one (Cursor, VS Code, …)',
               control: (
                 <Segmented
+                  ariaLabel="Open in editor"
                   // Empty string is the "Auto" sentinel: the Rust side auto-detects
                   // the first installed editor. Detected editors follow. Global-only —
                   // it's a machine/user preference, not a per-project setting.
@@ -269,6 +273,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
               hint: 'Task-level model picks can use either provider',
               control: (
                 <Segmented
+                  ariaLabel="Provider"
                   options={PROVIDERS}
                   value={settings.provider}
                   onChange={(provider) => {
