@@ -192,14 +192,19 @@ export function parseFindings(
 }
 
 /** Count lines in a file, cheaply. Returns 0 when unreadable. Shared by every scan
- *  pipeline's grounding step. */
+ *  pipeline's grounding step.
+ *
+ *  Counts `\n` (0x0A) bytes on the raw {@link Buffer} via native `indexOf` rather
+ *  than decoding to a UTF-8 string and scanning char-by-char: 0x0A never appears as
+ *  a UTF-8 continuation/lead byte, so the byte count equals the decoded-string
+ *  newline count exactly, at a fraction of the cost. */
 export function lineCount(absPath: string): number {
   try {
-    const content = fs.readFileSync(absPath, 'utf8');
-    if (content.length === 0) return 0;
+    const buf = fs.readFileSync(absPath);
+    if (buf.length === 0) return 0;
     let n = 1;
-    for (let i = 0; i < content.length; i++) {
-      if (content.charCodeAt(i) === 10) n++;
+    for (let i = buf.indexOf(10); i !== -1; i = buf.indexOf(10, i + 1)) {
+      n++;
     }
     return n;
   } catch {
@@ -207,18 +212,69 @@ export function lineCount(absPath: string): number {
   }
 }
 
+/** Resolve a repo-relative path against the project root, returning the absolute
+ *  path ONLY when it is contained within the root (no `../` escape). The single
+ *  containment chokepoint — it is security-relevant, so both {@link fileExists} and
+ *  the grounding memo route through here rather than re-deriving the check. */
+function resolveContained(projectPath: string, rel: string): string | undefined {
+  if (rel.length === 0) return undefined;
+  const abs = path.resolve(projectPath, rel);
+  const root = path.resolve(projectPath);
+  if (abs !== root && !abs.startsWith(root + path.sep)) return undefined;
+  return abs;
+}
+
 /** Whether a repo-relative path exists as a file under the project root, and is
  *  contained within it (no `../` escape). Shared by every scan pipeline's grounding
  *  step — the containment check is security-relevant, so it lives in one place. */
 export function fileExists(projectPath: string, rel: string): boolean {
-  if (rel.length === 0) return false;
-  const abs = path.resolve(projectPath, rel);
-  const root = path.resolve(projectPath);
-  if (abs !== root && !abs.startsWith(root + path.sep)) return false;
+  const abs = resolveContained(projectPath, rel);
+  if (abs === undefined) return false;
   try {
     return fs.statSync(abs).isFile();
   } catch {
     return false;
+  }
+}
+
+/**
+ * Per-pass filesystem memo for grounding: caches existence (a `statSync`) and
+ * line-count (a single file read) results keyed by ABSOLUTE path, scoped to one
+ * {@link groundFindings} call. This dedups the two ways the same path gets touched
+ * repeatedly across a pass — a file that is one finding's `location.file` and
+ * another finding's `affectedFile`, or a path checked for existence and then read
+ * for its line count — so it is never stat'd or read twice. All I/O goes through the
+ * shared {@link fileExists}/{@link lineCount}, preserving their exact behavior
+ * (containment rejection, unreadable → 0). */
+class GroundingFs {
+  private readonly existsCache = new Map<string, boolean>();
+  private readonly lineCache = new Map<string, number>();
+
+  constructor(private readonly projectPath: string) {}
+
+  /** Contained-existence check, cached by contained abs path. Uncontained /
+   *  empty refs short-circuit to `false` without touching the caches. */
+  fileExists(rel: string): boolean {
+    const abs = resolveContained(this.projectPath, rel);
+    if (abs === undefined) return false;
+    const hit = this.existsCache.get(abs);
+    if (hit !== undefined) return hit;
+    const ok = fileExists(this.projectPath, rel);
+    this.existsCache.set(abs, ok);
+    return ok;
+  }
+
+  /** Line count for a contained ref, cached by contained abs path. Callers MUST
+   *  only reach here when a clamp is actually needed — this is the sole whole-file
+   *  read in the grounding pass. */
+  lineCount(rel: string): number {
+    const abs = resolveContained(this.projectPath, rel);
+    if (abs === undefined) return 0;
+    const hit = this.lineCache.get(abs);
+    if (hit !== undefined) return hit;
+    const n = lineCount(abs);
+    this.lineCache.set(abs, n);
+    return n;
   }
 }
 
@@ -229,34 +285,40 @@ export function fileExists(projectPath: string, rel: string): boolean {
  * findings — architecture, dependencies — are legitimately fileless), but its
  * `affectedFiles` is filtered to existing paths and its line numbers are clamped
  * to the real file length so the UI can deep-link safely.
+ *
+ * A {@link GroundingFs} memo scopes all stat/read I/O to this pass: each path is
+ * stat'd at most once and read at most once. The file is read ONLY when the
+ * location carries a line number to clamp — a fileless or line-less finding never
+ * reads the file, only the (cached) existence check runs.
  */
 export function groundFindings(
   findings: Finding[],
   projectPath: string,
 ): Finding[] {
+  const memo = new GroundingFs(projectPath);
   const grounded: Finding[] = [];
   for (const finding of findings) {
     const loc = finding.location;
     if (loc !== undefined) {
-      if (!fileExists(projectPath, loc.file)) {
+      if (!memo.fileExists(loc.file)) {
         // Hallucinated file ref — drop the finding entirely.
         continue;
       }
-      const lines = lineCount(path.resolve(projectPath, loc.file));
-      const clampedLoc = clampLocationLines(loc, lines);
+      // Only read the file when there is a line number that could need clamping;
+      // with no line, clampLocationLines is a no-op, so skip the read entirely.
+      const needsClamp = loc.startLine !== undefined || loc.endLine !== undefined;
+      const clampedLoc = needsClamp
+        ? clampLocationLines(loc, memo.lineCount(loc.file))
+        : loc;
       grounded.push({
         ...finding,
         location: clampedLoc,
-        affectedFiles: finding.affectedFiles.filter((f) =>
-          fileExists(projectPath, f),
-        ),
+        affectedFiles: finding.affectedFiles.filter((f) => memo.fileExists(f)),
       });
     } else {
       grounded.push({
         ...finding,
-        affectedFiles: finding.affectedFiles.filter((f) =>
-          fileExists(projectPath, f),
-        ),
+        affectedFiles: finding.affectedFiles.filter((f) => memo.fileExists(f)),
       });
     }
   }
