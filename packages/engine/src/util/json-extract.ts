@@ -7,6 +7,18 @@
  */
 
 /**
+ * Narrow an `unknown` to the opaque JSON OBJECT shape (`Record<string, unknown>`),
+ * returning `undefined` for `null`, a non-object, or an array. Used to forward the
+ * SDK result message's `structured_output` onto the `session-completed` event — every
+ * `outputFormat` schema is object-wrapped and the contract field is a `z.record`.
+ */
+export function asStructuredOutput(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+/**
  * Pull the first JSON array (or object) out of a model result that may be wrapped
  * in prose or ```json fences. Returns the parsed value, or `undefined` if no
  * valid JSON array/object can be located. Tolerant by design — the model is

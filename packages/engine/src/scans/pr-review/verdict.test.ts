@@ -42,10 +42,12 @@ function finding(over: Partial<ReviewFinding> = {}): ReviewFinding {
   };
 }
 
-/** Emit a `session-completed` carrying `result`, then resolve. */
+/** Emit a `session-completed` carrying `result` (and optionally the SDK's native
+ *  `structuredOutput`), then resolve. */
 function completing(
   result: string,
   costUsd = 0,
+  structuredOutput?: Record<string, unknown>,
 ): (emit: (e: NightcoreEvent) => void) => Promise<void> {
   return async (emit) => {
     emit({
@@ -61,6 +63,7 @@ function completing(
         cacheReadTokens: 0,
         cacheCreationTokens: 0,
       },
+      ...(structuredOutput !== undefined ? { structuredOutput } : {}),
     });
   };
 }
@@ -75,6 +78,45 @@ function deps(runnerFactory: PrReviewRunnerFactory) {
     runnerFactory,
   };
 }
+
+describe('synthesizePrVerdict — structured output', () => {
+  test('PREFERS the SDK structured_output over the result text', async () => {
+    const factory: PrReviewRunnerFactory = (_cfg, emit) => ({
+      async run() {
+        // Text says one thing; the validated structured output is authoritative.
+        await completing('the diff looks blocked to me', 0, {
+          verdict: 'needs_revision',
+          reasoning: 'from structured output',
+        })(emit);
+      },
+      async interrupt() {},
+    });
+    const result = await synthesizePrVerdict({
+      ...deps(factory),
+      findings: [finding()],
+    });
+    expect(result.verdict).toBe('needs_revision');
+    expect(result.reasoning).toBe('from structured output');
+  });
+
+  test('DEGRADES to text parsing when structured output is absent', async () => {
+    const factory: PrReviewRunnerFactory = (_cfg, emit) => ({
+      async run() {
+        // No structuredOutput → fall back to prose-parsing the result text.
+        await completing(
+          JSON.stringify({ verdict: 'ready', reasoning: 'from text' }),
+        )(emit);
+      },
+      async interrupt() {},
+    });
+    const result = await synthesizePrVerdict({
+      ...deps(factory),
+      findings: [],
+    });
+    expect(result.verdict).toBe('ready');
+    expect(result.reasoning).toBe('from text');
+  });
+});
 
 describe('synthesizePrVerdict — happy path', () => {
   test('returns the verdict + reasoning from a clean JSON object', async () => {

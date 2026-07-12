@@ -44,6 +44,7 @@ import type {
 } from '@nightcore/contracts';
 
 import { getBoolean, getObject, getString } from '../../util/field-extract.js';
+import { asStructuredOutput } from '../../util/json-extract.js';
 import { parseSubtasks, subtasksFromStructuredOutput } from './decompose.js';
 
 export type {
@@ -445,6 +446,9 @@ function translateResult(
   options: TranslateOptions,
 ): TranslateResult {
   if (msg.subtype === 'success') {
+    // The SDK's native structured output, forwarded verbatim (object-wrapped) for any
+    // kind that set `outputFormat` (pr-review reads its passes off this; decompose below).
+    const structuredOutput = asStructuredOutput(msg.structured_output);
     return {
       events: [
         {
@@ -461,14 +465,10 @@ function translateResult(
             cacheCreationTokens: msg.usage.cache_creation_input_tokens ?? 0,
             reasoningOutputTokens: 0,
           },
-          // Decompose sessions carry structured sub-task proposals. The PREFERRED
-          // source is the SDK's native `structured_output` (the run was launched
-          // with `outputFormat`, so the SDK forced a schema-conforming
-          // `{ subtasks }` object and retried non-conforming output internally).
-          // When it is absent — an older transcript, or a provider that didn't
-          // honor `outputFormat` — fall back to parsing a JSON array out of the
-          // final result TEXT (the pre-structured-output path). Always present for
-          // `decompose` (possibly `[]`); omitted entirely for every other kind.
+          ...(structuredOutput !== undefined ? { structuredOutput } : {}),
+          // Decompose additionally parses its `{ subtasks }` into validated
+          // `proposedSubtasks` (native structured output preferred, text fallback);
+          // omitted for every other kind.
           ...(options.kind === 'decompose'
             ? {
                 proposedSubtasks:

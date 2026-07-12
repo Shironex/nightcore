@@ -43,11 +43,14 @@ import {
   type SessionConfigParts,
 } from '../shared/scan-manager.js';
 import { untrustedBlock } from '../shared/untrusted.js';
+import { clampVerdict } from './clamp.js';
 import { capDiff } from './diff.js';
 import {
   dedupePrReviewFindings,
+  findingsFromStructuredOutput,
   groundPrReviewFindings,
   parsePrReviewFindings,
+  PR_REVIEW_OUTPUT_FORMAT,
 } from './findings.js';
 import {
   PR_REVIEW_ALLOWED_TOOLS,
@@ -125,6 +128,9 @@ export class PrReviewScanManager extends ScanManager<
       allowedTools: [...PR_REVIEW_ALLOWED_TOOLS],
       disallowedTools: [...PR_REVIEW_DISALLOWED_TOOLS],
       maxTurns: DEFAULT_MAX_TURNS,
+      // Enforced structured output so each finding's `severity` is a validated enum (the
+      // substrate the verdict clamp bands on); the parse below degrades to text.
+      outputFormat: PR_REVIEW_OUTPUT_FORMAT,
     };
   }
 
@@ -144,7 +150,13 @@ export class PrReviewScanManager extends ScanManager<
   protected parse(
     result: string,
     lens: ReviewLens,
+    structuredOutput?: Record<string, unknown>,
   ): { findings: ReviewFinding[]; error?: string } {
+    // PREFER validated structured output; degrade to prose-parsing the result text when
+    // it is ABSENT (older/degraded run, or the Codex path). A structured pass with zero
+    // findings is a clean lens, never a parse error, so it never drives the retry.
+    const structured = findingsFromStructuredOutput(structuredOutput, lens);
+    if (structured !== undefined) return { findings: structured };
     return parsePrReviewFindings(result, lens);
   }
 
@@ -292,6 +304,17 @@ export class PrReviewScanManager extends ScanManager<
       );
     }
 
+    // CLAMP the model's proposed verdict to the mechanical band derived from the FINAL
+    // survivors' calibrated severities (clamp.ts). Fail-open: no model verdict ⇒ nothing
+    // to clamp (we never synthesize one — the run completes without a verdict).
+    const clamp =
+      verdict.verdict !== undefined
+        ? clampVerdict(verdict.verdict, survivors)
+        : undefined;
+    if (clamp?.clamped === true) {
+      this.deps.logger?.info(`[pr-review] verdict clamped — ${clamp.reason}`);
+    }
+
     const durationMs = Date.now() - startedAt;
     this.deps.emit({
       type: 'pr-review-completed',
@@ -301,13 +324,16 @@ export class PrReviewScanManager extends ScanManager<
       costUsd: totalCost,
       durationMs,
       usage: totalUsage,
-      ...(verdict.verdict !== undefined ? { verdict: verdict.verdict } : {}),
+      ...(clamp !== undefined ? { verdict: clamp.verdict } : {}),
       ...(verdict.reasoning !== undefined
         ? { verdictReasoning: verdict.reasoning }
         : {}),
+      ...(clamp?.clamped === true
+        ? { verdictClamped: true, clampReason: clamp.reason }
+        : {}),
     });
     this.deps.logger?.info(
-      `[pr-review] review completed — ${survivors.length} findings across ${itemsRun.length} lenses${verdict.verdict !== undefined ? ` · verdict ${verdict.verdict}` : ''}, ${fmtCost(totalCost)}, ${fmtElapsed(durationMs)}`,
+      `[pr-review] review completed — ${survivors.length} findings across ${itemsRun.length} lenses${clamp !== undefined ? ` · verdict ${clamp.verdict}${clamp.clamped ? ' (clamped)' : ''}` : ''}, ${fmtCost(totalCost)}, ${fmtElapsed(durationMs)}`,
     );
     this.changedFilesByRun.delete(command.runId);
   }
