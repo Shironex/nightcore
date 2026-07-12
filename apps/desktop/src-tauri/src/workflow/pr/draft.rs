@@ -78,7 +78,7 @@ fn draft_pr_message_blocking(
     // create path re-ensures it defensively if the user edits it out. Applied to both
     // the AI draft and the deterministic (title + description) fallback.
     if let Some(n) = task.issue_number {
-        draft.body = super::create::ensure_closes_keyword(&draft.body, n);
+        draft.body = super::closes::ensure_closes_keyword(&draft.body, n);
     }
     Ok(draft)
 }
