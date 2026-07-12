@@ -1,4 +1,5 @@
 import {
+  AlertIcon,
   BranchPicker,
   Button,
   CloseIcon,
@@ -40,6 +41,7 @@ export function NewTaskForm({ open, planGateDefault, onCreate, onClose }: NewTas
     permissionMode,
     planFirst,
     providerSupportsPlanGate,
+    governanceWarning,
     model,
     providerId,
     effort,
@@ -208,6 +210,22 @@ export function NewTaskForm({ open, planGateDefault, onCreate, onClose }: NewTas
               setEffort(sel.effort);
             }}
           />
+          {/* Governance mismatch warning (#296): this project's Harness policy is
+              armed but the picked provider can't enforce it (or can't write the
+              audit ledger) — the engine refuses the run before it starts
+              (`assertGovernanceInvariant`). Surfaced here so that refusal isn't a
+              surprise after Create. */}
+          {governanceWarning !== null && (
+            <div
+              role="alert"
+              className="flex items-start gap-2 rounded-[10px] border border-warning/40 bg-warning/[0.08] px-3 py-2.5"
+            >
+              <AlertIcon size={15} className="mt-0.5 shrink-0 text-warning" />
+              <p className="flex-1 text-xs-plus leading-snug text-warning">
+                {governanceWarning}
+              </p>
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-3">
             <div className="flex flex-col gap-1.5">
               <label htmlFor="nt-max-turns" className={LABEL_CLASS}>

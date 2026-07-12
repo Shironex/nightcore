@@ -82,6 +82,20 @@ export type CostTelemetry = z.infer<typeof CostTelemetrySchema>;
  * the PreToolUse confinement + deny/ask/allow gate exists only because the SDK
  * exposes hooks, so `supportsHooks: false` means sandbox-or-refuse (never a silent
  * drop of confinement). That invariant is enforced downstream, not here.
+ *
+ * `supportsHarnessPolicy` / `supportsLedger` are the same posture applied to a
+ * SEPARATE seam (issue #296): a project's Harness runtime policy (protected paths
+ * + Bash-command deny tiers) and the flight-recorder audit ledger both ride the
+ * SAME PreToolUse hook Claude exposes, but they are governance/audit concerns, not
+ * the bypass/auto-accept OS-containment `supportsHooks` already guards — a
+ * provider can lack one and not the other in principle, so they are independent
+ * flags. `supportsHarnessPolicy: false` means fail-closed REFUSAL of a run whose
+ * Harness policy is ARMED (enforced downstream by `assertGovernanceInvariant`).
+ * `supportsLedger: false` is declared truthfully but is NOT currently a refusal
+ * trigger: the ledger path is set unconditionally per project (not an "armed"
+ * signal the way the policy is), so there is nothing to gate on yet — see
+ * `assertGovernanceInvariant`'s docblock. It exists for descriptor completeness
+ * and #304's real-enforcement follow-up.
  */
 export const ProviderCapabilitiesSchema = z.object({
   /** Stable provider identifier (`claude`, `codex`, …). */
@@ -94,6 +108,16 @@ export const ProviderCapabilitiesSchema = z.object({
   supportsHooks: z.boolean(),
   /** Provider-native write containment that can compensate for missing hooks. */
   providesOwnWriteContainment: z.boolean().default(false),
+  /** Can enforce a project's Harness runtime policy (protected paths + Bash-command
+   *  deny tiers). `false` ⇒ a run with an armed policy is REFUSED, never silently
+   *  ungoverned (issue #296; real Codex-side enforcement is tracked as #304). */
+  supportsHarnessPolicy: z.boolean(),
+  /** Can write the per-task flight-recorder audit ledger (issue #296). Declared
+   *  truthfully but NOT currently a refusal trigger — the ledger path is set
+   *  unconditionally per project, not an "armed" signal; see
+   *  `assertGovernanceInvariant`'s docblock. Exists for descriptor completeness
+   *  and #304's real-enforcement follow-up. */
+  supportsLedger: z.boolean(),
   /** MCP server configuration/inspection. */
   supportsMcp: z.boolean(),
   /** A dedicated plan/read-only mode. */

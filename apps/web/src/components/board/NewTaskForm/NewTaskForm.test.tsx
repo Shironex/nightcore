@@ -5,6 +5,9 @@ import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
 import { MAX_IMAGES_PER_TASK } from '@/lib/attachments';
+import type { HarnessPolicyFile } from '@/lib/bridge';
+import { governanceWarningFor, harnessPolicyHasRules } from '@/lib/harness-governance';
+import { CLAUDE_CAPABILITIES, CODEX_CAPABILITIES } from '@/lib/provider-capabilities';
 
 import { planFirstDefault, useNewTaskForm } from './NewTaskForm.hooks';
 import * as stories from './NewTaskForm.stories';
@@ -21,6 +24,41 @@ test('planFirstDefault seeds plan-first only for a Build task on a hooks-capable
   // Non-Build kinds and a disabled gate default off regardless of the provider.
   expect(planFirstDefault('research', true, true)).toBe(false);
   expect(planFirstDefault('build', false, true)).toBe(false);
+});
+
+const EMPTY_POLICY_FILE: HarnessPolicyFile = {
+  enabled: true,
+  protectedPaths: [],
+  denyBashPatterns: [],
+  denyReadPaths: [],
+  disallowedTools: [],
+  allowTools: [],
+  askTools: [],
+  diffBudget: null,
+  manifestExists: true,
+};
+
+test('harnessPolicyHasRules (#296): false for an all-empty policy, true when any field has a rule', () => {
+  expect(harnessPolicyHasRules(EMPTY_POLICY_FILE)).toBe(false);
+  expect(harnessPolicyHasRules({ ...EMPTY_POLICY_FILE, protectedPaths: ['bun.lock'] })).toBe(true);
+  expect(
+    harnessPolicyHasRules({ ...EMPTY_POLICY_FILE, denyBashPatterns: ['--no-verify'] }),
+  ).toBe(true);
+});
+
+test('governanceWarningFor (#296): only warns when the policy is armed AND the provider lacks governance', () => {
+  // No warning: policy not armed, capabilities unresolved, or a governed provider.
+  expect(governanceWarningFor(false, CODEX_CAPABILITIES)).toBeNull();
+  expect(governanceWarningFor(true, null)).toBeNull();
+  expect(governanceWarningFor(true, CLAUDE_CAPABILITIES)).toBeNull();
+  // Warns: policy armed AND the resolved provider can't enforce it. Never mentions
+  // the audit ledger — the ledger path is unconditional per project, never an
+  // independent trigger (see the engine's `assertGovernanceInvariant` docblock).
+  const warning = governanceWarningFor(true, CODEX_CAPABILITIES);
+  expect(warning).not.toBeNull();
+  expect(warning).toContain('Codex');
+  expect(warning).toContain('Harness governance policy');
+  expect(warning).not.toContain('audit ledger');
 });
 
 test('gates create on a non-empty title, then fires onCreate', async () => {
@@ -93,6 +131,20 @@ test('a $0 max-budget inherits — 0 is not a valid ceiling (#240)', async () =>
   });
 });
 
+test('the governance warning (#296) renders when Codex is picked on a project with an armed policy, and stays absent by default', async () => {
+  const screen = render(<Default />);
+  // The default story picks no provider ⇒ Claude, which supports governance — no
+  // warning even though the mocked project policy (`MOCK_POLICY_FILE`) is armed.
+  expect(screen.container.querySelector('[role="alert"]')).toBeNull();
+
+  await screen.getByRole('combobox', { name: /model/i }).click();
+  await screen.getByRole('option', { name: /gpt-5 codex/i }).click();
+
+  await expect
+    .element(screen.getByRole('alert'))
+    .toHaveTextContent(/cannot enforce this project's Harness governance policy/i);
+});
+
 // Render `useNewTaskForm` directly so a test can drive `addFiles` twice within one
 // render — a drop + a paste that both land before React re-renders. The .tsx dialog
 // can't stage that race, but the hook is where the clamp must hold.
@@ -118,6 +170,20 @@ async function mountForm(): Promise<() => Controller> {
   await vi.waitFor(() => expect(latest).toBeDefined());
   return () => latest!;
 }
+
+test('the hook wiring: governanceWarning tracks the picked provider live (#296)', async () => {
+  const get = await mountForm();
+  // The mocked active-project policy (`MOCK_POLICY_FILE`) is armed; the default
+  // (unpicked) provider resolves to Claude, which supports governance.
+  await vi.waitFor(() => expect(get().governanceWarning).toBeNull());
+
+  get().setProviderId('codex');
+  await vi.waitFor(() => expect(get().governanceWarning).not.toBeNull());
+  expect(get().governanceWarning).toContain('Codex');
+
+  get().setProviderId(undefined);
+  await vi.waitFor(() => expect(get().governanceWarning).toBeNull());
+});
 
 function pngFiles(n: number): File[] {
   return Array.from(

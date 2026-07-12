@@ -55,6 +55,8 @@ describe('ProviderCapabilitiesSchema', () => {
     autonomyLevels: ['bypass', 'auto-accept', 'ask', 'plan'],
     supportsHooks: true,
     providesOwnWriteContainment: false,
+    supportsHarnessPolicy: true,
+    supportsLedger: true,
     supportsMcp: true,
     supportsPlanMode: true,
     supportsStructuredOutput: true,
@@ -105,11 +107,15 @@ describe('ProviderCapabilitiesSchema', () => {
       autonomyLevels: ['auto-accept', 'ask', 'plan'],
       supportsHooks: false,
       providesOwnWriteContainment: true,
+      supportsHarnessPolicy: false,
+      supportsLedger: false,
       supportsAskUserQuestion: false,
       costTelemetry: 'tokens-only',
     });
     expect(parsed.supportsHooks).toBe(false);
     expect(parsed.providesOwnWriteContainment).toBe(true);
+    expect(parsed.supportsHarnessPolicy).toBe(false);
+    expect(parsed.supportsLedger).toBe(false);
     expect(parsed.autonomyLevels).toEqual(['auto-accept', 'ask', 'plan']);
     expect(parsed.costTelemetry).toBe('tokens-only');
   });
@@ -120,6 +126,34 @@ describe('ProviderCapabilitiesSchema', () => {
     expect(ProviderCapabilitiesSchema.safeParse(missingHooks).success).toBe(
       false,
     );
+  });
+
+  test('supportsHarnessPolicy / supportsLedger (#296) round-trip and are required', () => {
+    // Round-trip: both fields survive a parse unchanged.
+    const governed = ProviderCapabilitiesSchema.parse({
+      ...claude,
+      supportsHarnessPolicy: true,
+      supportsLedger: true,
+    });
+    expect(governed.supportsHarnessPolicy).toBe(true);
+    expect(governed.supportsLedger).toBe(true);
+
+    const ungoverned = ProviderCapabilitiesSchema.parse({
+      ...claude,
+      supportsHarnessPolicy: false,
+      supportsLedger: false,
+    });
+    expect(ungoverned.supportsHarnessPolicy).toBe(false);
+    expect(ungoverned.supportsLedger).toBe(false);
+
+    // Required — no implicit default, mirroring `supportsHooks`.
+    const missingPolicy: Record<string, unknown> = { ...claude };
+    delete missingPolicy.supportsHarnessPolicy;
+    expect(ProviderCapabilitiesSchema.safeParse(missingPolicy).success).toBe(false);
+
+    const missingLedger: Record<string, unknown> = { ...claude };
+    delete missingLedger.supportsLedger;
+    expect(ProviderCapabilitiesSchema.safeParse(missingLedger).success).toBe(false);
   });
 
   test('rejects an invalid provider id', () => {

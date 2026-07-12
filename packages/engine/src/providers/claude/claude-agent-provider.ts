@@ -21,7 +21,7 @@ import type {
   SessionEventSink,
   StartSessionParams,
 } from '../agent-provider.js';
-import { assertHooksInvariant } from '../agent-provider.js';
+import { assertGovernanceInvariant, assertHooksInvariant } from '../agent-provider.js';
 import {
   autonomyToPermissionMode,
   CLAUDE_CAPABILITIES,
@@ -56,6 +56,13 @@ export class ClaudeAgentProvider implements AgentProvider {
     emit: SessionEventSink,
     logger?: Logger,
   ): AgentSession {
+    // Fail-closed governance preflight (issue #296) BEFORE anything else: refuses a
+    // run whose Harness policy is ARMED (present and non-empty) on a provider that
+    // can't enforce it. Claude reports `supportsHarnessPolicy: true`, so this never
+    // throws here — the check runs the real path so a future degraded provider is
+    // caught at the same seam.
+    assertGovernanceInvariant(this.capabilities(), params);
+
     // Resolve the task kind to its agent preset (system prompt + tool restrictions +
     // a DEFAULT permission mode). Absent kind ⇒ `build` ⇒ an empty preset.
     const preset = resolveKindPreset(params.kind);
