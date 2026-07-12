@@ -5,8 +5,10 @@ import type { ReviewFinding, ReviewLens, ReviewSeverity } from '@nightcore/contr
 
 import {
   dedupePrReviewFindings,
+  findingsFromStructuredOutput,
   groundPrReviewFindings,
   parsePrReviewFindings,
+  PR_REVIEW_OUTPUT_FORMAT,
   reviewFingerprint,
   reviewSeverityRank,
 } from './findings.js';
@@ -293,5 +295,102 @@ describe('reviewSeverityRank', () => {
     for (const lens of lenses) {
       expect(reviewFingerprint(lens, 'src/a.ts', 't').length).toBe(16);
     }
+  });
+});
+
+describe('findingsFromStructuredOutput (structured-output path)', () => {
+  test('coerces a valid { findings } object, forcing lens + id/fingerprint', () => {
+    const structured = {
+      findings: [
+        {
+          severity: 'high',
+          file: './src/a.ts',
+          line: 12,
+          title: 'Unvalidated input',
+          body: 'the handler trusts the body',
+          suggestedFix: 'validate with zod',
+        },
+      ],
+    };
+    const out = findingsFromStructuredOutput(structured, 'security');
+    expect(out).toBeDefined();
+    expect(out).toHaveLength(1);
+    const f = (out as ReviewFinding[])[0] as ReviewFinding;
+    expect(f.lens).toBe('security');
+    expect(f.severity).toBe('high');
+    expect(f.line).toBe(12);
+    expect(f.id).toBe(`security-${f.fingerprint}`);
+  });
+
+  test('drops the strict-schema null line/suggestedFix to absent (not a bad value)', () => {
+    // Under strict structured output the model emits every key; optional ones come
+    // back as `null` and must coerce to ABSENT rather than an invalid finding.
+    const out = findingsFromStructuredOutput(
+      {
+        findings: [
+          {
+            severity: 'low',
+            file: 'src/a.ts',
+            line: null,
+            title: 'nit',
+            body: 'minor',
+            suggestedFix: null,
+          },
+        ],
+      },
+      'structure',
+    );
+    expect(out).toHaveLength(1);
+    const f = (out as ReviewFinding[])[0] as ReviewFinding;
+    expect(f.line).toBeUndefined();
+    expect(f.suggestedFix).toBeUndefined();
+  });
+
+  test('skips a malformed item (no title) without failing the batch', () => {
+    const out = findingsFromStructuredOutput(
+      {
+        findings: [
+          { severity: 'high', file: 'a.ts', body: 'no title here' },
+          { severity: 'low', file: 'a.ts', title: 'ok', body: 'kept' },
+        ],
+      },
+      'logic',
+    );
+    expect(out).toHaveLength(1);
+    expect((out as ReviewFinding[])[0]?.title).toBe('ok');
+  });
+
+  test('present-but-empty findings yields [] (a clean lens, not a parse error)', () => {
+    expect(findingsFromStructuredOutput({ findings: [] }, 'tests')).toEqual([]);
+  });
+
+  test('ABSENT structured output returns undefined (signals text-parse degrade)', () => {
+    // undefined ⇒ the SDK returned no `structured_output` (older/degraded run or the
+    // Codex path) → the caller falls back to prose-parsing the result text.
+    expect(findingsFromStructuredOutput(undefined, 'security')).toBeUndefined();
+    expect(findingsFromStructuredOutput(null, 'security')).toBeUndefined();
+  });
+});
+
+describe('PR_REVIEW_OUTPUT_FORMAT (structured-output schema shape)', () => {
+  test('is a strict json_schema whose finding keys are all required + closed', () => {
+    expect(PR_REVIEW_OUTPUT_FORMAT.type).toBe('json_schema');
+    const schema = PR_REVIEW_OUTPUT_FORMAT.schema as Record<string, unknown>;
+    expect(schema.additionalProperties).toBe(false);
+    const item = (
+      (schema.properties as Record<string, { items: Record<string, unknown> }>).findings
+        .items
+    );
+    // Strict structured output: every property key must appear in `required`, and the
+    // object must be closed (`additionalProperties: false`).
+    expect(item.additionalProperties).toBe(false);
+    expect(new Set(item.required as string[])).toEqual(
+      new Set(Object.keys(item.properties as Record<string, unknown>)),
+    );
+    // Engine-assigned fields must NOT be in the model's schema.
+    const keys = Object.keys(item.properties as Record<string, unknown>);
+    expect(keys).not.toContain('lens');
+    expect(keys).not.toContain('id');
+    expect(keys).not.toContain('fingerprint');
   });
 });

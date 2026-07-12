@@ -446,6 +446,74 @@ describe('PrReviewScanManager — merge verdict', () => {
     );
   });
 
+  test('CLAMPS an out-of-band model verdict + stamps verdictClamped/clampReason', async () => {
+    // The model proposes a soft `ready`, but the surviving finding is `high` — the
+    // clamp floors the emitted verdict at `needs_revision` and records why.
+    const factory: PrReviewRunnerFactory = (cfg, emit) => ({
+      async run() {
+        if (isVerdict(cfg)) {
+          await completing(
+            JSON.stringify({ verdict: 'ready', reasoning: 'looks fine to me' }),
+          )(emit);
+          return;
+        }
+        // ONE_FINDING is a `high` finding on src/a.ts (kept by the empty drop-list).
+        await completing(isValidator(cfg) ? '[]' : ONE_FINDING)(emit);
+      },
+      async interrupt() {},
+    });
+    const { emit, done } = collect();
+    const manager = new PrReviewScanManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(startCommand(['security']));
+    const events = await done;
+    const completed = events.find((e) => e.type === 'pr-review-completed');
+    if (completed?.type !== 'pr-review-completed') throw new Error('no completed');
+    // The emitted verdict is the CLAMPED value, not the model's raw `ready`.
+    expect(completed.verdict).toBe('needs_revision');
+    expect(completed.verdictClamped).toBe(true);
+    expect(completed.clampReason).toContain('high');
+    // The model's own reasoning still rides along untouched.
+    expect(completed.verdictReasoning).toBe('looks fine to me');
+  });
+
+  test('does NOT stamp verdictClamped when the model verdict is already in-band', async () => {
+    // The model proposes `needs_revision`, which IS in-band for a `high` finding —
+    // it passes through and no clamp fields are emitted.
+    const factory: PrReviewRunnerFactory = (cfg, emit) => ({
+      async run() {
+        if (isVerdict(cfg)) {
+          await completing(
+            JSON.stringify({ verdict: 'needs_revision', reasoning: 'fix first' }),
+          )(emit);
+          return;
+        }
+        await completing(isValidator(cfg) ? '[]' : ONE_FINDING)(emit);
+      },
+      async interrupt() {},
+    });
+    const { emit, done } = collect();
+    const manager = new PrReviewScanManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(startCommand(['security']));
+    const events = await done;
+    const completed = events.find((e) => e.type === 'pr-review-completed');
+    if (completed?.type !== 'pr-review-completed') throw new Error('no completed');
+    expect(completed.verdict).toBe('needs_revision');
+    expect(completed.verdictClamped).toBeUndefined();
+    expect(completed.clampReason).toBeUndefined();
+  });
+
   test('FAIL-OPEN: a synthesis pass that throws completes WITHOUT verdict fields', async () => {
     const factory: PrReviewRunnerFactory = (cfg, emit) => ({
       async run() {

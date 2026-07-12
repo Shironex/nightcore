@@ -282,6 +282,8 @@ mod tests {
             // Absent for non-decompose sessions (skip_serializing_if), so the wire
             // assertion below is unaffected.
             proposed_subtasks: None,
+            // Absent unless the session ran under `outputFormat` (skip_serializing_if).
+            structured_output: None,
         };
         let wire = serde_json::to_value(&event).expect("serializes");
         assert_eq!(

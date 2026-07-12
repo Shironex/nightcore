@@ -136,6 +136,9 @@ export interface SessionOutcome {
   costUsd: number;
   error?: string;
   reason?: SessionFailedReason;
+  /** The SDK's native `structured_output`, when the pass ran under an `outputFormat`.
+   *  Threaded to {@link ScanManager.parse}; `undefined` for a free-form pass. */
+  structuredOutput?: Record<string, unknown>;
 }
 
 /** The result of one item pass (after the corrective-retry logic). `findings` is the
@@ -159,6 +162,11 @@ export interface SessionConfigParts {
   disallowedTools: string[];
   maxTurns: number;
   maxBudgetUsd?: number;
+  /** SDK-native structured output request (`Options.outputFormat`). When set, the SDK
+   *  forces a schema-conforming object onto the `session-completed` event's
+   *  `structuredOutput`, which {@link ScanManager.parse} prefers over text parsing. Only
+   *  the Claude path wires it (Codex ignores it → text parse). Absent ⇒ free-form text. */
+  outputFormat?: SessionRunnerConfig['outputFormat'];
 }
 
 /** Args handed to {@link ScanManager.emitItemCompleted} — a bag so subclasses read
@@ -377,7 +385,7 @@ export abstract class ScanManager<
       };
     }
 
-    let parsed = this.parse(first.result, item);
+    let parsed = this.parse(first.result, item, first.structuredOutput);
     let reason = first.reason;
     if (parsed.error !== undefined) {
       this.deps.logger?.debug('scan pass produced no JSON; retrying', {
@@ -393,7 +401,7 @@ export abstract class ScanManager<
       costUsd += retry.costUsd;
       if (run.cancelled) reason = 'aborted';
       else if (retry.result !== undefined) {
-        parsed = this.parse(retry.result, item);
+        parsed = this.parse(retry.result, item, retry.structuredOutput);
         reason = retry.reason;
       } else if (retry.reason !== undefined) {
         reason = retry.reason;
@@ -420,6 +428,7 @@ export abstract class ScanManager<
     run: ActiveScanRun,
   ): Promise<SessionOutcome> {
     let result: string | undefined;
+    let structuredOutput: Record<string, unknown> | undefined;
     let usage: TokenUsage = { ...EMPTY_USAGE };
     let costUsd = 0;
     let error: string | undefined;
@@ -459,10 +468,14 @@ export abstract class ScanManager<
           ...(parts.maxBudgetUsd !== undefined
             ? { maxBudgetUsd: parts.maxBudgetUsd }
             : {}),
+          ...(parts.outputFormat !== undefined
+            ? { outputFormat: parts.outputFormat }
+            : {}),
         },
         (event) => {
           if (event.type === 'session-completed') {
             result = event.result;
+            structuredOutput = event.structuredOutput;
             costUsd = event.costUsd ?? 0;
             if (event.usage !== undefined) usage = event.usage;
           } else if (event.type === 'session-failed') {
@@ -499,6 +512,7 @@ export abstract class ScanManager<
         (event) => {
           if (event.type === 'session-completed') {
             result = event.result;
+            structuredOutput = event.structuredOutput;
             costUsd = event.costUsd ?? 0;
             if (event.usage !== undefined) usage = event.usage;
           } else if (event.type === 'session-failed') {
@@ -526,6 +540,7 @@ export abstract class ScanManager<
       result,
       usage,
       costUsd,
+      ...(structuredOutput !== undefined ? { structuredOutput } : {}),
       ...(error !== undefined ? { error } : {}),
       ...(reason !== undefined ? { reason } : {}),
     };
@@ -557,10 +572,13 @@ export abstract class ScanManager<
   ): string;
 
   /** Parse one pass's raw output into 0-or-more items. `error` is set (triggering the
-   *  single corrective retry) exactly when the output could not be parsed. */
+   *  single corrective retry) exactly when the output could not be parsed. When the pass
+   *  ran under an `outputFormat`, `structuredOutput` carries the SDK's validated object;
+   *  the arg is optional, so a text-only feature implements `parse(result, item)`. */
   protected abstract parse(
     result: string,
     item: TItem,
+    structuredOutput?: Record<string, unknown>,
   ): { findings: TFinding[]; error?: string };
 
   /** Ground the parsed items against the real tree (drop/clamp hallucinated refs). */

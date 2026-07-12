@@ -159,6 +159,8 @@ pub async fn start_pr_review(
         error: None,
         verdict: None,
         verdict_reasoning: None,
+        verdict_clamped: None,
+        clamp_reason: None,
         head_sha: None,
         posted_verdict: None,
         posted_at: None,
@@ -399,6 +401,15 @@ pub(crate) async fn handle_pr_review_event(app: &AppHandle, event_type: &str, ev
                 .get("verdictReasoning")
                 .and_then(Value::as_str)
                 .map(str::to_string);
+            // The mechanical severity→verdict clamp's honesty fields: whether the clamp
+            // overrode the model's proposal, and why. Same additive/fail-open posture —
+            // absent when the proposal was in-band, no verdict was produced, or from an
+            // older engine.
+            let verdict_clamped = event.get("verdictClamped").and_then(Value::as_bool);
+            let clamp_reason = event
+                .get("clampReason")
+                .and_then(Value::as_str)
+                .map(str::to_string);
 
             // The shared finalizer owns the idempotency guard, the status/telemetry stamp,
             // and the by-fingerprint in-run lifecycle carry-forward; we inject only the
@@ -414,6 +425,8 @@ pub(crate) async fn handle_pr_review_event(app: &AppHandle, event_type: &str, ev
                 move |run| {
                     run.verdict = verdict;
                     run.verdict_reasoning = verdict_reasoning;
+                    run.verdict_clamped = verdict_clamped;
+                    run.clamp_reason = clamp_reason;
                     &mut run.findings
                 },
             );
@@ -495,6 +508,8 @@ mod tests {
             error: None,
             verdict: None,
             verdict_reasoning: None,
+            verdict_clamped: None,
+            clamp_reason: None,
             head_sha: None,
             posted_verdict: None,
             posted_at: None,

@@ -25,7 +25,7 @@ import {
 
 import { dedupeBy } from '../../util/dedupe.js';
 import { getNumber, getString } from '../../util/field-extract.js';
-import { parseItems } from '../../util/json-extract.js';
+import { parseItems, toRawArray } from '../../util/json-extract.js';
 import {
   coerceLocation,
   coerceSeverity,
@@ -114,12 +114,94 @@ function coerceReviewFinding(
 }
 
 /**
+ * The SDK `Options.outputFormat` for a PR-review LENS pass — a JSON-Schema request
+ * that makes the SDK return native structured output conforming to
+ * `{ findings: [{ severity, file, line, title, body, suggestedFix }] }` (retrying
+ * non-conforming output internally, and failing terminally with
+ * `error_max_structured_output_retries` rather than silently emitting prose). This is
+ * the RELIABILITY substrate the verdict clamp depends on: `severity` comes back as a
+ * validated enum instead of a best-effort-parsed string. Mirrors the fields the model
+ * supplies in `prReviewOutputContract` — engine-assigned fields (`lens`, `id`,
+ * `fingerprint`) are deliberately OUT of the schema, exactly as they are out of the
+ * prose contract.
+ *
+ * Structured-output schemas require `additionalProperties: false` at every object
+ * level. Optional fields (`line`, `suggestedFix`) are modelled as nullable AND listed
+ * in `required` — under strict structured output every property key must appear in
+ * `required`, so the model always emits them (as `null` when not applicable) and the
+ * shared coercion below drops the null (a null `line`/`suggestedFix` reads as absent).
+ * Typed structurally (not via the SDK's `OutputFormat`) so this module stays
+ * SDK-import-free; the shape is assignable to `OutputFormat` at the preset seam —
+ * identical to the `decompose` template.
+ */
+export const PR_REVIEW_OUTPUT_FORMAT: {
+  type: 'json_schema';
+  schema: Record<string, unknown>;
+} = {
+  type: 'json_schema',
+  schema: {
+    type: 'object',
+    properties: {
+      findings: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            severity: {
+              type: 'string',
+              enum: ['info', 'low', 'medium', 'high', 'critical'],
+            },
+            file: { type: 'string' },
+            line: { anyOf: [{ type: 'integer' }, { type: 'null' }] },
+            title: { type: 'string' },
+            body: { type: 'string' },
+            suggestedFix: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+          },
+          required: ['severity', 'file', 'line', 'title', 'body', 'suggestedFix'],
+          additionalProperties: false,
+        },
+      },
+    },
+    required: ['findings'],
+    additionalProperties: false,
+  },
+};
+
+/**
+ * Validated findings from the SDK's native `structured_output` (the result message's
+ * schema-conforming object built from {@link PR_REVIEW_OUTPUT_FORMAT}). Returns the
+ * clean array — possibly `[]` when the lens legitimately reported nothing — whenever
+ * structured output is PRESENT, and `undefined` when it is ABSENT (`null`/`undefined`),
+ * which signals the caller to fall back to text parsing ({@link parsePrReviewFindings}).
+ * Runs every item through the SAME {@link coerceReviewFinding} the text path uses (so
+ * `lens`/`id`/`fingerprint` are engine-assigned and the two paths can never drift) and
+ * tolerates the `{ findings: [...] }` wrapper or a bare array via `toRawArray`. Never
+ * throws. Mirrors the `decompose` `subtasksFromStructuredOutput` template.
+ */
+export function findingsFromStructuredOutput(
+  structuredOutput: unknown,
+  lens: ReviewLens,
+): ReviewFinding[] | undefined {
+  if (structuredOutput === null || structuredOutput === undefined) {
+    return undefined;
+  }
+  const out: ReviewFinding[] = [];
+  for (const item of toRawArray(structuredOutput, 'findings')) {
+    const finding = coerceReviewFinding(item, lens);
+    if (finding !== undefined) out.push(finding);
+  }
+  return out;
+}
+
+/**
  * Parse a lens pass's raw result text into validated findings. Tolerant: malformed
  * items are skipped, not fatal. Returns the parsed findings plus an `error` when NO
  * JSON could be extracted at all, OR when the extracted JSON is neither an array nor
  * an object exposing a `findings` array (an incidental JSON example in a prose
  * answer) — so the orchestrator can drive its single corrective retry / mark the
- * lens errored vs legitimately empty.
+ * lens errored vs legitimately empty. This is the FALLBACK path used when the SDK
+ * returned no native `structured_output` (an older/degraded run, or a provider that
+ * did not honor `outputFormat`).
  */
 export function parsePrReviewFindings(
   raw: string,

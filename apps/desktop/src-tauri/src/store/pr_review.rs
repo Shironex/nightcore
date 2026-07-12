@@ -158,6 +158,14 @@ pub struct PrReviewRun {
     pub verdict: Option<String>,
     /// The synthesis pass's short justification for `verdict`; present only when it is.
     pub verdict_reasoning: Option<String>,
+    /// True when the mechanical severity→verdict CLAMP overrode the model's proposed
+    /// verdict — `verdict` above is then the clamped value. Additive + optional
+    /// (fail-open): absent when the model's proposal was already in-band, no verdict was
+    /// produced, or from an older engine.
+    pub verdict_clamped: Option<bool>,
+    /// Why the verdict was clamped — recorded only alongside `verdict_clamped` = true
+    /// (e.g. a high-severity finding floored the verdict at `needs_revision`).
+    pub clamp_reason: Option<String>,
     /// The PR head commit SHA this run reviewed, captured at start (`gh pr view
     /// --json headRefOid`). Lets the UI flag the review STALE once the PR advances past
     /// it. Best-effort: `None` when the head-oid fetch failed or from an older run.
@@ -361,6 +369,8 @@ mod tests {
             error: None,
             verdict: None,
             verdict_reasoning: None,
+            verdict_clamped: None,
+            clamp_reason: None,
             head_sha: None,
             posted_verdict: None,
             posted_at: None,

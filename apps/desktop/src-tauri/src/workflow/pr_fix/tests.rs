@@ -55,6 +55,8 @@ fn review_run(id: &str, pr_number: u64, findings: Vec<StoredReviewFinding>) -> P
         error: None,
         verdict: None,
         verdict_reasoning: None,
+        verdict_clamped: None,
+        clamp_reason: None,
         head_sha: None,
         posted_verdict: None,
         posted_at: None,

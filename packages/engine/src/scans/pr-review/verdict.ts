@@ -49,6 +49,36 @@ type StartPrReview = Extract<SurfaceCommand, { type: 'start-pr-review' }>;
 const VERDICT_RETRY_REMINDER =
   '\n\nIMPORTANT: your previous answer was not valid JSON. Respond with ONLY the JSON object { "verdict": "ready|merge_with_changes|needs_revision|blocked", "reasoning": "…" }, nothing else.';
 
+/**
+ * The SDK `Options.outputFormat` for the merge-verdict synthesis pass — a JSON-Schema
+ * request that makes the SDK return native structured output conforming to
+ * `{ verdict, reasoning }` (retrying non-conforming output internally, and failing
+ * terminally with `error_max_structured_output_retries` rather than emitting prose).
+ * `verdict` comes back as a validated ENUM — the highest-value conversion, since it is
+ * exactly the signal the clamp bands the review verdict on. Object-wrapped with
+ * `additionalProperties: false` and both keys required (strict structured output).
+ * Typed structurally so this module stays SDK-import-free; assignable to `OutputFormat`
+ * at the runner seam. Mirrors the `decompose` template.
+ */
+export const PR_REVIEW_VERDICT_OUTPUT_FORMAT: {
+  type: 'json_schema';
+  schema: Record<string, unknown>;
+} = {
+  type: 'json_schema',
+  schema: {
+    type: 'object',
+    properties: {
+      verdict: {
+        type: 'string',
+        enum: ['ready', 'merge_with_changes', 'needs_revision', 'blocked'],
+      },
+      reasoning: { type: 'string' },
+    },
+    required: ['verdict', 'reasoning'],
+    additionalProperties: false,
+  },
+};
+
 export interface SynthesizePrVerdictArgs {
   /** The FINAL surviving findings (post-dedup + validator) to adjudicate. */
   findings: ReviewFinding[];
@@ -107,8 +137,12 @@ export async function synthesizePrVerdict(
     ...(args.isCancelled !== undefined ? { isCancelled: args.isCancelled } : {}),
     label: 'pr-review:verdict',
     retryReminder: VERDICT_RETRY_REMINDER,
-    parse: (raw) => {
-      const parsed = parseVerdict(raw);
+    outputFormat: PR_REVIEW_VERDICT_OUTPUT_FORMAT,
+    parse: (raw, structured) => {
+      // Prefer the SDK's validated structured output; fall back to prose-parsing the
+      // result text when structured output is ABSENT (older/degraded run, or a provider
+      // that didn't honor `outputFormat`).
+      const parsed = verdictFromStructuredOutput(structured) ?? parseVerdict(raw);
       // A missing/invalid verdict drives the retry even when the JSON itself parsed —
       // an out-of-set verdict must never be surfaced.
       return parsed?.verdict !== undefined
@@ -146,6 +180,26 @@ export async function synthesizePrVerdict(
     ...(tail.value.reasoning !== undefined ? { reasoning: tail.value.reasoning } : {}),
     usage: tail.usage,
     costUsd: tail.costUsd,
+  };
+}
+
+/**
+ * Read `{ verdict?, reasoning? }` from the SDK's native `structured_output` (the result
+ * message's schema-conforming object built from {@link PR_REVIEW_VERDICT_OUTPUT_FORMAT}),
+ * validating `verdict` against {@link MergeVerdictSchema} exactly as the text parse does
+ * — so the structured and prose paths can never surface a different verdict. Returns
+ * `undefined` when structured output is ABSENT (signals the caller to fall back to text
+ * parsing); never throws.
+ */
+function verdictFromStructuredOutput(
+  structuredOutput: Record<string, unknown> | undefined,
+): { verdict?: MergeVerdict; reasoning?: string } | undefined {
+  if (structuredOutput === undefined) return undefined;
+  const verdict = MergeVerdictSchema.safeParse(getString(structuredOutput, 'verdict'));
+  const reasoning = getString(structuredOutput, 'reasoning');
+  return {
+    ...(verdict.success ? { verdict: verdict.data } : {}),
+    ...(reasoning !== undefined ? { reasoning } : {}),
   };
 }
 

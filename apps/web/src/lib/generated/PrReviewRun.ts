@@ -31,6 +31,18 @@ verdict: string | null,
  */
 verdictReasoning: string | null, 
 /**
+ * True when the mechanical severity→verdict CLAMP overrode the model's proposed
+ * verdict — `verdict` above is then the clamped value. Additive + optional
+ * (fail-open): absent when the model's proposal was already in-band, no verdict was
+ * produced, or from an older engine.
+ */
+verdictClamped: boolean | null, 
+/**
+ * Why the verdict was clamped — recorded only alongside `verdict_clamped` = true
+ * (e.g. a high-severity finding floored the verdict at `needs_revision`).
+ */
+clampReason: string | null, 
+/**
  * The PR head commit SHA this run reviewed, captured at start (`gh pr view
  * --json headRefOid`). Lets the UI flag the review STALE once the PR advances past
  * it. Best-effort: `None` when the head-oid fetch failed or from an older run.

@@ -18,6 +18,7 @@
 import type { Config, TokenUsage } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
+import type { SessionRunnerConfig } from '../../providers/claude/session-runner.js';
 import { makeHeartbeat } from './observability.js';
 import {
   addUsage,
@@ -65,9 +66,20 @@ export interface TailSessionArgs<T> {
   label: string;
   /** The strict-JSON reminder appended to the ONE corrective retry. */
   retryReminder: string;
-  /** Parse a terminal session result. When the retry session itself fails (no
-   *  result), the FIRST parse outcome is kept — degrade, never replace. */
-  parse: (result: string) => TailParseOutcome<T>;
+  /** Parse a terminal session result. When the pass ran under an {@link outputFormat},
+   *  `structuredOutput` carries the SDK's validated `structured_output`; a
+   *  structured-output pass prefers it over text-parsing `result`. When the retry
+   *  session itself fails (no result), the FIRST parse outcome is kept — degrade,
+   *  never replace. */
+  parse: (
+    result: string,
+    structuredOutput?: Record<string, unknown>,
+  ) => TailParseOutcome<T>;
+  /** SDK-native structured output request (`Options.outputFormat`) for this pass. When
+   *  set, the SDK forces a schema-conforming object and hands it back on the
+   *  `session-completed` event's `structuredOutput`, which the {@link parse} above
+   *  prefers. Absent ⇒ free-form text result. */
+  outputFormat?: SessionRunnerConfig['outputFormat'];
   /** Per-pass turn ceiling. Defaults to {@link DEFAULT_MAX_TURNS}. */
   maxTurns?: number;
   /** Optional per-pass budget ceiling forwarded to the runner. */
@@ -117,8 +129,14 @@ export async function runTailSession<T>(
   // Factored out so the corrective retry reuses the exact runner config.
   const runSession = async (
     prompt: string,
-  ): Promise<{ result?: string; error?: string; reason?: SessionFailedReason }> => {
+  ): Promise<{
+    result?: string;
+    structuredOutput?: Record<string, unknown>;
+    error?: string;
+    reason?: SessionFailedReason;
+  }> => {
     let result: string | undefined;
+    let structuredOutput: Record<string, unknown> | undefined;
     let error: string | undefined;
     let reason: SessionFailedReason | undefined;
     const effort = args.command.effort ?? args.config.effort;
@@ -141,10 +159,14 @@ export async function runTailSession<T>(
         ...(args.maxBudgetUsd !== undefined
           ? { maxBudgetUsd: args.maxBudgetUsd }
           : {}),
+        ...(args.outputFormat !== undefined
+          ? { outputFormat: args.outputFormat }
+          : {}),
       },
       (event) => {
         if (event.type === 'session-completed') {
           result = event.result;
+          structuredOutput = event.structuredOutput;
           costUsd += event.costUsd ?? 0;
           if (event.usage !== undefined) addUsage(usage, event.usage);
         } else if (event.type === 'session-failed') {
@@ -163,7 +185,7 @@ export async function runTailSession<T>(
     } finally {
       args.runners?.delete(runner);
     }
-    return { result, error, reason };
+    return { result, structuredOutput, error, reason };
   };
 
   try {
@@ -182,7 +204,7 @@ export async function runTailSession<T>(
       };
     }
 
-    let parsed = args.parse(first.result);
+    let parsed = args.parse(first.result, first.structuredOutput);
     if (parsed.error !== undefined) {
       // One corrective retry with the strict-JSON reminder (mirrors the lens passes).
       args.logger?.debug(
@@ -194,7 +216,9 @@ export async function runTailSession<T>(
         return { usage, costUsd, error: 'cancelled' };
       }
       // A retry that also failed keeps the FIRST parse outcome (degrade, not replace).
-      if (retry.result !== undefined) parsed = args.parse(retry.result);
+      if (retry.result !== undefined) {
+        parsed = args.parse(retry.result, retry.structuredOutput);
+      }
     }
 
     return {

@@ -13,6 +13,11 @@ export interface ReviewPositionData {
   /** The verdict's short justification, revealed in a collapsible; `null` when
    *  the run carries no reasoning. */
   verdictReasoning: string | null;
+  /** Why the merge verdict was mechanically CLAMPED over the model's proposal
+   *  (e.g. a high-severity finding floored it at `needs_revision`); `null` when the
+   *  model's proposal was in-band or the run predates the clamp. Surfaced as a small
+   *  note beside the badge so the override is transparent, not silent. */
+  clampReason: string | null;
   /** Live-status contradictions against a POSTED approving verdict (the
    *  reconciliation banner names each). Empty → no banner. */
   reconciliation: readonly string[];

@@ -133,6 +133,9 @@ export function buildReviewSectionProps({
       position: {
         verdict: displayRun?.verdict ?? null,
         verdictReasoning: displayRun?.verdictReasoning ?? null,
+        // Only present when the clamp actually overrode the model — the store stamps it
+        // solely alongside `verdictClamped`, so `?? null` reads "not clamped".
+        clampReason: displayRun?.clampReason ?? null,
         reconciliation: position.reconciliation,
         stale: position.stale,
         followup: position.followup,
