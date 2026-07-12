@@ -105,6 +105,52 @@ test('the view-mode toggle flips the mode via onToggleViewMode', async () => {
   expect(onToggleViewMode).toHaveBeenCalled();
 });
 
+test('the active tab is the sole roving entry (tabindex 0; the rest -1)', async () => {
+  // Roving-tabindex invariant: the tablist is a single Tab stop landing on the
+  // active tab; every other tab is programmatically focusable only (arrow keys).
+  const screen = render(<Populated />);
+  await expect
+    .element(screen.getByRole('tab', { name: /task-91/ }))
+    .toHaveAttribute('tabindex', '0');
+  await expect
+    .element(screen.getByRole('tab', { name: /task-42/ }))
+    .toHaveAttribute('tabindex', '-1');
+  await expect
+    .element(screen.getByRole('tab', { name: /task-12/ }))
+    .toHaveAttribute('tabindex', '-1');
+});
+
+test('ArrowRight moves focus to the next tab and activates it', async () => {
+  const onSelect = vi.fn();
+  const screen = render(<Populated onSelect={onSelect} />);
+  const active = screen.getByRole('tab', { name: /task-91/ });
+  (active.element() as HTMLElement).focus();
+  await expect.element(active).toHaveFocus();
+  await userEvent.keyboard('{ArrowRight}');
+  // Focus rolls to the next tab in the strip (task-12) and selects it.
+  await expect.element(screen.getByRole('tab', { name: /task-12/ })).toHaveFocus();
+  expect(onSelect).toHaveBeenCalledWith('task-12');
+});
+
+test('ArrowLeft moves focus to the previous tab', async () => {
+  const screen = render(<Populated />);
+  const active = screen.getByRole('tab', { name: /task-91/ });
+  (active.element() as HTMLElement).focus();
+  await userEvent.keyboard('{ArrowLeft}');
+  await expect.element(screen.getByRole('tab', { name: /task-42/ })).toHaveFocus();
+});
+
+test('restored tabs join the roving strip and are reachable by arrow keys', async () => {
+  // Live + restored tabs share one tablist, so arrows cross the boundary. The active
+  // restored tab is the roving entry; ArrowRight steps to the next restored tab.
+  const screen = render(<WithRestoredTabs />);
+  const active = screen.getByRole('tab', { name: /task-77/ });
+  await expect.element(active).toHaveAttribute('tabindex', '0');
+  (active.element() as HTMLElement).focus();
+  await userEvent.keyboard('{ArrowRight}');
+  await expect.element(screen.getByRole('tab', { name: /task-88/ })).toHaveFocus();
+});
+
 test('restored tabs render after live ones and dismiss fires onDismiss', async () => {
   const onDismiss = vi.fn();
   const screen = render(<WithRestoredTabs onDismiss={onDismiss} />);

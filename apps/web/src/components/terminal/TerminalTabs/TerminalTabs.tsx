@@ -13,6 +13,7 @@ import {
   TerminalIcon,
 } from '@/components/ui';
 import type { PersistedTerminalInfo, TerminalSessionInfo } from '@/lib/bridge';
+import { rovingKeydown } from '@/lib/roving-keydown';
 
 import {
   attentionLevel,
@@ -141,9 +142,11 @@ function Tab({
           type="button"
           role="tab"
           aria-selected={active}
+          tabIndex={active ? 0 : -1}
           title={identityTitle(session.confined)}
           onClick={() => onSelect(session.id)}
           onDoubleClick={rename.begin}
+          onKeyDown={rovingKeydown}
           className="flex min-w-0 items-center gap-1.5"
         >
           <IdentityDot confined={session.confined} />
@@ -191,8 +194,10 @@ function RestoredTab({
         type="button"
         role="tab"
         aria-selected={active}
+        tabIndex={active ? 0 : -1}
         title={restoredIdentityTitle()}
         onClick={() => onSelect(info.id)}
+        onKeyDown={rovingKeydown}
         className="flex min-w-0 items-center gap-1.5"
       >
         <HistoryIcon size={12} className="shrink-0 opacity-70" aria-hidden />
