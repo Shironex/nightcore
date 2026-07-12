@@ -380,10 +380,11 @@ export class CodexAgentProvider implements AgentProvider {
     logger?: Logger,
   ): AgentSession {
     // Fail-closed governance preflight (issue #296) BEFORE anything else: Codex has
-    // no PreToolUse-equivalent seam, so a run that requests Harness policy
-    // enforcement or a ledger is REFUSED here rather than silently running
-    // ungoverned/unaudited. A real interception point exists one layer below the
-    // `@openai/codex-sdk` this session drives (`codex app-server`'s
+    // no PreToolUse-equivalent seam, so a run whose Harness policy is ARMED
+    // (present and non-empty) is REFUSED here rather than silently running
+    // ungoverned. Never trips on a project's always-on ledger path — see
+    // `assertGovernanceInvariant`'s docblock. A real interception point exists one
+    // layer below the `@openai/codex-sdk` this session drives (`codex app-server`'s
     // `execCommandApproval`/`applyPatchApproval` RPCs — see
     // `CODEX_CAPABILITIES`'s docblock) but wiring it is a separate, larger
     // initiative tracked as #304; this refusal is the durable answer until then.

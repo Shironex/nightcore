@@ -57,9 +57,10 @@ export class ClaudeAgentProvider implements AgentProvider {
     logger?: Logger,
   ): AgentSession {
     // Fail-closed governance preflight (issue #296) BEFORE anything else: refuses a
-    // run that requests Harness policy enforcement or a ledger the provider can't
-    // honor. Claude reports both `true`, so this never throws here — the check runs
-    // the real path so a future degraded provider is caught at the same seam.
+    // run whose Harness policy is ARMED (present and non-empty) on a provider that
+    // can't enforce it. Claude reports `supportsHarnessPolicy: true`, so this never
+    // throws here — the check runs the real path so a future degraded provider is
+    // caught at the same seam.
     assertGovernanceInvariant(this.capabilities(), params);
 
     // Resolve the task kind to its agent preset (system prompt + tool restrictions +

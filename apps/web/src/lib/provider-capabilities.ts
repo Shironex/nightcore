@@ -30,10 +30,11 @@ export const CODEX_CAPABILITIES: ProviderCapabilities = {
   autonomyLevels: ['auto-accept', 'plan'],
   supportsHooks: false,
   providesOwnWriteContainment: true,
-  // Codex has no seam to enforce a project's Harness policy or write the audit
-  // ledger (issue #296) — `NewTaskForm` surfaces a warning when this provider is
-  // selected on a project whose policy is armed, so the fail-closed refusal
-  // (`assertGovernanceInvariant`) never surprises the user at run time.
+  // Codex has no seam to enforce a project's ARMED Harness policy (issue #296) —
+  // `NewTaskForm` surfaces a warning when this provider is selected on a project
+  // whose policy is armed, so the fail-closed refusal (`assertGovernanceInvariant`)
+  // never surprises the user at run time. `supportsLedger: false` is declared
+  // truthfully but isn't a refusal trigger — see that function's docblock.
   supportsHarnessPolicy: false,
   supportsLedger: false,
   supportsMcp: true,

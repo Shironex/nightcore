@@ -15,6 +15,7 @@ import {
   assertHooksInvariant,
   AutonomyNotPermittedError,
   GovernanceNotSupportedError,
+  harnessPolicyHasRules,
 } from './agent-provider.js';
 import {
   CLAUDE_CAPABILITIES,
@@ -32,9 +33,9 @@ const DEGRADED: ProviderCapabilities = {
   supportsHooks: false,
 };
 
-/** A fake provider that cannot enforce Harness governance policy or write the
- *  audit ledger — otherwise identical to Claude (mirrors `CODEX_CAPABILITIES`'s
- *  shape without hardcoding the real Codex descriptor into this gate battery). */
+/** A fake provider that cannot enforce Harness governance policy — otherwise
+ *  identical to Claude (mirrors `CODEX_CAPABILITIES`'s shape without hardcoding
+ *  the real Codex descriptor into this gate battery). */
 const UNGOVERNED: ProviderCapabilities = {
   ...CLAUDE_CAPABILITIES,
   id: 'fake-ungoverned',
@@ -43,10 +44,12 @@ const UNGOVERNED: ProviderCapabilities = {
   supportsLedger: false,
 };
 
-/** An armed-but-empty Harness policy — presence alone is what arms the layer
- *  (mirrors the Rust `read_policy` resolver: an armed policy can have empty lists
- *  and still be "on", guarding the manifest itself). */
-const ARMED_POLICY: HarnessPolicy = {
+/** A PRESENT-BUT-EMPTY Harness policy — mirrors what the Rust `read_policy`
+ *  resolver arms when `.nightcore/harness.json` exists (e.g. only armed
+ *  Structure-Lock gauntlet checks) but declares no `policy` rules of its own. The
+ *  engine still arms this for its IMPLICIT `.nightcore/**` self-protection, but it
+ *  must NOT trip the governance refusal (#296's fix — see `harnessPolicyHasRules`). */
+const EMPTY_POLICY: HarnessPolicy = {
   protectedPaths: [],
   denyBashPatterns: [],
   denyReadPaths: [],
@@ -54,6 +57,13 @@ const ARMED_POLICY: HarnessPolicy = {
   allowTools: [],
   askTools: [],
   allowExecSinks: [],
+};
+
+/** An ARMED Harness policy — present AND carrying an actual rule, matching the
+ *  spike's Option C scoping (`docs/research/2026-07-12-codex-governance-feasibility.md`). */
+const ARMED_POLICY: HarnessPolicy = {
+  ...EMPTY_POLICY,
+  protectedPaths: ['bun.lock'],
 };
 
 // ---------------------------------------------------------------------------
@@ -128,28 +138,42 @@ describe('assertHooksInvariant', () => {
 // ---------------------------------------------------------------------------
 
 describe('assertGovernanceInvariant', () => {
-  test('REFUSES a run with an armed Harness policy on an ungoverned provider', () => {
+  test('REFUSES a run with an ARMED (non-empty) Harness policy on an ungoverned provider', () => {
     expect(() =>
       assertGovernanceInvariant(UNGOVERNED, { harnessPolicy: ARMED_POLICY }),
     ).toThrow(GovernanceNotSupportedError);
   });
 
-  test('REFUSES a run with a ledger request on a provider that cannot write one', () => {
+  test('permits a PRESENT-BUT-EMPTY policy — a self-protection-only manifest never refuses', () => {
+    // `read_policy` (Rust) arms `Some(empty policy)` when `.nightcore/harness.json`
+    // exists for another reason (e.g. armed gauntlet checks) with no `policy` block
+    // of its own. That's not a rule set worth refusing Codex over.
     expect(() =>
-      assertGovernanceInvariant(UNGOVERNED, { ledgerPath: '/tmp/nc-ledger.ndjson' }),
-    ).toThrow(GovernanceNotSupportedError);
+      assertGovernanceInvariant(UNGOVERNED, { harnessPolicy: EMPTY_POLICY }),
+    ).not.toThrow();
   });
 
-  test('permits a run with NO active policy or ledger, even on an ungoverned provider', () => {
+  test('permits a run whose ledger path is set but has NO armed Harness policy — the production path (#296 regression)', () => {
+    // THE bug this regression test pins: the Rust core sets `ledgerPath`
+    // UNCONDITIONALLY for every project-scoped run (`build_guardrails` in
+    // `sidecar/commands.rs`), never gated on an "armed" signal the way
+    // `harnessPolicy` is. Simulates that real production params shape — a Codex
+    // run in a project with no Harness policy armed — which MUST proceed;
+    // refusing here silently disables Codex for all real (project-scoped) use.
+    expect(() =>
+      assertGovernanceInvariant(UNGOVERNED, {
+        ledgerPath: '/proj/.nightcore/ledger/task-1.ndjson',
+      }),
+    ).not.toThrow();
+  });
+
+  test('permits a run with NO policy or ledger at all, even on an ungoverned provider', () => {
     expect(() => assertGovernanceInvariant(UNGOVERNED, {})).not.toThrow();
   });
 
-  test('a governance-capable provider is never refused, policy and ledger both requested', () => {
+  test('a governance-capable provider is never refused, even with an armed policy', () => {
     expect(() =>
-      assertGovernanceInvariant(CLAUDE_CAPABILITIES, {
-        harnessPolicy: ARMED_POLICY,
-        ledgerPath: '/tmp/nc-ledger.ndjson',
-      }),
+      assertGovernanceInvariant(CLAUDE_CAPABILITIES, { harnessPolicy: ARMED_POLICY }),
     ).not.toThrow();
   });
 
@@ -161,7 +185,6 @@ describe('assertGovernanceInvariant', () => {
       ...UNGOVERNED,
       id: 'codex',
       supportsHarnessPolicy: true,
-      supportsLedger: true,
     };
     expect(() =>
       assertGovernanceInvariant(governedCodex, { harnessPolicy: ARMED_POLICY }),
@@ -173,24 +196,18 @@ describe('assertGovernanceInvariant', () => {
     ).toThrow(GovernanceNotSupportedError);
   });
 
-  test('the refusal names the offending provider and both gaps in the message', () => {
+  test('the refusal names the offending provider', () => {
     let caught: unknown;
     try {
-      assertGovernanceInvariant(UNGOVERNED, {
-        harnessPolicy: ARMED_POLICY,
-        ledgerPath: '/tmp/nc-ledger.ndjson',
-      });
+      assertGovernanceInvariant(UNGOVERNED, { harnessPolicy: ARMED_POLICY });
     } catch (error) {
       caught = error;
     }
     expect(caught).toBeInstanceOf(GovernanceNotSupportedError);
     const err = caught as GovernanceNotSupportedError;
     expect(err.providerId).toBe('fake-ungoverned');
-    expect(err.missingHarnessPolicy).toBe(true);
-    expect(err.missingLedger).toBe(true);
-    expect(err.message).toContain("fake-ungoverned");
+    expect(err.message).toContain('fake-ungoverned');
     expect(err.message).toContain('Harness governance policy');
-    expect(err.message).toContain('audit ledger');
   });
 
   test('CODEX_CAPABILITIES honestly declares no governance support', () => {
@@ -201,6 +218,27 @@ describe('assertGovernanceInvariant', () => {
   test('CLAUDE_CAPABILITIES declares full governance support', () => {
     expect(CLAUDE_CAPABILITIES.supportsHarnessPolicy).toBe(true);
     expect(CLAUDE_CAPABILITIES.supportsLedger).toBe(true);
+  });
+});
+
+describe('harnessPolicyHasRules', () => {
+  test('false for an all-empty (present-but-unarmed) policy', () => {
+    expect(harnessPolicyHasRules(EMPTY_POLICY)).toBe(false);
+  });
+
+  test('true when any single field carries a rule', () => {
+    const fields: Array<keyof HarnessPolicy> = [
+      'protectedPaths',
+      'denyBashPatterns',
+      'denyReadPaths',
+      'disallowedTools',
+      'allowTools',
+      'askTools',
+      'allowExecSinks',
+    ];
+    for (const field of fields) {
+      expect(harnessPolicyHasRules({ ...EMPTY_POLICY, [field]: ['x'] })).toBe(true);
+    }
   });
 });
 

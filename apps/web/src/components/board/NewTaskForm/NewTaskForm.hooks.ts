@@ -10,14 +10,9 @@ import {
   readImageFiles,
   toPayload,
 } from '@/lib/attachments';
-import type {
-  BranchInfo,
-  PermissionMode,
-  ProviderCapabilities,
-  RunMode,
-  TaskKind,
-} from '@/lib/bridge';
+import type { BranchInfo, PermissionMode, RunMode, TaskKind } from '@/lib/bridge';
 import { getHarnessPolicyFile, listBranches } from '@/lib/bridge';
+import { governanceWarningFor, harnessPolicyHasRules } from '@/lib/harness-governance';
 import { capabilitiesForProvider } from '@/lib/provider-capabilities';
 
 import type { NewTaskFormProps } from './NewTaskForm.types';
@@ -57,27 +52,6 @@ export function planFirstDefault(
   return kind === 'build' && planGateDefault && providerSupportsPlanGate;
 }
 
-/**
- * The provider/governance mismatch warning for the create-task dialog (#296): the
- * active project's Harness policy is armed AND the resolved provider can't enforce
- * it (or write the audit ledger), so the engine's fail-closed preflight
- * (`assertGovernanceInvariant`) would REFUSE the run before it starts — a heads-up,
- * not the enforcement itself (#304 tracks real Codex-side enforcement). `null`
- * capabilities fail OPEN, mirroring `providerSupportsPlanGate`.
- */
-export function governanceWarningFor(
-  harnessPolicyArmed: boolean,
-  capabilities: ProviderCapabilities | null,
-): string | null {
-  if (!harnessPolicyArmed || capabilities === null) return null;
-  if (capabilities.supportsHarnessPolicy && capabilities.supportsLedger) return null;
-  return (
-    `${capabilities.label} cannot enforce this project's Harness governance policy ` +
-    "(protected paths / command deny) or write the audit ledger — the run will be " +
-    'refused. Switch to a provider that supports governance, or disarm the policy.'
-  );
-}
-
 /** The create-task form's full state plus its field setters and action
  *  handlers, returned by {@link useNewTaskForm}. */
 export interface NewTaskFormState {
@@ -101,9 +75,9 @@ export interface NewTaskFormState {
    *  rendered non-interactive so a plan can't be forced into a silent no-op. */
   providerSupportsPlanGate: boolean;
   /** Provider/governance mismatch warning (#296): non-null when the active
-   *  project's Harness policy is armed and the picked provider can't enforce it
-   *  (or can't write the audit ledger) — creating the task would run and then be
-   *  REFUSED at dispatch. `null` when there's nothing to warn about. */
+   *  project's Harness policy is ARMED (a real rule, not just an empty manifest)
+   *  and the picked provider can't enforce it — creating the task would run and
+   *  then be REFUSED at dispatch. `null` when there's nothing to warn about. */
   governanceWarning: string | null;
   model: string | null;
   /** The provider the picked model belongs to (B5), stamped so a created task
@@ -209,7 +183,11 @@ export function useNewTaskForm({
     let alive = true;
     void getHarnessPolicyFile()
       .then((policy) => {
-        if (alive) setHarnessPolicyArmed(policy.manifestExists && policy.enabled);
+        if (alive) {
+          setHarnessPolicyArmed(
+            policy.manifestExists && policy.enabled && harnessPolicyHasRules(policy),
+          );
+        }
       })
       .catch(() => {});
     return () => {

@@ -301,10 +301,10 @@ export class SessionManager {
     // Construct the run through the provider seam. The fail-closed hooks invariant
     // AND the fail-closed governance invariant (issue #296) both run inside
     // `startSession`: a provider that can't enforce PreToolUse confinement at the
-    // requested autonomy, or can't enforce an armed Harness policy / write a
-    // requested ledger, REFUSES here rather than silently dropping confinement or
-    // governance. Surface the refusal as a terminal `session-failed` so the board
-    // shows it like any other failure and the concurrency slot is never taken.
+    // requested autonomy, or can't enforce an ARMED Harness policy, REFUSES here
+    // rather than silently dropping confinement or governance. Surface the refusal
+    // as a terminal `session-failed` so the board shows it like any other failure
+    // and the concurrency slot is never taken.
     let runner: AgentSession;
     try {
       runner = provider.startSession(
@@ -322,8 +322,6 @@ export class SessionManager {
       if (error instanceof GovernanceNotSupportedError) {
         return this.refuseSession(id, error.message, 'governance not supported', {
           providerId: error.providerId,
-          missingHarnessPolicy: error.missingHarnessPolicy,
-          missingLedger: error.missingLedger,
         });
       }
       throw error;

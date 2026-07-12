@@ -40,10 +40,10 @@ function collector(): {
   return { emit: (event) => events.push(event), events };
 }
 
-/** An armed-but-empty Harness policy — presence alone arms the layer (mirrors the
- *  Rust `read_policy` resolver). */
+/** An ARMED Harness policy — present AND carrying an actual rule (matches the
+ *  spike's Option C scoping: "present AND non-empty"). */
 const ARMED_POLICY: HarnessPolicy = {
-  protectedPaths: [],
+  protectedPaths: ['bun.lock'],
   denyBashPatterns: [],
   denyReadPaths: [],
   disallowedTools: [],
@@ -179,7 +179,7 @@ describe('Codex autonomy posture', () => {
 });
 
 describe('Codex governance preflight (#296)', () => {
-  test('startSession refuses a run with an armed Harness policy before constructing a session', () => {
+  test('startSession refuses a run with an ARMED Harness policy before constructing a session', () => {
     const { emit, events } = collector();
     expect(() =>
       provider.startSession(
@@ -197,29 +197,60 @@ describe('Codex governance preflight (#296)', () => {
     expect(events).toHaveLength(0);
   });
 
-  test('startSession refuses a run with a ledger path requested', () => {
-    const { emit, events } = collector();
-    expect(() =>
-      provider.startSession(
-        {
-          sessionId: 11,
-          prompt: 'go',
-          model: 'gpt-5-codex',
-          cwd: '/tmp',
-          autonomyOverride: 'auto-accept',
-          ledgerPath: '/tmp/nc-ledger.ndjson',
+  test('startSession PROCEEDS with the real production params shape: an always-on ledger path but NO armed policy (#296 regression)', () => {
+    // THE bug this pins: the Rust core sets `ledgerPath` UNCONDITIONALLY for every
+    // project-scoped run (`build_guardrails` in `sidecar/commands.rs` — see
+    // `assertGovernanceInvariant`'s docblock), regardless of whether a Harness
+    // policy is armed. Every real Codex task launched inside a project carries
+    // exactly this shape. Treating `ledgerPath` presence as "governance requested"
+    // would refuse EVERY such run — silently disabling the Codex provider
+    // entirely. This must proceed.
+    const { emit } = collector();
+    const session = provider.startSession(
+      {
+        sessionId: 11,
+        prompt: 'go',
+        model: 'gpt-5-codex',
+        cwd: '/tmp',
+        autonomyOverride: 'auto-accept',
+        // No `harnessPolicy` — the project has no `.nightcore/harness.json` armed —
+        // but `ledgerPath` is set exactly as `build_guardrails` always sets it.
+        ledgerPath: '/proj/.nightcore/ledger/task-1.ndjson',
+      },
+      emit,
+    );
+    expect(session).toBeDefined();
+  });
+
+  test('startSession PROCEEDS on a present-but-EMPTY Harness policy (self-protection-only manifest)', () => {
+    const { emit } = collector();
+    const session = provider.startSession(
+      {
+        sessionId: 12,
+        prompt: 'go',
+        model: 'gpt-5-codex',
+        cwd: '/tmp',
+        autonomyOverride: 'auto-accept',
+        harnessPolicy: {
+          protectedPaths: [],
+          denyBashPatterns: [],
+          denyReadPaths: [],
+          disallowedTools: [],
+          allowTools: [],
+          askTools: [],
+          allowExecSinks: [],
         },
-        emit,
-      ),
-    ).toThrow(GovernanceNotSupportedError);
-    expect(events).toHaveLength(0);
+      },
+      emit,
+    );
+    expect(session).toBeDefined();
   });
 
   test('startSession proceeds when NO harness policy or ledger is requested', () => {
     const { emit } = collector();
     const session = provider.startSession(
       {
-        sessionId: 12,
+        sessionId: 13,
         prompt: 'go',
         model: 'gpt-5-codex',
         cwd: '/tmp',
@@ -230,18 +261,18 @@ describe('Codex governance preflight (#296)', () => {
     expect(session).toBeDefined();
   });
 
-  test('the refusal names Codex and both missing capabilities', () => {
+  test('the refusal names Codex', () => {
     let caught: unknown;
     try {
       provider.startSession(
         {
-          sessionId: 13,
+          sessionId: 14,
           prompt: 'go',
           model: 'gpt-5-codex',
           cwd: '/tmp',
           autonomyOverride: 'auto-accept',
           harnessPolicy: ARMED_POLICY,
-          ledgerPath: '/tmp/nc-ledger.ndjson',
+          ledgerPath: '/proj/.nightcore/ledger/task-1.ndjson',
         },
         () => {},
       );
@@ -251,8 +282,8 @@ describe('Codex governance preflight (#296)', () => {
     expect(caught).toBeInstanceOf(GovernanceNotSupportedError);
     const err = caught as GovernanceNotSupportedError;
     expect(err.providerId).toBe('codex');
-    expect(err.missingHarnessPolicy).toBe(true);
-    expect(err.missingLedger).toBe(true);
+    expect(err.message).toContain('codex');
+    expect(err.message).toContain('Harness governance policy');
   });
 });
 

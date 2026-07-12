@@ -226,78 +226,84 @@ export function assertHooksInvariant(
 
 /**
  * Raised when a run is refused because its provider cannot enforce this project's
- * Harness governance policy (protected paths / Bash-command deny tiers) or write
- * the flight-recorder audit ledger the task requested (issue #296). Mirrors {@link
- * AutonomyNotPermittedError}: never silently run governed/audited work ungoverned
- * or unaudited — refuse the run instead. A real, synchronous pre-execution
- * interception seam for Codex (`codex app-server`'s `execCommandApproval`/
- * `applyPatchApproval` RPCs) exists but wiring it is a separate, larger initiative
- * — see #304. Until that lands, this is the durable fail-closed answer.
+ * ARMED Harness governance policy (protected paths / Bash-command deny tiers) —
+ * issue #296. Mirrors {@link AutonomyNotPermittedError}: never silently run
+ * governed work ungoverned — refuse the run instead. A real, synchronous
+ * pre-execution interception seam for Codex (`codex app-server`'s
+ * `execCommandApproval`/`applyPatchApproval` RPCs) exists but wiring it is a
+ * separate, larger initiative — see #304. Until that lands, this is the durable
+ * fail-closed answer.
+ *
+ * Scoped to the Harness POLICY only — never the flight-recorder ledger path
+ * (`StartSessionParams.ledgerPath`). The Rust core sets `ledgerPath`
+ * UNCONDITIONALLY for every project-scoped run (`build_guardrails` in
+ * `sidecar/commands.rs`: `ledger_path: root.as_deref().map(...)`, no "armed" gate),
+ * unlike `harnessPolicy`, which only resolves `Some` when a project author
+ * actually created `.nightcore/harness.json` (`store/harness_policy.rs`'s
+ * `read_policy`). Treating `ledgerPath` presence as "governance requested" would
+ * refuse EVERY Codex run in ANY project, armed policy or not — that shipped as a
+ * critical over-refusal bug and was reverted. `supportsLedger` stays on {@link
+ * ProviderCapabilities} (for descriptor completeness and #304's real-enforcement
+ * follow-up) but is not checked here until a genuine "ledger recording is armed"
+ * signal exists, distinct from the always-on path.
  */
 export class GovernanceNotSupportedError extends Error {
-  constructor(
-    readonly providerId: string,
-    /** The Harness policy was armed for this run and the provider can't enforce it. */
-    readonly missingHarnessPolicy: boolean,
-    /** The ledger was requested for this run and the provider can't write it. */
-    readonly missingLedger: boolean,
-  ) {
+  constructor(readonly providerId: string) {
     super(
-      GovernanceNotSupportedError.buildMessage(
-        providerId,
-        missingHarnessPolicy,
-        missingLedger,
-      ),
+      `Provider '${providerId}' cannot enforce this project's Harness governance ` +
+        "policy (protected paths / command deny). Switch to Claude for this run, " +
+        'or disarm the policy.',
     );
     this.name = 'GovernanceNotSupportedError';
-  }
-
-  private static buildMessage(
-    providerId: string,
-    missingHarnessPolicy: boolean,
-    missingLedger: boolean,
-  ): string {
-    const gaps = [
-      missingHarnessPolicy
-        ? "enforce this project's Harness governance policy (protected paths / " +
-          'command deny)'
-        : null,
-      missingLedger ? 'write the audit ledger' : null,
-    ].filter((gap): gap is string => gap !== null);
-    return (
-      `Provider '${providerId}' cannot ${gaps.join(' or ')}. Switch to Claude for ` +
-      'this run, or disarm the policy.'
-    );
   }
 }
 
 /**
+ * Whether a resolved Harness policy carries any actual rule. `read_policy` (Rust)
+ * arms an EMPTY policy whenever `.nightcore/harness.json` exists but declares no
+ * `policy` block of its own (e.g. a project that only armed Structure-Lock gauntlet
+ * checks) — purely so the engine's IMPLICIT `.nightcore/**` self-protection guards
+ * the manifest. That's not a rule set a no-hooks provider is meaningfully failing
+ * to enforce, so it doesn't count as "armed" for the refusal below — matching the
+ * spike's own Option C scoping ("`params.harnessPolicy` is present AND non-empty",
+ * `docs/research/2026-07-12-codex-governance-feasibility.md`). Exported so the web
+ * UI's warning banner can key off the identical signal (never a hand-duplicated
+ * one that could drift and refuse-with-no-warning).
+ */
+export function harnessPolicyHasRules(policy: HarnessPolicy): boolean {
+  return (
+    policy.protectedPaths.length > 0 ||
+    policy.denyBashPatterns.length > 0 ||
+    policy.denyReadPaths.length > 0 ||
+    policy.disallowedTools.length > 0 ||
+    policy.allowTools.length > 0 ||
+    policy.askTools.length > 0 ||
+    policy.allowExecSinks.length > 0
+  );
+}
+
+/**
  * THE fail-closed governance preflight (issue #296). A project's Harness runtime
- * policy (protected paths + Bash-command deny tiers) and the flight-recorder audit
- * ledger both ride Claude's PreToolUse hook seam (`HookBus`) — a provider that
- * can't run that seam has no channel to enforce the policy or record ledger
- * entries. So when EITHER is requested for a run (`StartSessionParams.harnessPolicy`
- * present, meaning the Rust core resolved an ARMED policy — see
- * `store/harness_policy.rs`'s resolution semantics — or `ledgerPath` set) and the
- * resolved provider's capability says it can't honor it, REFUSE the run before a
- * session is constructed — never silently drop governance or the audit trail.
- * Driven entirely by the capability descriptor (never a provider-id check), so a
- * future provider that DOES support governance is never refused here, and a
- * degraded provider is caught even if it isn't named `codex`. Pure + exported so
- * the gate battery can exercise every arm, mirroring {@link assertHooksInvariant}.
+ * policy (protected paths + Bash-command deny tiers) rides Claude's PreToolUse
+ * hook seam (`HookBus`) — a provider that can't run that seam has no channel to
+ * enforce it. So when an ARMED policy is requested for a run
+ * (`StartSessionParams.harnessPolicy` present AND {@link harnessPolicyHasRules})
+ * and the resolved provider's capability says it can't honor it, REFUSE the run
+ * before a session is constructed — never silently drop governance. Driven
+ * entirely by the capability descriptor (never a provider-id check), so a future
+ * provider that DOES support governance is never refused here, and a degraded
+ * provider is caught even if it isn't named `codex`. Deliberately does NOT check
+ * `ledgerPath` — see {@link GovernanceNotSupportedError}'s docblock for why. Pure +
+ * exported so the gate battery can exercise every arm, mirroring {@link
+ * assertHooksInvariant}.
  */
 export function assertGovernanceInvariant(
   capabilities: ProviderCapabilities,
-  params: Pick<StartSessionParams, 'harnessPolicy' | 'ledgerPath'>,
+  params: Pick<StartSessionParams, 'harnessPolicy'>,
 ): void {
-  const missingHarnessPolicy =
-    params.harnessPolicy !== undefined && !capabilities.supportsHarnessPolicy;
-  const missingLedger = params.ledgerPath !== undefined && !capabilities.supportsLedger;
-  if (missingHarnessPolicy || missingLedger) {
-    throw new GovernanceNotSupportedError(
-      capabilities.id,
-      missingHarnessPolicy,
-      missingLedger,
-    );
+  const armed =
+    params.harnessPolicy !== undefined && harnessPolicyHasRules(params.harnessPolicy);
+  if (armed && !capabilities.supportsHarnessPolicy) {
+    throw new GovernanceNotSupportedError(capabilities.id);
   }
 }

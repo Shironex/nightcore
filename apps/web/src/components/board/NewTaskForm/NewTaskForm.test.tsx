@@ -5,9 +5,11 @@ import { expect, test, vi } from 'vitest';
 import { render } from 'vitest-browser-react';
 
 import { MAX_IMAGES_PER_TASK } from '@/lib/attachments';
+import type { HarnessPolicyFile } from '@/lib/bridge';
+import { governanceWarningFor, harnessPolicyHasRules } from '@/lib/harness-governance';
 import { CLAUDE_CAPABILITIES, CODEX_CAPABILITIES } from '@/lib/provider-capabilities';
 
-import { governanceWarningFor, planFirstDefault, useNewTaskForm } from './NewTaskForm.hooks';
+import { planFirstDefault, useNewTaskForm } from './NewTaskForm.hooks';
 import * as stories from './NewTaskForm.stories';
 import type { NewTaskFormProps } from './NewTaskForm.types';
 
@@ -24,17 +26,39 @@ test('planFirstDefault seeds plan-first only for a Build task on a hooks-capable
   expect(planFirstDefault('build', false, true)).toBe(false);
 });
 
+const EMPTY_POLICY_FILE: HarnessPolicyFile = {
+  enabled: true,
+  protectedPaths: [],
+  denyBashPatterns: [],
+  denyReadPaths: [],
+  disallowedTools: [],
+  allowTools: [],
+  askTools: [],
+  diffBudget: null,
+  manifestExists: true,
+};
+
+test('harnessPolicyHasRules (#296): false for an all-empty policy, true when any field has a rule', () => {
+  expect(harnessPolicyHasRules(EMPTY_POLICY_FILE)).toBe(false);
+  expect(harnessPolicyHasRules({ ...EMPTY_POLICY_FILE, protectedPaths: ['bun.lock'] })).toBe(true);
+  expect(
+    harnessPolicyHasRules({ ...EMPTY_POLICY_FILE, denyBashPatterns: ['--no-verify'] }),
+  ).toBe(true);
+});
+
 test('governanceWarningFor (#296): only warns when the policy is armed AND the provider lacks governance', () => {
   // No warning: policy not armed, capabilities unresolved, or a governed provider.
   expect(governanceWarningFor(false, CODEX_CAPABILITIES)).toBeNull();
   expect(governanceWarningFor(true, null)).toBeNull();
   expect(governanceWarningFor(true, CLAUDE_CAPABILITIES)).toBeNull();
-  // Warns: policy armed AND the resolved provider can't enforce it.
+  // Warns: policy armed AND the resolved provider can't enforce it. Never mentions
+  // the audit ledger — the ledger path is unconditional per project, never an
+  // independent trigger (see the engine's `assertGovernanceInvariant` docblock).
   const warning = governanceWarningFor(true, CODEX_CAPABILITIES);
   expect(warning).not.toBeNull();
   expect(warning).toContain('Codex');
-  expect(warning).toContain("Harness governance policy");
-  expect(warning).toContain('audit ledger');
+  expect(warning).toContain('Harness governance policy');
+  expect(warning).not.toContain('audit ledger');
 });
 
 test('gates create on a non-empty title, then fires onCreate', async () => {

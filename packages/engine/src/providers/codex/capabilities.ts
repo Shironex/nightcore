@@ -9,17 +9,21 @@
  *  - `supportsHooks: false` — there is no Claude-style PreToolUse gate.
  *  - `providesOwnWriteContainment: true` — Codex's native sandbox is the
  *    compensating control for `workspace-write` autonomy.
- *  - `supportsHarnessPolicy: false` / `supportsLedger: false` — a project's Harness
- *    runtime policy (protected paths + Bash-command deny tiers) and the
- *    flight-recorder audit ledger both ride Claude's PreToolUse hook; Codex has no
- *    equivalent seam today, so a run that requests either is REFUSED fail-closed
- *    rather than silently running ungoverned/unaudited (issue #296). A real
- *    interception point (`codex app-server`'s `execCommandApproval`/
+ *  - `supportsHarnessPolicy: false` — a project's Harness runtime policy (protected
+ *    paths + Bash-command deny tiers) rides Claude's PreToolUse hook; Codex has no
+ *    equivalent seam today, so a run whose policy is ARMED (present and non-empty)
+ *    is REFUSED fail-closed rather than silently running ungoverned (issue #296).
+ *    A real interception point (`codex app-server`'s `execCommandApproval`/
  *    `applyPatchApproval` RPCs) exists one layer below the `@openai/codex-sdk`
  *    Nightcore drives today, but wiring it is a separate, larger initiative
  *    (#304) — Codex's own kernel sandbox (`providesOwnWriteContainment`) is a
  *    real but PARTIAL compensating control: it covers workspace confinement, not
  *    a project's custom protected-path/deny-pattern rules.
+ *  - `supportsLedger: false` — declared truthfully (Codex can't write the
+ *    flight-recorder audit ledger either) but is NOT currently a refusal trigger:
+ *    the ledger path is set unconditionally for every project-scoped run, never an
+ *    "armed" signal — see `assertGovernanceInvariant`'s docblock in
+ *    `providers/agent-provider.ts`.
  *  - `autonomyLevels: ['auto-accept', 'plan']` — `ask` is NOT advertised: the
  *    codex-sdk has no approval channel (non-interactive `codex exec`, stdin closed,
  *    no approval event), so an `ask` posture could never be answered and would hang.

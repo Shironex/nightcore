@@ -960,9 +960,10 @@ describe('SessionManager fail-closed governance invariant (#296)', () => {
     },
   };
 
-  /** An armed-but-empty Harness policy — presence alone arms the layer. */
+  /** An ARMED Harness policy — present AND carrying an actual rule (matches the
+   *  spike's Option C scoping: "present AND non-empty"). */
   const ARMED_POLICY: HarnessPolicy = {
-    protectedPaths: [],
+    protectedPaths: ['bun.lock'],
     denyBashPatterns: [],
     denyReadPaths: [],
     disallowedTools: [],
@@ -972,8 +973,8 @@ describe('SessionManager fail-closed governance invariant (#296)', () => {
   };
 
   /** A provider whose ONLY material difference from Claude is that it cannot
-   *  enforce Harness policy or write a ledger — mirrors `CODEX_CAPABILITIES`'s
-   *  shape without hardcoding a real Codex session (never spins one). */
+   *  enforce Harness policy — mirrors `CODEX_CAPABILITIES`'s shape without
+   *  hardcoding a real Codex session (never spins one). */
   class UngovernedProvider implements AgentProvider {
     capabilities() {
       return {
@@ -1000,7 +1001,7 @@ describe('SessionManager fail-closed governance invariant (#296)', () => {
     return e.type === 'session-failed';
   }
 
-  test('REFUSES a run with an armed Harness policy — terminal session-failed, no start', async () => {
+  test('REFUSES a run with an ARMED Harness policy — terminal session-failed, no start', async () => {
     const manager = new SessionManager(
       makeConfig(),
       undefined,
@@ -1021,7 +1022,14 @@ describe('SessionManager fail-closed governance invariant (#296)', () => {
     expect(events.some((e) => e.type === 'session-started')).toBe(false);
   });
 
-  test('REFUSES a run with a ledger path requested', async () => {
+  test('PROCEEDS with the real production params shape: an always-on ledger path but NO armed policy (#296 regression)', async () => {
+    // THE bug this pins: `submit.rs`'s `build_guardrails` sets `ledgerPath`
+    // UNCONDITIONALLY for every project-scoped run — it is NOT gated on an
+    // "armed" signal the way `harnessPolicy` is (Rust's `read_policy`). Every
+    // real Codex task launched inside a project carries exactly this params
+    // shape; refusing on `ledgerPath` presence alone silently disabled the Codex
+    // provider for ALL project runs. Simulates that production shape end-to-end
+    // through `dispatch()` — not a hand-omitted params object.
     const manager = new SessionManager(
       makeConfig(),
       undefined,
@@ -1033,13 +1041,41 @@ describe('SessionManager fail-closed governance invariant (#296)', () => {
     await manager.dispatch({
       type: 'start-session',
       prompt: 'x',
-      ledgerPath: '/tmp/nc-ledger.ndjson',
+      // No `harnessPolicy` — the project has no `.nightcore/harness.json` armed —
+      // but `ledgerPath` is set exactly as `build_guardrails` always sets it for
+      // any run with a project root.
+      ledgerPath: '/proj/.nightcore/ledger/task-1.ndjson',
     });
 
-    const failed = events.find(isFailed);
-    expect(failed).toBeDefined();
-    expect(failed?.message).toContain('audit ledger');
-    expect(events.some((e) => e.type === 'session-started')).toBe(false);
+    expect(events.some((e) => e.type === 'session-started')).toBe(true);
+    expect(events.some(isFailed)).toBe(false);
+  });
+
+  test('PROCEEDS on a present-but-EMPTY Harness policy (self-protection-only manifest)', async () => {
+    const manager = new SessionManager(
+      makeConfig(),
+      undefined,
+      new UngovernedProvider(),
+    );
+    const events: NightcoreEvent[] = [];
+    manager.on((e) => events.push(e));
+
+    await manager.dispatch({
+      type: 'start-session',
+      prompt: 'x',
+      harnessPolicy: {
+        protectedPaths: [],
+        denyBashPatterns: [],
+        denyReadPaths: [],
+        disallowedTools: [],
+        allowTools: [],
+        askTools: [],
+        allowExecSinks: [],
+      },
+    });
+
+    expect(events.some((e) => e.type === 'session-started')).toBe(true);
+    expect(events.some(isFailed)).toBe(false);
   });
 
   test('STARTS a run with NO active policy or ledger on the same ungoverned provider', async () => {
