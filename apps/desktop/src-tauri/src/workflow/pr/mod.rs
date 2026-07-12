@@ -22,10 +22,14 @@
 //!   local resource or script through the browser seam.
 
 mod capability;
+mod closes;
 mod create;
 mod draft;
+mod gh_seam;
 mod open;
 mod parse;
+mod preconditions;
+mod refs;
 mod viewer;
 
 // Facade: preserve the historical `crate::workflow::pr::*` paths after the
@@ -42,4 +46,14 @@ pub(crate) use create::*;
 pub(crate) use draft::*;
 pub(crate) use open::*;
 pub(crate) use viewer::*;
-// `parse` is intra-`pr` only (consumed by `create`); no facade re-export.
+// The create-PR god-file was split (issue #226) into cohesive steps the `create`
+// orchestrator sequences: `preconditions` (merge-bar preconditions + gauntlet
+// failure copy), `refs` (branch/base resolution), `closes` (the `Closes #N` body
+// helper), and `gh_seam` (the `gh pr create` invocation + `gh pr view` idempotency
+// recovery). All four are intra-`pr` (consumed by `create`, and `closes` also by
+// `draft`) via the direct `super::<mod>` path, like `parse` — no facade re-export.
+// The one exception: `closes::ensure_closes_keyword` is also reached through the
+// crate facade by the cfg(test) `e2e_gh` harness, so its alias is gated to match —
+// an ungated re-export would be dead in the non-test lib build.
+#[cfg(test)]
+pub(crate) use closes::ensure_closes_keyword;
