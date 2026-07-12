@@ -4,6 +4,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   type Config,
   ConfigSchema,
+  type DeepScanConfig,
   type FindingCategory,
   type NightcoreEvent,
   type SurfaceCommand,
@@ -448,5 +449,194 @@ describe('AnalysisManager — event ordering', () => {
     expect(startedAt).toBeGreaterThan(0);
     expect(completedAt).toBeGreaterThan(startedAt);
     expect(completedAt).toBeLessThan(types.length - 1);
+  });
+});
+
+// ─── Deep mode (issue #294): the multi-round convergence loop ────────────────────
+
+/** A deep `start-analysis` command (opts into the round loop). */
+function deepCommand(
+  categories: FindingCategory[],
+  deep: Partial<DeepScanConfig> = {},
+): StartAnalysis {
+  return {
+    ...startCommand(categories),
+    deep: {
+      maxRoundsPerCategory: 15,
+      convergenceEmptyRounds: 2,
+      maxFindingsPerRound: 20,
+      ...deep,
+    },
+  };
+}
+
+/** A fileless finding with the given title — kept by grounding (no file to verify)
+ *  and fingerprinted by title, so repeating a title reads as zero net-new. */
+function findingJson(title: string): string {
+  return JSON.stringify([
+    { severity: 'high', effort: 'small', title, description: 'd' },
+  ]);
+}
+
+describe('AnalysisManager — deep mode: convergence', () => {
+  test('stops after K consecutive zero-net-new rounds', async () => {
+    let rounds = 0;
+    const factory: AnalysisRunnerFactory = (_cfg, emit) => ({
+      async run() {
+        rounds++;
+        // Always the SAME finding: round 1 is 1 net-new, every later round is 0.
+        await completing(findingJson('Issue A'))(emit);
+      },
+      async interrupt() {},
+    });
+
+    const { events, emit, done } = collect();
+    const manager = new AnalysisManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(
+      deepCommand(['bugs'], {
+        convergenceEmptyRounds: 2,
+        maxRoundsPerCategory: 15,
+      }),
+    );
+    await done;
+
+    // r1: 1 new (streak 0) · r2: 0 new (streak 1) · r3: 0 new (streak 2 = K) → stop.
+    expect(rounds).toBe(3);
+    const roundEvents = events.filter(
+      (e) => e.type === 'analysis-category-round-completed',
+    );
+    expect(roundEvents).toHaveLength(3);
+    const newCounts = roundEvents.map((e) =>
+      e.type === 'analysis-category-round-completed'
+        ? e.newFindingsThisRound
+        : -1,
+    );
+    expect(newCounts).toEqual([1, 0, 0]);
+    // 1-based round indices in order.
+    expect(
+      roundEvents.map((e) =>
+        e.type === 'analysis-category-round-completed' ? e.round : -1,
+      ),
+    ).toEqual([1, 2, 3]);
+  });
+});
+
+describe('AnalysisManager — deep mode: non-convergence backstop', () => {
+  test('maxRoundsPerCategory caps a never-converging category', async () => {
+    let rounds = 0;
+    const factory: AnalysisRunnerFactory = (_cfg, emit) => ({
+      async run() {
+        rounds++;
+        // A UNIQUE finding every round → 1 net-new each → never converges.
+        await completing(findingJson(`Issue ${rounds}`))(emit);
+      },
+      async interrupt() {},
+    });
+
+    const { events, emit, done } = collect();
+    const manager = new AnalysisManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(
+      deepCommand(['bugs'], {
+        convergenceEmptyRounds: 2,
+        maxRoundsPerCategory: 4,
+      }),
+    );
+    await done;
+
+    // Every round adds 1 net-new (streak never reaches K), so only the backstop stops it.
+    expect(rounds).toBe(4);
+    expect(
+      events.filter((e) => e.type === 'analysis-category-round-completed'),
+    ).toHaveLength(4);
+  });
+});
+
+describe('AnalysisManager — deep mode: exclusion prompt + per-round cap', () => {
+  test('round 1 has no exclusion list; round ≥ 2 excludes prior findings and asks for NEW; per-round cap honored', async () => {
+    const prompts: string[] = [];
+    let rounds = 0;
+    const factory: AnalysisRunnerFactory = (
+      cfg: SessionRunnerConfig,
+      emit,
+    ) => ({
+      async run() {
+        rounds++;
+        prompts.push(cfg.prompt);
+        await completing(findingJson(`Issue ${rounds}`))(emit);
+      },
+      async interrupt() {},
+    });
+
+    const { emit, done } = collect();
+    const manager = new AnalysisManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(
+      deepCommand(['bugs'], {
+        convergenceEmptyRounds: 2,
+        maxRoundsPerCategory: 3,
+        maxFindingsPerRound: 20,
+      }),
+    );
+    await done;
+
+    expect(prompts.length).toBeGreaterThanOrEqual(2);
+    // Round 1: no exclusion list, classic cap wording at the deep per-round cap (20).
+    expect(prompts[0]).not.toContain('ALREADY FOUND');
+    expect(prompts[0]).toContain('Return AT MOST 20 findings');
+    // Round 2: the exclusion list (with round-1's title) + the NEW-findings contract.
+    expect(prompts[1]).toContain('ALREADY FOUND');
+    expect(prompts[1]).toContain('Issue 1');
+    expect(prompts[1]).toContain('Return AT MOST 20 **NEW** findings');
+  });
+});
+
+describe('AnalysisManager — deep OFF path is unchanged', () => {
+  test('a non-deep command runs exactly one session and emits the classic per-category event (no round events)', async () => {
+    let calls = 0;
+    const factory: AnalysisRunnerFactory = (_cfg, emit) => ({
+      async run() {
+        calls++;
+        await completing(ONE_FINDING)(emit);
+      },
+      async interrupt() {},
+    });
+
+    const { events, emit, done } = collect();
+    const manager = new AnalysisManager({
+      config: BASE_CONFIG,
+      apiKeyFallback: false,
+      emit,
+      runnerFactory: factory,
+    });
+
+    manager.start(startCommand(['bugs']));
+    await done;
+
+    // Exactly one session (valid JSON ⇒ no corrective retry) — byte-identical to pre-deep.
+    expect(calls).toBe(1);
+    // The classic per-category event still fires; NO round events in classic mode.
+    expect(
+      events.filter((e) => e.type === 'analysis-category-completed'),
+    ).toHaveLength(1);
+    expect(
+      events.filter((e) => e.type === 'analysis-category-round-completed'),
+    ).toHaveLength(0);
   });
 });

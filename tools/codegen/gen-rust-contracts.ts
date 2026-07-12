@@ -329,6 +329,9 @@ const STRUCT_NAMES: Record<string, string> = {
   'index|kind|message|passed': 'RuleTesterCaseResult',
   'cases|error|eslintVersion|invalidPassed|invalidTotal|outcome|ruleId|ruleLoaded|validPassed|validTotal':
     'RuleValidationResult',
+  // Opt-in deep-scan config (issue #294), carried on `start-analysis` (and any
+  // future scan command that adopts deep mode).
+  'convergenceEmptyRounds|maxFindingsPerRound|maxRoundsPerCategory': 'DeepScanConfig',
   // Insight (codebase analysis) shapes.
   'endLine|file|startLine|symbol': 'FindingLocation',
   'affectedFiles|category|codeAfter|codeBefore|confidence|description|effort|fingerprint|id|location|rationale|severity|suggestion|tags|title':
@@ -993,6 +996,9 @@ const COMMAND_INPUTS: Record<string, unknown> = {
     maxConcurrency: 3,
     maxTurnsPerCategory: 40,
     maxBudgetUsdPerCategory: 2,
+    // `{}` exercises the zod defaults so the emitted fixture carries all three deep
+    // fields, round-tripping the generated `DeepScanConfig` struct through Rust.
+    deep: {},
   },
   'cancel-analysis': { type: 'cancel-analysis', runId: 'run-1' },
   'start-harness-scan': {
@@ -1274,6 +1280,34 @@ const EVENT_INPUTS: Record<string, unknown> = {
         affectedFiles: ['src/handler.ts'],
         tags: ['async', 'error-handling'],
         confidence: 0.8,
+        fingerprint: 'bugs:src/handler.ts:unawaited-promise',
+      },
+    ],
+    usage: {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    },
+    costUsd: 0.04,
+  },
+  'analysis-category-round-completed': {
+    type: 'analysis-category-round-completed',
+    runId: 'run-1',
+    category: 'bugs',
+    round: 2,
+    newFindingsThisRound: 1,
+    findings: [
+      {
+        id: 'f-1',
+        category: 'bugs',
+        severity: 'high',
+        effort: 'small',
+        title: 'Unawaited promise drops errors',
+        description:
+          'The handler calls save() without awaiting, so a rejection is lost.',
+        affectedFiles: ['src/handler.ts'],
+        tags: ['async'],
         fingerprint: 'bugs:src/handler.ts:unawaited-promise',
       },
     ],

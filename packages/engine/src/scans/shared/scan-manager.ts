@@ -23,6 +23,7 @@
  */
 import type {
   Config,
+  DeepScanConfig,
   EffortLevel,
   NightcoreEvent,
   TokenUsage,
@@ -35,8 +36,19 @@ import {
 } from '../../providers/claude/session-runner.js';
 import type { ProviderRegistry } from '../../providers/provider-factory.js';
 import { buildRepoInventory } from './inventory.js';
-import { makeHeartbeat } from './observability.js';
 import { runPool } from './pool.js';
+import { type RoundCompletedInfo, runRoundLoop } from './round-loop.js';
+import { runScanSession } from './session-spin.js';
+import { runCorrectivePass } from './single-pass.js';
+
+// Re-exported so feature managers (Insight) override `emitRoundCompleted` in this
+// module's vocabulary, mirroring the `ScanRunnerFactory` re-export pattern.
+export type { RoundCompletedInfo } from './round-loop.js';
+// `addUsage`/`EMPTY_USAGE` live in `./usage.js` so the round loop shares them without a
+// cycle; re-exported so this module's public surface is unchanged.
+import { addUsage, EMPTY_USAGE } from './usage.js';
+
+export { addUsage, EMPTY_USAGE } from './usage.js';
 
 /** Default number of passes to run at once. A 6-wide pool keeps the wall-clock down
  *  while staying bounded so we never open all items' paid Claude subprocesses at
@@ -44,15 +56,6 @@ import { runPool } from './pool.js';
 export const DEFAULT_CONCURRENCY = 6;
 /** Per-pass turn ceiling (the model explores then writes its output). */
 export const DEFAULT_MAX_TURNS = 40;
-
-/** A zeroed usage total; copy it (`{ ...EMPTY_USAGE }`) before accumulating. */
-export const EMPTY_USAGE: TokenUsage = {
-  inputTokens: 0,
-  outputTokens: 0,
-  cacheReadTokens: 0,
-  cacheCreationTokens: 0,
-  reasoningOutputTokens: 0,
-};
 
 /** The strict-JSON reminder appended to the ONE corrective retry of an ARRAY-shaped
  *  pass (Insight / Harness / PR-review). Shared so the wording can't drift per
@@ -119,6 +122,10 @@ export interface BaseScanCommand {
   model?: string;
   effort?: EffortLevel;
   maxConcurrency?: number;
+  /** Opt-in DEEP mode (issue #294): when set, each item runs as a multi-round
+   *  convergence loop instead of a single pass. Absent ⇒ the classic single-pass
+   *  path (byte-identical to pre-deep). Only a deep-enabled command populates it. */
+  deep?: DeepScanConfig;
 }
 
 /** One in-flight scan: its live runner set (so cancel can interrupt them) and a
@@ -314,13 +321,19 @@ export abstract class ScanManager<
           addUsage(totalUsage, outcome.usage);
           all.push(...grounded);
 
-          this.emitItemCompleted({
-            command,
-            item,
-            grounded,
-            outcome,
-            elapsedMs: Date.now() - itemStartedAt,
-          });
+          // Deep mode already streamed each round's cumulative findings + per-round
+          // spend via `emitRoundCompleted`; a terminal per-item event would
+          // double-count that spend in the running store, so the round events are the
+          // sole per-item persistence carriers there. Classic path unchanged.
+          if (command.deep === undefined) {
+            this.emitItemCompleted({
+              command,
+              item,
+              grounded,
+              outcome,
+              elapsedMs: Date.now() - itemStartedAt,
+            });
+          }
         },
       );
 
@@ -352,10 +365,10 @@ export abstract class ScanManager<
     }
   }
 
-  /** Run one item pass with exactly one corrective retry on unparseable output. The
-   *  retry re-asks with the feature's strict JSON reminder (cheap relative to losing
-   *  the whole pass). Identical across all three features modulo the injected
-   *  parse + prompt + reminder. */
+  /** Run one item: the classic single pass (+ one corrective retry), or — when the
+   *  command opts into `deep` — the multi-round convergence loop. The non-deep path is
+   *  BYTE-IDENTICAL to pre-deep: exactly one pass, same events, same persistence; deep
+   *  mode's per-round mechanics all live in {@link runRoundLoop}. */
   private async runItem(
     command: TCommand,
     item: TItem,
@@ -364,186 +377,72 @@ export abstract class ScanManager<
     inventory: string,
   ): Promise<ItemOutcome<TFinding>> {
     const preset = this.preset(item);
-    const usage: TokenUsage = { ...EMPTY_USAGE };
-    let costUsd = 0;
-
-    const prompt = this.buildPrompt(command, preset, context, inventory);
-    const first = await this.runOneSession(command, preset, prompt, run);
-    addUsage(usage, first.usage);
-    costUsd += first.costUsd;
-
-    if (run.cancelled) {
-      return { findings: [], usage, costUsd, error: 'cancelled', reason: 'aborted' };
-    }
-    if (first.result === undefined) {
-      return {
-        findings: [],
-        usage,
-        costUsd,
-        error: first.error ?? 'no result',
-        ...(first.reason !== undefined ? { reason: first.reason } : {}),
-      };
-    }
-
-    let parsed = this.parse(first.result, item, first.structuredOutput);
-    let reason = first.reason;
-    if (parsed.error !== undefined) {
-      this.deps.logger?.debug('scan pass produced no JSON; retrying', {
-        runId: command.runId,
+    const { deep } = command;
+    if (deep !== undefined) {
+      return runRoundLoop<TFinding>({
+        deep,
+        buildPrompt: (round, foundSoFar) =>
+          this.buildRoundPrompt(command, preset, context, inventory, round, foundSoFar),
+        runPass: (prompt) => this.runPass(command, item, run, preset, prompt),
+        ground: (findings) => this.ground(findings, command.projectPath),
+        fingerprint: (finding) => this.deepFingerprint(finding),
+        emitRoundCompleted: (info) => this.emitRoundCompleted(command, item, info),
+        isCancelled: () => run.cancelled,
       });
-      const retry = await this.runOneSession(
-        command,
-        preset,
-        `${prompt}${this.retryReminderSuffix()}`,
-        run,
-      );
-      addUsage(usage, retry.usage);
-      costUsd += retry.costUsd;
-      if (run.cancelled) reason = 'aborted';
-      else if (retry.result !== undefined) {
-        parsed = this.parse(retry.result, item, retry.structuredOutput);
-        reason = retry.reason;
-      } else if (retry.reason !== undefined) {
-        reason = retry.reason;
-      }
     }
-
-    return {
-      findings: parsed.findings,
-      usage,
-      costUsd,
-      ...(parsed.error !== undefined ? { error: parsed.error } : {}),
-      ...(reason !== undefined ? { reason } : {}),
-    };
+    return this.runPass(
+      command,
+      item,
+      run,
+      preset,
+      this.buildPrompt(command, preset, context, inventory),
+    );
   }
 
-  /** Spin one read-only SessionRunner and capture its terminal result/usage. The
-   *  runner's events are consumed locally and never forwarded to the main stream —
-   *  only the feature's `*-*` events do. Identical across features; the persona +
-   *  toolset + ceilings come from {@link sessionConfig}. */
-  protected async runOneSession(
+  /** Run ONE pass with exactly one corrective retry on unparseable output — a thin
+   *  wrapper over {@link runCorrectivePass} that closes over this pass's command /
+   *  preset / item / run. BOTH the classic path and every deep round call it with
+   *  their prompt; the retry/cancel/accumulate mechanics stay in one audited place. */
+  private runPass(
+    command: TCommand,
+    item: TItem,
+    run: ActiveScanRun,
+    preset: TPreset,
+    prompt: string,
+  ): Promise<ItemOutcome<TFinding>> {
+    return runCorrectivePass<TFinding>(
+      {
+        runId: command.runId,
+        isCancelled: () => run.cancelled,
+        runSession: (p) => this.runOneSession(command, preset, p, run),
+        parse: (result, structuredOutput) =>
+          this.parse(result, item, structuredOutput),
+        reminderSuffix: this.retryReminderSuffix(),
+        logger: this.deps.logger,
+      },
+      prompt,
+    );
+  }
+
+  /** Spin one read-only session for `prompt` and capture its terminal result/usage —
+   *  a thin wrapper resolving the feature's per-pass config + heartbeat label, then
+   *  delegating the Claude/Codex construction fork to {@link runScanSession}. The
+   *  runner's events are consumed locally; only the feature's `*-*` events reach the
+   *  main stream. */
+  protected runOneSession(
     command: TCommand,
     preset: TPreset,
     prompt: string,
     run: ActiveScanRun,
   ): Promise<SessionOutcome> {
-    let result: string | undefined;
-    let structuredOutput: Record<string, unknown> | undefined;
-    let usage: TokenUsage = { ...EMPTY_USAGE };
-    let costUsd = 0;
-    let error: string | undefined;
-    let reason: SessionFailedReason | undefined;
-    // Throttled progress so a long pass shows life in the terminal instead of
-    // running silent until it completes (the sub-session's events never hit the wire).
-    const heartbeat = makeHeartbeat(this.deps.logger, this.heartbeatLabel(preset));
-
-    const parts = this.sessionConfig(command, preset);
-    const effort = command.effort ?? this.deps.config.effort;
-    const providerId = command.providerId ?? this.deps.config.provider;
-    const hasProviders = !!this.deps.providers;
-    const isCodexProvider = providerId === 'codex' && hasProviders;
-
-    let runner: ScanSessionRunner;
-
-    if (this.deps.runnerFactory || !isCodexProvider) {
-      // Claude path (or test runnerFactory override): use the direct config that
-      // wires appendSystemPrompt + exact allowed/disallowed tools into the runner.
-      const factory = this.deps.runnerFactory ?? defaultRunnerFactory;
-      runner = factory(
-        {
-          sessionId: -1,
-          prompt,
-          model: command.model ?? this.deps.config.model,
-          ...(effort ? { effort } : {}),
-          permissionMode: 'dontAsk',
-          permissionPolicy: this.deps.config.permissions,
-          cwd: command.projectPath,
-          apiKeyFallback: this.deps.apiKeyFallback,
-          settingSources: this.deps.config.settingSources,
-          todoFeatureEnabled: false,
-          appendSystemPrompt: parts.appendSystemPrompt,
-          allowedTools: parts.allowedTools,
-          disallowedTools: parts.disallowedTools,
-          maxTurns: parts.maxTurns,
-          ...(parts.maxBudgetUsd !== undefined
-            ? { maxBudgetUsd: parts.maxBudgetUsd }
-            : {}),
-          ...(parts.outputFormat !== undefined
-            ? { outputFormat: parts.outputFormat }
-            : {}),
-        },
-        (event) => {
-          if (event.type === 'session-completed') {
-            result = event.result;
-            structuredOutput = event.structuredOutput;
-            costUsd = event.costUsd ?? 0;
-            if (event.usage !== undefined) usage = event.usage;
-          } else if (event.type === 'session-failed') {
-            error = event.message;
-            reason = event.reason;
-          } else {
-            heartbeat(event);
-          }
-        },
-        this.deps.logger?.child(this.heartbeatLabel(preset)),
-      );
-    } else {
-      // Codex (or other future providers): route through the provider so it can
-      // use its own SDK / structured output support. We compose the system
-      // instructions into the prompt.
-      const providers = this.deps.providers!;
-      const provider = providers.forSession(providerId);
-      const fullPrompt = [parts.appendSystemPrompt, prompt].filter(Boolean).join('\n\n');
-      const session = provider.startSession(
-        {
-          sessionId: -1,
-          prompt: fullPrompt,
-          model: command.model ?? this.deps.config.model,
-          ...(effort ? { effort } : {}),
-          cwd: command.projectPath,
-          // Scans are trusted internal read-only analysis; give the model the
-          // tools the persona says it can use.
-          autonomyOverride: 'bypass',
-          maxTurns: parts.maxTurns,
-          ...(parts.maxBudgetUsd !== undefined
-            ? { maxBudgetUsd: parts.maxBudgetUsd }
-            : {}),
-        },
-        (event) => {
-          if (event.type === 'session-completed') {
-            result = event.result;
-            structuredOutput = event.structuredOutput;
-            costUsd = event.costUsd ?? 0;
-            if (event.usage !== undefined) usage = event.usage;
-          } else if (event.type === 'session-failed') {
-            error = event.message;
-            reason = event.reason;
-          } else {
-            heartbeat(event);
-          }
-        },
-        this.deps.logger?.child(this.heartbeatLabel(preset)),
-      );
-      runner = {
-        run: () => session.run(),
-        interrupt: () => (session as { interrupt?: () => Promise<void> }).interrupt?.() ?? Promise.resolve(),
-      };
-    }
-
-    run.runners.add(runner);
-    try {
-      await runner.run();
-    } finally {
-      run.runners.delete(runner);
-    }
-    return {
-      result,
-      usage,
-      costUsd,
-      ...(structuredOutput !== undefined ? { structuredOutput } : {}),
-      ...(error !== undefined ? { error } : {}),
-      ...(reason !== undefined ? { reason } : {}),
-    };
+    return runScanSession(
+      this.deps,
+      command,
+      prompt,
+      run,
+      this.sessionConfig(command, preset),
+      this.heartbeatLabel(preset),
+    );
   }
 
   // ── Feature hooks: the ONLY parts each scan injects ─────────────────────────
@@ -583,6 +482,42 @@ export abstract class ScanManager<
 
   /** Ground the parsed items against the real tree (drop/clamp hallucinated refs). */
   protected abstract ground(findings: TFinding[], projectPath: string): TFinding[];
+
+  // ── Deep-mode hooks (issue #294) — reached ONLY when a command sets `deep`, so a
+  //    non-deep feature never overrides them and its behavior is unchanged. ─────────
+
+  /** Deep mode: build round `round` (1-based)'s prompt; `foundSoFar` (empty on round 1)
+   *  seeds the exclusion list. Default: the round-agnostic single-pass prompt. */
+  protected buildRoundPrompt(
+    command: TCommand,
+    preset: TPreset,
+    context: TContext,
+    inventory: string,
+    round: number,
+    foundSoFar: readonly TFinding[],
+  ): string {
+    void round;
+    void foundSoFar;
+    return this.buildPrompt(command, preset, context, inventory);
+  }
+
+  /** Deep mode: emit the feature's per-round event. Default: no-op. */
+  protected emitRoundCompleted(
+    command: TCommand,
+    item: TItem,
+    info: RoundCompletedInfo<TFinding>,
+  ): void {
+    void command;
+    void item;
+    void info;
+  }
+
+  /** Deep mode: the stable dedup key for a grounded finding (net-new is counted on it,
+   *  aligned with the finalize dedup key). Default: structural JSON equality; Insight
+   *  overrides to the finding's own fingerprint. */
+  protected deepFingerprint(finding: TFinding): string {
+    return JSON.stringify(finding);
+  }
 
   /** The strict-JSON reminder appended to the ONE corrective retry prompt (differs by
    *  whether the pass returns a JSON array or a single object). */
@@ -632,18 +567,4 @@ export abstract class ScanManager<
   protected get defaultConcurrency(): number {
     return DEFAULT_CONCURRENCY;
   }
-}
-
-// ── Token-usage accumulation — the one piece of shared scan mechanics that stays
-//    with the base class. The bounded pool, heartbeat observability, repo inventory,
-//    and log formatters now live in ./pool, ./observability, ./inventory, ./format.
-//    Used by the base above and by the synthesis pass. ─────────────────────────────
-
-/** Accumulate token usage in place. */
-export function addUsage(into: TokenUsage, add: TokenUsage | undefined): void {
-  if (add === undefined) return;
-  into.inputTokens += add.inputTokens;
-  into.outputTokens += add.outputTokens;
-  into.cacheReadTokens += add.cacheReadTokens;
-  into.cacheCreationTokens += add.cacheCreationTokens;
 }

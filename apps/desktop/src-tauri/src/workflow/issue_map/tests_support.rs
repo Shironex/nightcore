@@ -89,6 +89,7 @@ pub(crate) fn insight_run() -> InsightRun {
                 "dismissed",
             ),
         ],
+        rounds_by_category: std::collections::HashMap::new(),
         error: None,
     }
 }

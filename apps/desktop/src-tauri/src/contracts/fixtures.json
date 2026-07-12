@@ -117,7 +117,12 @@
       "effort": "high",
       "maxConcurrency": 3,
       "maxTurnsPerCategory": 40,
-      "maxBudgetUsdPerCategory": 2
+      "maxBudgetUsdPerCategory": 2,
+      "deep": {
+        "maxRoundsPerCategory": 15,
+        "convergenceEmptyRounds": 2,
+        "maxFindingsPerRound": 20
+      }
     },
     "cancel-analysis": {
       "type": "cancel-analysis",
@@ -472,6 +477,39 @@
         "reasoningOutputTokens": 0
       },
       "costUsd": 0.04
+    },
+    "analysis-category-round-completed": {
+      "type": "analysis-category-round-completed",
+      "runId": "run-1",
+      "category": "bugs",
+      "round": 2,
+      "newFindingsThisRound": 1,
+      "findings": [
+        {
+          "id": "f-1",
+          "category": "bugs",
+          "severity": "high",
+          "effort": "small",
+          "title": "Unawaited promise drops errors",
+          "description": "The handler calls save() without awaiting, so a rejection is lost.",
+          "affectedFiles": [
+            "src/handler.ts"
+          ],
+          "tags": [
+            "async"
+          ],
+          "fingerprint": "bugs:src/handler.ts:unawaited-promise"
+        }
+      ],
+      "costUsd": 0.04,
+      "durationMs": 0,
+      "usage": {
+        "inputTokens": 1200,
+        "outputTokens": 300,
+        "cacheReadTokens": 0,
+        "cacheCreationTokens": 0,
+        "reasoningOutputTokens": 0
+      }
     },
     "analysis-completed": {
       "type": "analysis-completed",

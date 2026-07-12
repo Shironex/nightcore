@@ -243,6 +243,7 @@ describe('normalizers', () => {
       durationMs: 1000,
       usage: { inputTokens: 10, outputTokens: 5 },
       findings: [],
+      roundsByCategory: {},
       error: null,
     };
     const s = streamFromRun(run);
@@ -294,6 +295,7 @@ describe('normalizers', () => {
       durationMs: 0,
       usage: { inputTokens: 0, outputTokens: 0 },
       findings: [],
+      roundsByCategory: {},
       error: null,
     };
     const s = streamFromRun(run);

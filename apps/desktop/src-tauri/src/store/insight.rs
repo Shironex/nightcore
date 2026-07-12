@@ -201,6 +201,11 @@ pub struct InsightRun {
     pub usage: InsightUsage,
     #[serde(default)]
     pub findings: Vec<StoredFinding>,
+    /// Deep mode (issue #294): per-category round count (1-based), keyed by the
+    /// category wire string. Persisted so "round N" survives reconcile/resume; empty
+    /// for a classic single-pass run (which never emits round events).
+    #[serde(default)]
+    pub rounds_by_category: HashMap<String, u32>,
     pub error: Option<String>,
 }
 
@@ -334,6 +339,23 @@ impl InsightStore {
         )
     }
 
+    /// Record a deep-mode round count for a category (1-based). Running-only, mirroring
+    /// [`accumulate_findings`]: a late round event after the terminal `analysis-completed`
+    /// must not touch a finalized run (the status check happens before the mutate so a
+    /// non-running run is a true no-op, not a redundant re-write).
+    pub fn record_category_round(&self, run_id: &str, category: &str, round: u32) {
+        if self
+            .get(run_id)
+            .map(|r| r.status != "running")
+            .unwrap_or(true)
+        {
+            return;
+        }
+        let _ = self.mutate(run_id, |run| {
+            run.rounds_by_category.insert(category.to_string(), round);
+        });
+    }
+
     /// Every fingerprint a user has CONVERTED to a task across all runs (optionally
     /// excluding `except_run`), mapped to the task id it was linked to. Used to carry
     /// convert-history forward: a re-discovered finding whose fingerprint was already
@@ -400,6 +422,7 @@ mod tests {
             duration_ms: 0,
             usage: InsightUsage::default(),
             findings,
+            rounds_by_category: HashMap::new(),
             error: None,
         }
     }
@@ -708,6 +731,80 @@ mod tests {
             "dismissed",
             "a re-surfaced, previously-dismissed finding stays dismissed mid-run"
         );
+    }
+
+    #[test]
+    fn record_category_round_updates_a_running_run_and_overwrites() {
+        let (store, _tmp) = store();
+        let mut r = run("r1", vec![]);
+        r.status = "running".into();
+        store.upsert(&r).unwrap();
+
+        store.record_category_round("r1", "bugs", 3);
+        assert_eq!(
+            store.get("r1").unwrap().rounds_by_category.get("bugs"),
+            Some(&3)
+        );
+        // The next round overwrites (round N is 1-based and monotonic per category).
+        store.record_category_round("r1", "bugs", 4);
+        assert_eq!(
+            store.get("r1").unwrap().rounds_by_category.get("bugs"),
+            Some(&4)
+        );
+    }
+
+    #[test]
+    fn record_category_round_is_a_noop_once_not_running() {
+        // The terminal `analysis-completed` is authoritative; a late round event must
+        // not touch a finalized run (matches `accumulate_findings`'s running-only guard).
+        let (store, _tmp) = store();
+        store.upsert(&run("done", vec![])).unwrap(); // helper builds a `completed` run
+        store.record_category_round("done", "bugs", 2);
+        assert!(
+            store.get("done").unwrap().rounds_by_category.is_empty(),
+            "no round count is recorded on a finalized run"
+        );
+    }
+
+    #[test]
+    fn deep_round_persists_cumulative_findings_and_round_count_mid_run() {
+        // The reader's `analysis-category-round-completed` arm accumulates each round's
+        // CUMULATIVE findings via the same running-only `accumulate_findings` path (so a
+        // crash mid-loop keeps every prior round's paid work) and records the round
+        // count. Re-delivered findings dedup by id; per-round cost accrues.
+        let (store, _tmp) = store();
+        let mut r = run("r1", vec![]);
+        r.status = "running".into();
+        store.upsert(&r).unwrap();
+        let empty = HashSet::new();
+
+        // Round 1: one finding + its per-round spend.
+        store
+            .accumulate_findings("r1", vec![finding("f1", "fp1")], &empty, 0.5, 10, 3)
+            .unwrap();
+        store.record_category_round("r1", "bugs", 1);
+        // Round 2: cumulative [f1, f2] re-delivered — f1 is idempotent, f2 is net-new.
+        store
+            .accumulate_findings(
+                "r1",
+                vec![finding("f1", "fp1"), finding("f2", "fp2")],
+                &empty,
+                0.5,
+                5,
+                2,
+            )
+            .unwrap();
+        store.record_category_round("r1", "bugs", 2);
+
+        let got = store.get("r1").unwrap();
+        assert_eq!(
+            got.findings.len(),
+            2,
+            "both rounds' findings persist, deduped by id"
+        );
+        assert_eq!(got.cost_usd, 1.0, "per-round cost accrues across rounds");
+        assert_eq!(got.rounds_by_category.get("bugs"), Some(&2));
+        assert_eq!(got.status, "running", "still running mid-loop");
     }
 
     #[test]

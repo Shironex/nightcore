@@ -145,6 +145,27 @@ export const AnalysisCategoryCompletedEvent = z.object({
   error: z.string().optional(),
 });
 
+/** An intermediate DEEP-mode event (issue #294): one ROUND of a category's
+ *  multi-round loop finished. Carries the 1-based round index, how many NET-NEW
+ *  (post-dedup) findings this round contributed, the CUMULATIVE grounded findings for
+ *  the category so far, and this round's OWN cost/usage (per-round, not cumulative).
+ *  The Rust reader persists the cumulative set per ROUND via the same
+ *  `accumulate_findings` path `analysis-category-completed` uses, so a multi-hour
+ *  category that crashes keeps every prior round's paid findings. Emitted ONLY for
+ *  deep runs; a classic single-pass run emits `analysis-category-completed` instead. */
+export const AnalysisCategoryRoundCompletedEvent = z.object({
+  type: z.literal('analysis-category-round-completed'),
+  runId: z.string(),
+  category: FindingCategorySchema,
+  /** 1-based round index within this category's deep loop. */
+  round: z.number().int().positive(),
+  /** Net-new grounded findings this round added (post-dedup vs prior rounds). */
+  newFindingsThisRound: z.number().int().nonnegative(),
+  /** The cumulative grounded findings for this category across all rounds so far. */
+  findings: z.array(FindingSchema),
+  ...runTotals,
+});
+
 /** The whole run finished: the final cross-category-deduped findings plus run
  *  totals. The Rust reader persists from THIS event (authoritative). */
 export const AnalysisCompletedEvent = z.object({

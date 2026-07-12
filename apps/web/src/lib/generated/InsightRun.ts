@@ -17,4 +17,10 @@ status: string,
 /**
  * The categories requested for this run (wire strings).
  */
-categories: Array<string>, model: string, createdAt: number, updatedAt: number, costUsd: number, durationMs: number, usage: InsightUsage, findings: Array<StoredFinding>, error: string | null, };
+categories: Array<string>, model: string, createdAt: number, updatedAt: number, costUsd: number, durationMs: number, usage: InsightUsage, findings: Array<StoredFinding>, 
+/**
+ * Deep mode (issue #294): per-category round count (1-based), keyed by the
+ * category wire string. Persisted so "round N" survives reconcile/resume; empty
+ * for a classic single-pass run (which never emits round events).
+ */
+roundsByCategory: { [key in string]: number }, error: string | null, };
