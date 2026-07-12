@@ -48,11 +48,23 @@ export interface TaskEntry {
   status?: string;
 }
 
+/** A backpressure truncation marker (`stream-truncated`): the sidecar coalesced
+ *  away buffered output to stay under its memory ceiling (#208). Rendered as a
+ *  visible inline notice so the gap is never silent. */
+export interface NoticeEntry {
+  kind: 'notice';
+  id: number;
+  /** Bytes of queued output dropped in this truncation episode. */
+  droppedBytes: number;
+  /** Number of event lines dropped in this episode. */
+  droppedCount: number;
+}
+
 /** One chronological item in a run's activity timeline: an assistant text turn, a
- *  tool call, or a subagent (`task-updated`) step. Interleaving these in arrival
- *  order is what visually separates speaking turns (fixing the run-on blob) while
- *  keeping the stream ordered. */
-export type TimelineEntry = TextEntry | ToolEntry | TaskEntry;
+ *  tool call, a subagent (`task-updated`) step, or a truncation notice.
+ *  Interleaving these in arrival order is what visually separates speaking turns
+ *  (fixing the run-on blob) while keeping the stream ordered. */
+export type TimelineEntry = TextEntry | ToolEntry | TaskEntry | NoticeEntry;
 
 /** Assembled live output for a single task's run, derived from `nc:session`. */
 export interface SessionStream {
@@ -191,6 +203,26 @@ export function foldSession(prev: SessionStream, event: NcEvent): SessionStream 
             description: event.description,
             summary: event.summary,
             status: event.status,
+          },
+        ],
+      };
+    }
+    case 'stream-truncated': {
+      // The sidecar dropped buffered output under backpressure (#208). Seal the
+      // open text turn (like a tool use) and append a visible notice so the gap
+      // is never silent. Coalesced upstream into one event per episode.
+      const nextSeq = prev.toolSeq + 1;
+      return {
+        ...prev,
+        streamedPartial: false,
+        toolSeq: nextSeq,
+        entries: [
+          ...closeOpenText(prev.entries),
+          {
+            kind: 'notice',
+            id: nextSeq,
+            droppedBytes: event.droppedBytes,
+            droppedCount: event.droppedCount,
           },
         ],
       };

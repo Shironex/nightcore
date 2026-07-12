@@ -229,6 +229,27 @@ test('ambient task-updated steps stay out of the inline transcript', () => {
   expect(stream.entries).toEqual([{ kind: 'text', id: 1, markdown: 'working', closed: false }]);
 });
 
+test('a stream-truncated marker seals the open text turn and appends a visible notice (#208)', () => {
+  const truncated = (droppedBytes: number, droppedCount: number): NcEvent => ({
+    type: 'stream-truncated',
+    sessionId: 1,
+    droppedBytes,
+    droppedCount,
+  });
+  const stream = fold([
+    delta('streaming along', true),
+    truncated(4096, 12),
+    delta('after the gap', true),
+  ]);
+  // The gap is never silent: the open turn is sealed, a notice records the drop,
+  // and the next delta opens a fresh turn after it.
+  expect(stream.entries).toEqual([
+    { kind: 'text', id: 1, markdown: 'streaming along', closed: true },
+    { kind: 'notice', id: 1, droppedBytes: 4096, droppedCount: 12 },
+    { kind: 'text', id: 2, markdown: 'after the gap', closed: false },
+  ]);
+});
+
 test('an unknown / again-future event variant is tolerated (no throw, stream unchanged)', () => {
   const prev = fold([delta('hi', true)]);
   // Cast through unknown: simulates a variant this build does not yet model.

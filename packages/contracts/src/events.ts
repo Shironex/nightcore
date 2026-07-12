@@ -334,6 +334,31 @@ export const SessionStatusEvent = z.object({
 });
 
 /**
+ * The sidecar's stdout backpressure writer coalesced away queued output to stay
+ * under its in-memory ceiling: a VISIBLE marker that `droppedBytes`/`droppedCount`
+ * of already-buffered stream output were dropped (oldest-first) because the Rust
+ * reader stalled and the pending queue would otherwise have grown without bound
+ * (issue #208). It is NEVER silent loss — this event is the "output truncated"
+ * signal a surface renders inline so the user knows a gap exists.
+ *
+ * Carries `sessionId` (via `base`) so the Rust reader correlates it to a task and
+ * forwards it on `nc:session` like any other stream event; it is attributed to the
+ * most recent session that was producing output when the overflow occurred (a
+ * backpressure stall on the single shared stdout affects every concurrent session
+ * at once, so any live session is a truthful home for the marker). Consecutive
+ * drops are coalesced into ONE event with a running total until the queue drains.
+ */
+export const StreamTruncatedEvent = z.object({
+  ...base,
+  type: z.literal('stream-truncated'),
+  /** Total size of the queued output dropped in this truncation episode, summed
+   *  as string length — the same byte proxy `MAX_COMMAND_LINE_BYTES` uses. */
+  droppedBytes: z.number().int().nonnegative(),
+  /** Number of queued event lines dropped in this episode. */
+  droppedCount: z.number().int().nonnegative(),
+});
+
+/**
  * Metadata for one SDK session, mirroring the SDK's `SDKSessionInfo` field-for-
  * field — these names/types are LOAD-BEARING (the Rust serde struct mirrors them
  * for the `query-result` reply). The SDK's `sessionId` is renamed to `sdkSessionId`
@@ -440,6 +465,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   SessionCompletedEvent,
   SessionFailedEvent,
   SessionStatusEvent,
+  StreamTruncatedEvent,
   QueryResultEvent,
   AnalysisStartedEvent,
   AnalysisCategoryStartedEvent,

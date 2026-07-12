@@ -412,6 +412,12 @@
       "type": "session-status",
       "status": "running"
     },
+    "stream-truncated": {
+      "sessionId": 1,
+      "type": "stream-truncated",
+      "droppedBytes": 4096,
+      "droppedCount": 12
+    },
     "analysis-started": {
       "type": "analysis-started",
       "runId": "run-1",

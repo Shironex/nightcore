@@ -14,8 +14,10 @@ import {
   CommandLineBuffer,
   createSidecar,
   encodeEvent,
+  MAX_PENDING_BYTES,
   pumpCommands,
   type SidecarManager,
+  type TruncationMarkerFactory,
 } from './index.js';
 
 /**
@@ -549,5 +551,163 @@ describe('BackpressuredWriter', () => {
     expect(stream.chunks).toEqual([]);
     expect(errors).toHaveLength(1);
     expect(errors[0]).toContain('stdout write failed');
+  });
+});
+
+describe('BackpressuredWriter — memory ceiling (#208)', () => {
+  /** A recording marker factory: captures each coalesced total and returns a
+   *  greppable sentinel line so a test can also assert the marker reached the wire. */
+  function recordingMarker(): {
+    factory: TruncationMarkerFactory;
+    calls: { droppedBytes: number; droppedCount: number; sessionId: number }[];
+  } {
+    const calls: { droppedBytes: number; droppedCount: number; sessionId: number }[] = [];
+    const factory: TruncationMarkerFactory = (dropped) => {
+      calls.push(dropped);
+      return `<<TRUNC bytes=${dropped.droppedBytes} count=${dropped.droppedCount} sid=${dropped.sessionId}>>\n`;
+    };
+    return { factory, calls };
+  }
+
+  test('(a) a stalled reader can never grow the backlog past the ceiling', async () => {
+    const stream = new FakeStream();
+    const cap = 100;
+    const writer = new BackpressuredWriter(stream, () => {}, cap);
+
+    // Stall the reader from the start, then kick the pump so it parks on 'drain'
+    // with the FIFO empty (the first line is now in the "OS buffer").
+    stream.block();
+    writer.write(`${'a'.repeat(10)}\n`, 1);
+    await Promise.resolve();
+    expect(writer.bufferedBytes).toBe(0);
+
+    // Flood the writer while the reader stays dead: every write bounds the FIFO,
+    // so memory can NEVER grow without limit (the OOM this fixes).
+    for (let i = 0; i < 1000; i++) {
+      writer.write(`${'x'.repeat(10)}\n`, 1);
+      expect(writer.bufferedBytes).toBeLessThanOrEqual(cap);
+    }
+    expect(writer.bufferedBytes).toBeLessThanOrEqual(cap);
+
+    // Clean up the parked pump.
+    stream.drain();
+    await writer.whenDrained();
+  });
+
+  test('(b)+(e) emits a truncation marker (attributed to the live session) that itself is never dropped', async () => {
+    // Uses the DEFAULT marker factory — asserts a real, contract-valid
+    // `stream-truncated` event reaches the wire end to end.
+    const stream = new FakeStream();
+    const writer = new BackpressuredWriter(stream, () => {}, 50);
+
+    stream.block();
+    writer.write('kick\n', 7);
+    await Promise.resolve(); // pump parks on drain
+
+    // Overflow: the oldest queued lines are dropped to stay under the cap.
+    for (let i = 0; i < 100; i++) writer.write(`line-${i}\n`, 7);
+    expect(writer.bufferedBytes).toBeLessThanOrEqual(50);
+
+    stream.drain();
+    await writer.whenDrained();
+
+    const wire = stream.chunks.join('');
+    const markerLines = wire.split('\n').filter((l) => l.includes('stream-truncated'));
+    // Exactly ONE marker survived to the wire (never dropped under the pressure).
+    expect(markerLines).toHaveLength(1);
+    const marker = JSON.parse(markerLines[0]!) as Record<string, unknown>;
+    expect(marker.type).toBe('stream-truncated');
+    expect(marker.sessionId).toBe(7); // attributed to the live session
+    expect(marker.droppedCount as number).toBeGreaterThan(0);
+    expect(marker.droppedBytes as number).toBeGreaterThan(0);
+  });
+
+  test('(c) consecutive drops coalesce into ONE running marker, not one-per-drop', async () => {
+    const stream = new FakeStream();
+    const { factory, calls } = recordingMarker();
+    // cap 20, lines are 11 chars ('*'.repeat(10) + '\n') → each new line over a
+    // held line pushes past the cap and drops exactly the previous one.
+    const writer = new BackpressuredWriter(stream, () => {}, 20, factory);
+
+    stream.block();
+    writer.write(`${'0'.repeat(10)}\n`, 5); // kick pump
+    await Promise.resolve(); // park; FIFO now empty
+
+    writer.write(`${'a'.repeat(10)}\n`, 5); // 11 ≤ 20 → no drop
+    writer.write(`${'b'.repeat(10)}\n`, 5); // 22 > 20 → drop 'a' (11)
+    writer.write(`${'c'.repeat(10)}\n`, 5); // 22 > 20 → drop 'b' (11)
+    writer.write(`${'d'.repeat(10)}\n`, 5); // 22 > 20 → drop 'c' (11)
+
+    // Three drops, all before any flush → NO marker framed yet (coalescing).
+    expect(calls).toHaveLength(0);
+
+    stream.drain();
+    await writer.whenDrained();
+
+    // ONE marker for the whole episode, carrying the RUNNING total (3 lines × 11).
+    expect(calls).toHaveLength(1);
+    expect(calls[0]).toEqual({ droppedBytes: 33, droppedCount: 3, sessionId: 5 });
+    // And it appears exactly once on the wire, ahead of the surviving newest line.
+    const wire = stream.chunks.join('');
+    expect(wire.match(/<<TRUNC/g)).toHaveLength(1);
+    expect(wire.indexOf('<<TRUNC')).toBeLessThan(wire.indexOf(`${'d'.repeat(10)}`));
+  });
+
+  test('(d) normal (non-stalled) operation is unchanged: no marker, ordered delivery', async () => {
+    const stream = new FakeStream();
+    const { factory, calls } = recordingMarker();
+    const writer = new BackpressuredWriter(stream, () => {}, MAX_PENDING_BYTES, factory);
+
+    writer.write('1\n', 1);
+    writer.write('2\n', 1);
+    writer.write('3\n', 1);
+    await writer.whenDrained();
+
+    // No overflow → no marker, and the bytes are byte-identical to writing each
+    // line on its own (the coalesced-burst guarantee is preserved).
+    expect(calls).toEqual([]);
+    expect(stream.chunks.join('')).toBe('1\n2\n3\n');
+  });
+
+  test('(e) the marker survives even under continuous overflow right up to the flush', async () => {
+    const stream = new FakeStream();
+    const { factory, calls } = recordingMarker();
+    const cap = 30;
+    const writer = new BackpressuredWriter(stream, () => {}, cap, factory);
+
+    stream.block();
+    writer.write('kick\n', 9);
+    await Promise.resolve(); // park
+
+    // Every write overflows and drops the oldest, right up until the drain.
+    for (let i = 0; i < 200; i++) {
+      writer.write(`event-${i}\n`, 9);
+      expect(writer.bufferedBytes).toBeLessThanOrEqual(cap);
+    }
+
+    stream.drain();
+    await writer.whenDrained();
+
+    // Exactly one coalesced marker made it out, with the full running drop count.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.sessionId).toBe(9);
+    expect(calls[0]!.droppedCount).toBeGreaterThan(0);
+    expect(stream.chunks.join('').match(/<<TRUNC/g)).toHaveLength(1);
+  });
+
+  test('a single line larger than the cap is still delivered (never drops the newest/only line)', async () => {
+    const stream = new FakeStream();
+    const { factory, calls } = recordingMarker();
+    const cap = 10;
+    const writer = new BackpressuredWriter(stream, () => {}, cap, factory);
+
+    // One line far exceeds the cap: there is nothing OLDER to drop, so it must be
+    // delivered intact rather than dropped or looped on. No marker (no drop).
+    const big = `${'z'.repeat(1000)}\n`;
+    writer.write(big, 3);
+    await writer.whenDrained();
+
+    expect(calls).toEqual([]);
+    expect(stream.chunks.join('')).toBe(big);
   });
 });

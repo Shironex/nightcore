@@ -377,6 +377,12 @@ pub enum NightcoreEvent {
         status: SessionStatus,
     },
     #[serde(rename_all = "camelCase")]
+    StreamTruncated {
+        session_id: u64,
+        dropped_bytes: u64,
+        dropped_count: u64,
+    },
+    #[serde(rename_all = "camelCase")]
     QueryResult {
         request_id: String,
         ok: bool,
