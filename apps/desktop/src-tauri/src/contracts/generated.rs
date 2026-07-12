@@ -362,6 +362,8 @@ pub enum NightcoreEvent {
         usage: Option<SessionCompletedUsage>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         proposed_subtasks: Option<Vec<SessionCompletedProposedSubtasksItem>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        structured_output: Option<serde_json::Map<String, serde_json::Value>>,
     },
     #[serde(rename_all = "camelCase")]
     SessionFailed {
@@ -582,6 +584,10 @@ pub enum NightcoreEvent {
         verdict: Option<MergeVerdict>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         verdict_reasoning: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        verdict_clamped: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        clamp_reason: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
     PrReviewFailed {

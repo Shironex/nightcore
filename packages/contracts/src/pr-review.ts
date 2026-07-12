@@ -144,6 +144,17 @@ export const PrReviewCompletedEvent = z.object({
   /** The synthesis pass's short (~120-word) justification for {@link verdict}. Present
    *  only when `verdict` is; same fail-open/additive posture. */
   verdictReasoning: z.string().optional(),
+  /** True when the mechanical severity→verdict CLAMP overrode the model's proposed
+   *  verdict: {@link verdict} above is then the clamped (mechanically-banded) value,
+   *  not the model's raw pick. Additive + optional: absent when the model's proposal
+   *  was already inside the allowed band, when no verdict was produced (fail-open), or
+   *  from an older engine. */
+  verdictClamped: z.boolean().optional(),
+  /** The human-readable reason the verdict was clamped — recorded ONLY alongside
+   *  {@link verdictClamped} = true (e.g. a `high`-severity finding floored the verdict
+   *  at `needs_revision`). Surfaces WHY the mechanical band overrode the model so the
+   *  clamp is transparent rather than silent. */
+  clampReason: z.string().optional(),
 });
 
 /** The run failed before completing (could not start, or aborted). `reason` is a free

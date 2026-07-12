@@ -241,6 +241,16 @@ export const SessionCompletedEvent = z.object({
    *  blank-title items), mirroring how Insight turns a session into findings.
    *  Absent for every other kind. */
   proposedSubtasks: z.array(ProposedSubtaskSchema).optional(),
+  /** The SDK's native structured output for this session, forwarded verbatim as an
+   *  opaque JSON object — present when the run was launched with `outputFormat` and
+   *  the model returned a schema-conforming object (the result message's
+   *  `structured_output`). Each kind's parser interprets it: the pr-review scan
+   *  reads its finding + verdict passes off this instead of prose-parsing the result
+   *  text; `decompose` also mirrors it into {@link proposedSubtasks}. Additive +
+   *  optional (`z.record`, NOT `z.unknown()`, which the codegen emitter rejects):
+   *  absent when the session set no `outputFormat`, the provider didn't honor it, or
+   *  from an older engine — consumers fall back to text parsing. */
+  structuredOutput: z.record(z.string(), z.unknown()).optional(),
 });
 
 /**
