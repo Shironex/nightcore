@@ -101,7 +101,7 @@ export const SetMaxTurns: Story = {
 export const ToggleNotifications: Story = {
   play: async ({ canvasElement, args }) => {
     const canvas = within(canvasElement);
-    await userEvent.click(canvas.getByRole('button', { name: /hooks & notifications/i }));
+    await userEvent.click(canvas.getByRole('button', { name: 'Notifications' }));
     await userEvent.click(
       canvas.getByRole('switch', { name: /native notifications on task complete/i }),
     );
