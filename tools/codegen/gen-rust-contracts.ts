@@ -1012,6 +1012,9 @@ const COMMAND_INPUTS: Record<string, unknown> = {
     maxConcurrency: 3,
     maxTurnsPerCategory: 40,
     maxBudgetUsdPerCategory: 2,
+    // `{}` exercises the zod defaults so the emitted fixture carries all three deep
+    // fields, round-tripping the generated `DeepScanConfig` struct through Rust.
+    deep: {},
   },
   'cancel-harness-scan': { type: 'cancel-harness-scan', runId: 'run-h1' },
   'start-scorecard': {
@@ -1037,6 +1040,9 @@ const COMMAND_INPUTS: Record<string, unknown> = {
     model: 'claude-opus-4-8',
     effort: 'high',
     maxConcurrency: 3,
+    // `{}` exercises the zod defaults so the emitted fixture carries all three deep
+    // fields, round-tripping the generated `DeepScanConfig` struct through Rust.
+    deep: {},
   },
   'cancel-pr-review': { type: 'cancel-pr-review', runId: 'run-pr1' },
   'start-issue-validation': {
@@ -1421,6 +1427,40 @@ const EVENT_INPUTS: Record<string, unknown> = {
     },
     costUsd: 0.04,
   },
+  'harness-category-round-completed': {
+    type: 'harness-category-round-completed',
+    runId: 'run-h1',
+    category: 'folder-structure',
+    round: 2,
+    newFindingsThisRound: 1,
+    findings: [
+      {
+        id: 'cf-1',
+        category: 'folder-structure',
+        kind: 'convention',
+        severity: 'medium',
+        title: 'Components follow strict folder-per-component',
+        description:
+          'Every component under apps/web/src/components is a folder with colocated siblings.',
+        evidence: [
+          {
+            file: 'apps/web/src/components/insight/InsightView/InsightView.tsx',
+            startLine: 1,
+          },
+        ],
+        tags: ['folder-per-component'],
+        fingerprint: 'folder-structure:folder-per-component',
+      },
+    ],
+    costUsd: 0.04,
+    durationMs: 0,
+    usage: {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    },
+  },
   'harness-synthesis-started': {
     type: 'harness-synthesis-started',
     runId: 'run-h1',
@@ -1673,6 +1713,33 @@ const EVENT_INPUTS: Record<string, unknown> = {
       cacheCreationTokens: 0,
     },
     costUsd: 0.04,
+  },
+  'pr-review-round-completed': {
+    type: 'pr-review-round-completed',
+    runId: 'run-pr1',
+    lens: 'security',
+    round: 2,
+    newFindingsThisRound: 1,
+    findings: [
+      {
+        id: 'security-1',
+        lens: 'security',
+        severity: 'high',
+        file: 'src/handler.ts',
+        line: 42,
+        title: 'Unsanitized input reaches the query',
+        body: 'The handler passes req.body.id straight into the SQL string.',
+        fingerprint: 'security:src/handler.ts:unsanitized-input',
+      },
+    ],
+    costUsd: 0.04,
+    durationMs: 0,
+    usage: {
+      inputTokens: 1200,
+      outputTokens: 300,
+      cacheReadTokens: 0,
+      cacheCreationTokens: 0,
+    },
   },
   'pr-review-completed': {
     type: 'pr-review-completed',
