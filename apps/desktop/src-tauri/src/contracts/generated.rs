@@ -1185,6 +1185,8 @@ pub struct ProviderCapabilities {
     pub supports_hooks: bool,
     #[serde(default)]
     pub provides_own_write_containment: bool,
+    pub supports_harness_policy: bool,
+    pub supports_ledger: bool,
     pub supports_mcp: bool,
     pub supports_plan_mode: bool,
     pub supports_structured_output: bool,
