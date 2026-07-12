@@ -7,8 +7,20 @@ import type { ModalProps } from './Modal.types';
 
 const DEFAULT_OVERLAY =
   'fixed inset-0 z-30 flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm';
-const DEFAULT_PANEL =
-  'w-full max-w-sm overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl';
+
+/** Shared panel chrome, keyed by `variant`. Each preset owns everything visual —
+ *  border, background, shadow, and (for `dialog`) the canonical 14px radius — so
+ *  call sites pass only their own width/height via `panelClassName`. `sheet` is a
+ *  full-height edge sheet: a left border, no radius, and a column layout. */
+const PANEL_CHROME: Record<NonNullable<ModalProps['variant']>, string> = {
+  dialog: 'overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl',
+  sheet:
+    'flex h-full w-full flex-col overflow-hidden border-l border-border bg-popover shadow-2xl',
+};
+
+/** Default sizing for callers that pass no `panelClassName` (small centered card).
+ *  The chrome comes from the `dialog` variant; this is width only. */
+const DEFAULT_PANEL = 'w-full max-w-sm';
 
 /** The shared modal primitive (a11y): an inert-background overlay over a focus-
  *  trapped dialog panel, with a Tab/Shift+Tab focus trap and focus restore to the
@@ -25,11 +37,16 @@ const DEFAULT_PANEL =
  *  inside the panel.
  *
  *  The overlay is portaled to `document.body` so ancestor flex/transform/stacking
- *  rules (e.g. `.nc-board-appearance`) never participate in its layout. */
+ *  rules (e.g. `.nc-board-appearance`) never participate in its layout.
+ *
+ *  `variant` owns the panel chrome: `dialog` (default) is a centered card with the
+ *  canonical 14px radius; `sheet` is a full-height edge sheet (left border, no
+ *  radius). Call sites contribute only their width/height via `panelClassName`. */
 export function Modal({
   open,
   label,
   role = 'dialog',
+  variant = 'dialog',
   initialFocus,
   overlayClassName = DEFAULT_OVERLAY,
   panelClassName = DEFAULT_PANEL,
@@ -39,6 +56,8 @@ export function Modal({
   children,
 }: ModalProps) {
   const ref = useModal<HTMLDivElement>(onClose, initialFocus, open);
+  // Chrome is owned by the variant; the call site contributes only width/layout.
+  const panelClasses = `${PANEL_CHROME[variant]} ${panelClassName}`;
 
   const overlay = (
     <AnimatePresence>
@@ -57,7 +76,7 @@ export function Modal({
             role={role}
             aria-modal="true"
             aria-label={label}
-            className={panelClassName}
+            className={panelClasses}
             variants={panelVariants}
             initial="initial"
             animate="animate"

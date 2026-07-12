@@ -192,7 +192,7 @@ export function FolderBrowserDialog({
       open={open}
       label={title}
       initialFocus="[data-folder-search]"
-      panelClassName="flex max-h-[85vh] w-full max-w-2xl flex-col overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl"
+      panelClassName="flex max-h-[85vh] w-full max-w-2xl flex-col"
       onClose={onClose}
     >
       <div className="flex flex-col gap-1 px-5 pb-3 pt-5">

@@ -27,7 +27,8 @@ export function DetailPanelShell({
       label={label}
       onClose={onClose}
       overlayClassName="fixed inset-0 z-20 flex justify-end bg-black/60 backdrop-blur-sm"
-      panelClassName={`flex h-full w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} flex-col overflow-hidden border-l border-border bg-popover shadow-2xl`}
+      variant="sheet"
+      panelClassName={wide ? 'max-w-2xl' : 'max-w-lg'}
       panelVariants={slideIn}
     >
       {/* Header */}

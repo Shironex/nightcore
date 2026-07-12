@@ -17,9 +17,6 @@ import {
 
 import type { ConvertToTaskDialogProps } from './ConvertToTaskDialog.types';
 
-const PANEL =
-  'w-full max-w-md overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl';
-
 function Row({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-3 text-[12.5px]">
@@ -59,7 +56,7 @@ export function ConvertToTaskDialog({
       role="dialog"
       label="Convert validation to a board task"
       initialFocus="[data-cancel]"
-      panelClassName={PANEL}
+      panelClassName="w-full max-w-md"
       onClose={onClose}
       onEnter={converting || shown.alreadyLinked ? undefined : onConvert}
     >

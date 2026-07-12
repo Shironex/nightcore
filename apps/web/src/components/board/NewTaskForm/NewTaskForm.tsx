@@ -77,7 +77,8 @@ export function NewTaskForm({ open, planGateDefault, onCreate, onClose }: NewTas
       initialFocus="#nt-title"
       onClose={onClose}
       overlayClassName="fixed inset-0 z-20 flex justify-end bg-black/60 backdrop-blur-sm"
-      panelClassName="flex h-full w-full max-w-lg flex-col overflow-hidden border-l border-border bg-popover shadow-2xl"
+      variant="sheet"
+      panelClassName="max-w-lg"
       panelVariants={slideIn}
     >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
