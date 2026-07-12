@@ -7,11 +7,9 @@ import {
   AgentsIcon,
   BoltIcon,
   BranchIcon,
-  ChecksIcon,
   FieldValue,
   FolderIcon,
   GearIcon,
-  LockIcon,
   NumberField,
   Segmented,
   SparkIcon,
@@ -29,9 +27,11 @@ import {
 } from '@/lib/models';
 
 import { buildAboutCards } from './settings-about-cards';
+import { buildAutoModeCards } from './settings-automode-cards';
 import { buildGithubCards } from './settings-github-cards';
 import { buildInterfaceCards } from './settings-interface-cards';
 import { buildNotificationCards } from './settings-notification-cards';
+import { buildPermissionsCards } from './settings-permissions-cards';
 import {
   DefaultModelControl,
   defaultModelForProvider,
@@ -39,6 +39,8 @@ import {
   highestEffortFor,
   PROVIDERS,
 } from './settings-run-controls';
+import { buildTerminalCards } from './settings-terminal-cards';
+import { buildUsageCards } from './settings-usage-cards';
 import type { SettingsCardProps } from './SettingsCard';
 import type { EffectiveSettings } from './SettingsView/SettingsView.hooks';
 import type { SettingsPage } from './SettingsView/SettingsView.types';
@@ -49,12 +51,6 @@ const CONCURRENCY: [value: string, label: string][] = [
   ['3', '3'],
   ['4', '4'],
   ['6', '6'],
-];
-/** Selectable permission modes as `[value, label]` pairs. */
-const PERMISSION_MODES: [value: string, label: string][] = [
-  ['auto-accept', 'Auto'],
-  ['plan', 'Plan'],
-  ['ask', 'Ask'],
 ];
 /** Selectable default run modes as `[value, label]` pairs. */
 const RUN_MODES: [value: string, label: string][] = [
@@ -81,6 +77,8 @@ export interface CardContext {
   isAppIdle: boolean;
   /** Editors detected on this machine, for the worktree open-in-editor picker. */
   editors: DetectedEditor[];
+  /** Jump the left nav to another page (e.g. the Auto Mode → Permissions cross-link). */
+  onNavigate: (page: SettingsPage) => void;
 }
 
 /** Build the card set for a settings page. The run-shaping controls (model,
@@ -96,6 +94,7 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
     appInfo,
     onRestartOnboarding,
     editors,
+    onNavigate,
   } = ctx;
   switch (page) {
     case 'models':
@@ -193,65 +192,16 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
         },
       ];
     case 'permissions':
-      return [
-        {
-          icon: <LockIcon size={18} />,
-          title: 'Tool permissions',
-          subtitle: 'How the agent is allowed to act during a run.',
-          rows: [
-            {
-              label: 'Permission mode',
-              hint: 'auto-accept · plan · ask (persists; runtime still auto-denies)',
-              control: (
-                <Segmented
-                  options={PERMISSION_MODES}
-                  value={effective.permissionMode}
-                  onChange={(v) => patchScoped({ permissionMode: v })}
-                />
-              ),
-            },
-            {
-              label: 'Sandbox agent writes (macOS, experimental)',
-              hint: 'Block file writes outside the task workspace at the OS layer',
-              control: (
-                // Global-only (like Delete-on-merge): OS containment is a
-                // machine-level guarantee, not a per-project preference.
-                <Toggle
-                  on={settings.sandboxSessions}
-                  onChange={(next) => patchGlobal({ sandboxSessions: next })}
-                  label="Sandbox agent writes (macOS, experimental)"
-                />
-              ),
-            },
-          ],
-        },
-        {
-          icon: <ChecksIcon size={18} />,
-          title: 'Plan-approval gate',
-          subtitle:
-            'Build tasks produce a reviewable plan and wait for your approval before writing code.',
-          rows: [
-            {
-              label: 'Plan before code (Build tasks)',
-              hint: 'New Build tasks default to planning first — approve, refine, or reject. A per-task "Plan first" toggle overrides it.',
-              control: (
-                // Global-only (like the OS-sandbox toggle): a studio-wide governance
-                // stance, not a per-project preference.
-                <Toggle
-                  on={settings.planGateDefault}
-                  onChange={(next) => patchGlobal({ planGateDefault: next })}
-                  label="Plan before code for Build tasks"
-                />
-              ),
-            },
-          ],
-        },
-      ];
+      return buildPermissionsCards(settings, effective, patchScoped, patchGlobal);
     case 'constitution':
       // The Constitution editor is fully interactive (load/edit/save + regenerate),
       // so it renders outside the presentational `SettingsCard` set — like the MCP
       // servers card. No presentational rows here.
       return [];
+    case 'automode':
+      return buildAutoModeCards(settings, patchGlobal, onNavigate);
+    case 'usage':
+      return buildUsageCards(settings, patchGlobal);
     case 'worktrees':
       return [
         {
@@ -305,6 +255,8 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
       ];
     case 'interface':
       return buildInterfaceCards(settings, patchGlobal);
+    case 'terminal':
+      return buildTerminalCards(settings, patchGlobal);
     case 'providers':
       return [
         {
@@ -350,11 +302,15 @@ export function buildCards(page: SettingsPage, ctx: CardContext): SettingsCardPr
           ],
         },
       ];
-    case 'hooks':
-      return [
-        ...buildNotificationCards(settings, patchGlobal),
-        ...buildGithubCards(settings, patchGlobal),
-      ];
+    case 'mcp':
+      // The MCP servers card is fully interactive (its own editor modal + remove
+      // confirm), so it renders outside the presentational `SettingsCard` set —
+      // like the Constitution editor. No presentational rows here.
+      return [];
+    case 'notifications':
+      return buildNotificationCards(settings, patchGlobal);
+    case 'github':
+      return buildGithubCards(settings, patchGlobal);
     case 'paths':
       return [
         {

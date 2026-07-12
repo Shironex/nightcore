@@ -43,7 +43,7 @@ function LabelPrefixField({
   );
 }
 
-/** Build the GitHub integration cards for the Integrations (hooks) page. Global-only
+/** Build the GitHub integration cards for the Integrations → GitHub page. Global-only
  *  settings (like native notifications), so both controls patch the global block.
  *
  *  The toggle is LIVE (#97, PR 3): enabling it arms the writeback observer, so a

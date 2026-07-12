@@ -9,10 +9,14 @@ import {
   BrandMark,
   DesignIcon,
   FolderIcon,
+  GithubIcon,
   IconTile,
+  LayersIcon,
   LockIcon,
+  PerfIcon,
   SlidersIcon,
   SparkIcon,
+  TerminalIcon,
 } from '@/components/ui';
 
 import { ConstitutionCard } from '../ConstitutionCard';
@@ -55,6 +59,13 @@ const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
+    label: 'AUTOMATION',
+    items: [
+      { page: 'automode', label: 'Auto Mode', icon: <BoltIcon size={16} /> },
+      { page: 'usage', label: 'Usage', icon: <PerfIcon size={16} /> },
+    ],
+  },
+  {
     label: 'WORKTREES',
     items: [
       { page: 'worktrees', label: 'Git worktrees', icon: <BranchIcon size={16} /> },
@@ -64,13 +75,16 @@ const NAV_GROUPS: NavGroup[] = [
     label: 'INTEGRATIONS',
     items: [
       { page: 'providers', label: 'Providers', icon: <BoltIcon size={16} /> },
-      { page: 'hooks', label: 'Hooks & notifications', icon: <BellIcon size={16} /> },
+      { page: 'mcp', label: 'MCP Servers', icon: <LayersIcon size={16} /> },
+      { page: 'notifications', label: 'Notifications', icon: <BellIcon size={16} /> },
+      { page: 'github', label: 'GitHub', icon: <GithubIcon size={16} /> },
     ],
   },
   {
     label: 'SYSTEM',
     items: [
       { page: 'interface', label: 'Interface', icon: <DesignIcon size={16} /> },
+      { page: 'terminal', label: 'Terminal', icon: <TerminalIcon size={16} /> },
       { page: 'paths', label: 'Paths', icon: <FolderIcon size={16} /> },
       { page: 'about', label: 'About', icon: <BookIcon size={16} /> },
     ],
@@ -89,10 +103,15 @@ const PAGE_HEADERS: Record<SettingsPage, PageHeader> = {
   models: { title: 'Models & runs', subtitle: 'AGENT DEFAULTS', icon: <SlidersIcon size={26} /> },
   permissions: { title: 'Permissions', subtitle: 'TOOL ACCESS', icon: <LockIcon size={24} /> },
   constitution: { title: 'Project Constitution', subtitle: 'PRE-FLIGHT CONTEXT', icon: <BookIcon size={24} /> },
+  automode: { title: 'Auto Mode', subtitle: 'AUTONOMOUS LOOP', icon: <BoltIcon size={24} /> },
+  usage: { title: 'Usage', subtitle: 'PROVIDER METERING', icon: <PerfIcon size={24} /> },
   worktrees: { title: 'Git worktrees', subtitle: 'ISOLATION', icon: <BranchIcon size={24} /> },
   providers: { title: 'Providers', subtitle: 'MODEL BACKENDS', icon: <BoltIcon size={24} /> },
-  hooks: { title: 'Hooks & notifications', subtitle: 'EVENTS', icon: <BellIcon size={24} /> },
+  mcp: { title: 'MCP Servers', subtitle: 'EXTERNAL TOOLS', icon: <LayersIcon size={24} /> },
+  notifications: { title: 'Notifications', subtitle: 'EVENTS', icon: <BellIcon size={24} /> },
+  github: { title: 'GitHub', subtitle: 'ISSUE SYNC', icon: <GithubIcon size={24} /> },
   interface: { title: 'Interface', subtitle: 'LAYOUT', icon: <DesignIcon size={24} /> },
+  terminal: { title: 'Terminal', subtitle: 'RENDERING', icon: <TerminalIcon size={24} /> },
   paths: { title: 'Paths', subtitle: 'STORAGE', icon: <FolderIcon size={24} /> },
   about: { title: 'About', subtitle: 'NIGHTCORE', icon: <BrandMark size={36} /> },
 };
@@ -139,6 +158,7 @@ export function SettingsView({
     onRestartOnboarding,
     isAppIdle,
     editors,
+    onNavigate: setPage,
   });
   const note = PAGE_NOTES[page];
 
@@ -209,12 +229,12 @@ export function SettingsView({
             <SettingsCard key={`${card.title}-${i}`} {...card} />
           ))}
 
-          {/* The MCP servers card lives on the Providers page. It is fully
-              interactive (its own editor modal + remove confirm), so it renders
-              outside the presentational `SettingsCard` set. Edits route through the
-              SAME scoped patch as every other control (global, or the active
+          {/* The MCP servers card lives on its own page. It is fully interactive
+              (its own editor modal + remove confirm), so it renders outside the
+              presentational `SettingsCard` set. Edits route through the SAME
+              scoped patch as every other control (global, or the active
               project's override per the scope tab). */}
-          {page === 'providers' && (
+          {page === 'mcp' && (
             <McpServersCard
               servers={effective.mcpServers}
               onChange={(next) => patchScoped({ mcpServers: next })}

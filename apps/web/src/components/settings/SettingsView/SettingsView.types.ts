@@ -10,10 +10,15 @@ export type SettingsPage =
   | 'models'
   | 'permissions'
   | 'constitution'
+  | 'automode'
+  | 'usage'
   | 'worktrees'
-  | 'interface'
   | 'providers'
-  | 'hooks'
+  | 'mcp'
+  | 'notifications'
+  | 'github'
+  | 'interface'
+  | 'terminal'
   | 'paths'
   | 'about';
 
