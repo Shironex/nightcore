@@ -88,12 +88,19 @@ function ConfiguredWorkspace({
         stream: null,
         configure: {
           config,
+          deep: false,
+          onToggleDeep: fn(),
           isStarting: false,
           startError: null,
           onReview: fn(),
           onBackToResults: null,
         },
-        running: { categories: [], findingCounts: {}, onCancel: fn() },
+        running: {
+          categories: [],
+          findingCounts: {},
+          lensRounds: {},
+          onCancel: fn(),
+        },
         results: {
           gridFindings: [],
           emptyMessage: '',

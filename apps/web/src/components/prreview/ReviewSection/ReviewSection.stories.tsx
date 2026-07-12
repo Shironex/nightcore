@@ -179,6 +179,8 @@ function ConfiguredSection({
       stream={stream}
       configure={{
         config,
+        deep: false,
+        onToggleDeep: fn(),
         isStarting: false,
         startError,
         onReview: fn(),
@@ -191,6 +193,7 @@ function ConfiguredSection({
           icon: LENS_META[l].icon,
         })),
         findingCounts: {},
+        lensRounds: {},
         onCancel: fn(),
       }}
       results={{

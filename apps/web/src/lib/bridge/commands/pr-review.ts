@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core';
 
 import { isTauri, tauriInvoke } from '../internal';
 import type {
+  DeepScanConfig,
   EffortLevel,
   PrChangedFile,
   PrFixState,
@@ -39,11 +40,22 @@ export type ReviewVerdict = 'approve' | 'request-changes' | 'comment';
 
 /** Start a PR Review run over the active project's pull request `prNumber`. Returns
  *  the `runId` the `pr-review-*` events correlate by. The project path is resolved
- *  server-side from the active project (never passed). Rejects outside Tauri. */
+ *  server-side from the active project (never passed). Rejects outside Tauri.
+ *
+ *  `options.deep`, when present, opts the review into the multi-round convergence loop
+ *  (issue #294). Because the review is DIFF-BOUNDED, a deep run self-limits (converges in
+ *  a round or two). Callers MUST pass every {@link DeepScanConfig} field explicitly — the
+ *  generated Rust struct zero-defaults any field an empty `{}` omits (see
+ *  {@link import('@/lib/scan-run').DEFAULT_DEEP_SCAN_CONFIG}). */
 export async function startPrReview(
   prNumber: number,
   lenses: ReviewLens[],
-  options: { model?: string | null; effort?: EffortLevel | null; providerId?: string | null } = {},
+  options: {
+    model?: string | null;
+    effort?: EffortLevel | null;
+    providerId?: string | null;
+    deep?: DeepScanConfig | null;
+  } = {},
 ): Promise<string> {
   return invoke<string>('start_pr_review', {
     prNumber,
@@ -51,6 +63,7 @@ export async function startPrReview(
     model: options.model ?? null,
     effort: options.effort ?? null,
     providerId: options.providerId ?? null,
+    deep: options.deep ?? null,
   });
 }
 

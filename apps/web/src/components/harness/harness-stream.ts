@@ -21,6 +21,7 @@ import type {
   RepoProfile,
 } from '@/lib/bridge';
 import {
+  addUsage,
   makeScanFold,
   narrowMembers,
   normalizeLocation,
@@ -52,6 +53,15 @@ export type HarnessFailureReason = Extract<
   { type: 'harness-scan-failed' }
 >['reason'];
 
+/** Deep mode (issue #294): one lens's round progress — the 1-based round index and how
+ *  many net-new (post-dedup) findings that round contributed. Keyed by lens in
+ *  {@link HarnessStream.categoryRounds}; a missing key means that lens hasn't completed a
+ *  round yet (classic single-pass scans never populate this map at all). */
+export interface CategoryRoundInfo {
+  round: number;
+  newFindingsThisRound: number;
+}
+
 export interface HarnessStream {
   runId: string | null;
   status: RunStatus;
@@ -66,6 +76,9 @@ export interface HarnessStream {
   proposals: HarnessProposalVM[];
   /** ENFORCE-lite coverage — one per convention; empty until the run completes. */
   coverage: RuleCoverageGapVM[];
+  /** Deep mode (issue #294): per-lens round progress, keyed by lens. Empty for a classic
+   *  single-pass scan (which never emits round events). */
+  categoryRounds: Record<string, CategoryRoundInfo>;
   /** True between `harness-synthesis-started` and the terminal event — the dead-zone
    *  after every lens reads "done" but synthesis still runs (drives the shimmer). */
   synthesizing: boolean;
@@ -89,6 +102,7 @@ export const EMPTY_HARNESS_STREAM: HarnessStream = {
   artifacts: [],
   proposals: [],
   coverage: [],
+  categoryRounds: {},
   synthesizing: false,
   costUsd: 0,
   usage: { inputTokens: 0, outputTokens: 0 },
@@ -203,6 +217,15 @@ export function streamFromRun(run: HarnessRun): HarnessStream {
     artifacts: run.artifacts.map(storedToArtifact),
     proposals: run.proposals.map(storedToProposal),
     coverage: run.coverage.map(storedToCoverageGap),
+    // Deep mode (issue #294): the persisted per-lens round count survives
+    // reconcile/resume; `newFindingsThisRound` isn't persisted (a point-in-time delta),
+    // so a reloaded run reports 0 for it.
+    categoryRounds: Object.fromEntries(
+      Object.entries(run.roundsByCategory).map(([category, round]) => [
+        category,
+        { round, newFindingsThisRound: 0 },
+      ]),
+    ),
     // Persisted on the run (set on harness-synthesis-started, cleared on
     // proposals-ready/terminal), so a run reloaded during the multi-minute serial
     // synthesis tail still shows the "Synthesizing…" state instead of a frozen
@@ -271,6 +294,32 @@ export const foldHarness = makeScanFold<
           errored: Boolean(event.error),
           costUsd: event.costUsd,
           usage: event.usage,
+        };
+      // Deep mode (issue #294): one round of a lens's multi-round loop finished.
+      // `event.findings` is already the CUMULATIVE grounded set for that lens across
+      // every round so far, so this REPLACES (not appends to) the lens's slice of
+      // `findings` — the same replace-by-step shape `step-completed` uses, via the
+      // `apply` escape hatch so the lens stays `running` (more rounds may still land;
+      // deep mode never emits a per-lens terminal event).
+      case 'harness-category-round-completed':
+        return {
+          kind: 'apply',
+          next: (prev) => ({
+            ...prev,
+            findings: [
+              ...prev.findings.filter((f) => f.category !== event.category),
+              ...event.findings.map(wireToConventionFinding),
+            ],
+            costUsd: prev.costUsd + event.costUsd,
+            usage: addUsage(prev.usage, event.usage),
+            categoryRounds: {
+              ...prev.categoryRounds,
+              [event.category]: {
+                round: event.round,
+                newFindingsThisRound: event.newFindingsThisRound,
+              },
+            },
+          }),
         };
       case 'harness-synthesis-started':
         // Every lens has settled; the serial synthesis tail is now running. Flip

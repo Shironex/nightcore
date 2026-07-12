@@ -8,6 +8,7 @@ import type {
   ArmedCheckFile,
   ArmedChecksState,
   ConventionCategory,
+  DeepScanConfig,
   EffortLevel,
   HarnessPolicyFile,
   HarnessPolicyPatch,
@@ -59,16 +60,27 @@ const MOCK_ARMED_CHECKS_STATE: ArmedChecksState = {
 // --- Harness (codebase convention auditor) --------------------------------
 
 /** Start a Harness scan over the active project. Returns the `runId` the
- *  `harness-*` events correlate by. Rejects outside Tauri (no active project). */
+ *  `harness-*` events correlate by. Rejects outside Tauri (no active project).
+ *
+ *  `options.deep`, when present, opts the scan into the multi-round convergence loop
+ *  (issue #294). Callers MUST pass every {@link DeepScanConfig} field explicitly — the
+ *  generated Rust struct zero-defaults any field an empty `{}` omits (see
+ *  {@link import('@/lib/scan-run').DEFAULT_DEEP_SCAN_CONFIG}). */
 export async function startHarnessScan(
   categories: ConventionCategory[],
-  options: { model?: string | null; effort?: EffortLevel | null; providerId?: string | null } = {},
+  options: {
+    model?: string | null;
+    effort?: EffortLevel | null;
+    providerId?: string | null;
+    deep?: DeepScanConfig | null;
+  } = {},
 ): Promise<string> {
   return invoke<string>('start_harness_scan', {
     categories,
     model: options.model ?? null,
     effort: options.effort ?? null,
     providerId: options.providerId ?? null,
+    deep: options.deep ?? null,
   });
 }
 

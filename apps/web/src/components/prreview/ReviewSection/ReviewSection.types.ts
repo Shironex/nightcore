@@ -2,7 +2,7 @@
  *  (config → running → results) driven by the run registry's `byPr` slice. All
  *  state lives in the PrReviewView view model; the section is a controlled,
  *  purely-presentational composition. */
-import type { MenuItem, RunProgressCategory } from '@/components/ui';
+import type { MenuItem, RunProgressCategory, RunProgressCategoryRound } from '@/components/ui';
 import type { ReviewLens } from '@/lib/bridge';
 import type { RunConfig } from '@/lib/useRunConfig';
 
@@ -19,6 +19,11 @@ export type ReviewSectionMode = 'config' | 'running' | 'results';
 export interface ReviewSectionConfigSlice {
   /** The lifted lens/model/effort form state (shared `RunConfig`). */
   config: RunConfig<ReviewLens>;
+  /** Opt-in DEEP scan mode (issue #294): multi-round convergence per lens instead of one
+   *  pass. Diff-bounded, so a deep run self-limits. */
+  deep: boolean;
+  /** Toggle the DEEP mode. */
+  onToggleDeep: (deep: boolean) => void;
   /** True between the Review click and the optimistic running entry. */
   isStarting: boolean;
   /** This PR's last start rejection (per-PR, from the registry), or null. */
@@ -36,6 +41,9 @@ export interface ReviewSectionRunningSlice {
   categories: RunProgressCategory[];
   /** Total findings produced per lens so far. */
   findingCounts: Record<string, number>;
+  /** Deep mode (issue #294): per-lens round progress for the RunProgress rows. Empty for
+   *  a classic single-pass review. */
+  lensRounds: Record<string, RunProgressCategoryRound>;
   /** Cancel THIS run (a no-op while the run id is still unknown). */
   onCancel: () => void;
 }

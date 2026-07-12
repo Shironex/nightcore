@@ -10,6 +10,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import {
   cancelPrReview,
+  type DeepScanConfig,
   type EffortLevel,
   getPrReviewRun,
   listPrReviewRuns,
@@ -40,6 +41,9 @@ export interface StartPrReviewOptions {
   model?: string | null;
   effort?: EffortLevel | null;
   providerId?: string | null;
+  /** Opt-in DEEP scan mode (issue #294): the explicit {@link DeepScanConfig}, or `null`
+   *  for the classic single-pass review. */
+  deep?: DeepScanConfig | null;
 }
 
 /** One PR's slice of the registry — what a workspace row/panel renders. */
@@ -181,6 +185,7 @@ export function usePrReviewRuns(hasProject: boolean): UsePrReviewRunsResult {
             model: options.model ?? null,
             effort: options.effort ?? null,
             providerId: options.providerId ?? null,
+            deep: options.deep ?? null,
           }),
         () =>
           latestRunForPr(registryRef.current, prNumber)?.status === 'running',

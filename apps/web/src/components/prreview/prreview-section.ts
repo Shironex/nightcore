@@ -21,6 +21,9 @@ export interface BuildReviewSectionArgs {
   /** "New review" over existing results (whether the config back-link shows). */
   reconfiguring: boolean;
   config: RunConfig<ReviewLens>;
+  /** Opt-in DEEP scan mode (issue #294), lifted alongside `config` in the view model. */
+  deep: boolean;
+  setDeep: (deep: boolean) => void;
   section: PrReviewSectionApi;
   selection: PrFindingSelectionApi;
   gates: PrReviewGatesApi;
@@ -40,6 +43,8 @@ export function buildReviewSectionProps({
   selectedPr,
   reconfiguring,
   config,
+  deep,
+  setDeep,
   section,
   selection,
   gates,
@@ -66,6 +71,8 @@ export function buildReviewSectionProps({
     stream: section.mode === 'running' ? streams.runningStream : displayStream,
     configure: {
       config,
+      deep,
+      onToggleDeep: setDeep,
       isStarting: section.isStarting,
       startError: section.startError,
       onReview: navigation.onReview,
@@ -75,6 +82,7 @@ export function buildReviewSectionProps({
     running: {
       categories: section.ui.progressCategories,
       findingCounts: section.ui.lensFindingCounts,
+      lensRounds: streams.runningStream?.lensRounds ?? {},
       onCancel: navigation.onCancelRun,
     },
     results: {

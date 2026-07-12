@@ -4,6 +4,7 @@ export { useElapsedMs } from './RunProgress.hooks';
 export type {
   CategoryRunState,
   RunProgressCategory,
+  RunProgressCategoryRound,
   RunProgressProps,
   RunProgressStatus,
   RunProgressUsage,

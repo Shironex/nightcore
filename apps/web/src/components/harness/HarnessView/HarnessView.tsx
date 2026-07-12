@@ -105,6 +105,7 @@ function RunningScreen({ view }: { view: HarnessViewModel }) {
         categories={view.progressCategories}
         categoryState={view.categoryRunState}
         findingCounts={view.findingCounts}
+        categoryRounds={view.stream.categoryRounds}
         synthesizing={view.synthesizing}
         costUsd={view.stream.costUsd}
         usage={view.stream.usage}

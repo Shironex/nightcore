@@ -28,7 +28,11 @@ import {
   startHarnessScan,
   type Task,
 } from '@/lib/bridge';
-import { patchStreamItem, seedStepState } from '@/lib/scan-run';
+import {
+  DEFAULT_DEEP_SCAN_CONFIG,
+  patchStreamItem,
+  seedStepState,
+} from '@/lib/scan-run';
 import { useScanItemActions } from '@/lib/useScanItemActions';
 import type { ScanRunApi, ScanRunConfig } from '@/lib/useScanRun';
 
@@ -56,6 +60,10 @@ export interface UseHarnessResult {
     model: string | null,
     effort: string | null,
     providerId: string | null,
+    /** Opt-in DEEP scan mode (issue #294). `true` sends the explicit
+     *  {@link DEFAULT_DEEP_SCAN_CONFIG} (never an empty object — see that constant's
+     *  doc). */
+    deep: boolean,
   ) => Promise<void>;
   cancel: () => Promise<void>;
   selectRun: (runId: string) => Promise<void>;
@@ -203,12 +211,16 @@ export function useHarness(
       model: string | null,
       effort: string | null,
       providerId: string | null,
+      deep: boolean,
     ) => {
       await runStart(hasProject && categories.length > 0, async () => {
         const runId = await startHarnessScan(categories, {
           model,
           effort: effort as EffortLevel | null,
           providerId,
+          // Explicit values only — see `DEFAULT_DEEP_SCAN_CONFIG`'s doc: the generated
+          // Rust struct zero-defaults any field an empty `{}` omits.
+          deep: deep ? DEFAULT_DEEP_SCAN_CONFIG : null,
         });
         // Optimistic running state until `harness-scan-started` lands.
         return {
