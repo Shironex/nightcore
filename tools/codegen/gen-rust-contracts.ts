@@ -1237,6 +1237,12 @@ const EVENT_INPUTS: Record<string, unknown> = {
     sessionId: 1,
     status: 'running',
   },
+  'stream-truncated': {
+    type: 'stream-truncated',
+    sessionId: 1,
+    droppedBytes: 4096,
+    droppedCount: 12,
+  },
   'analysis-started': {
     type: 'analysis-started',
     runId: 'run-1',

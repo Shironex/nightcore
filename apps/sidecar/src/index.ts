@@ -36,9 +36,13 @@ import {
 import { SessionManager } from '@nightcore/engine';
 import { createLogger, type Logger } from '@nightcore/shared';
 
-/** Emits one already-framed `NightcoreEvent` line to the wire. The live sink
+/** Emits one already-framed `NightcoreEvent` line to the wire, optionally tagged
+ *  with the `sessionId` it belongs to. The `sessionId` is advisory — the live
+ *  {@link BackpressuredWriter} uses it only to attribute a backpressure truncation
+ *  marker to a live session so the Rust reader can correlate it (#208); a sink that
+ *  ignores it (every test collector) is still a valid `EventSink`. The live sink
  *  writes to stdout; tests inject a collector to assert framing. */
-export type EventSink = (line: string) => void;
+export type EventSink = (line: string, sessionId?: number) => void;
 
 /** The minimal slice of `SessionManager` the sidecar drives. Declaring it as an
  *  interface lets tests pass a stub so no live Claude session is ever created. */
@@ -69,7 +73,42 @@ export interface BackpressureStream {
 }
 
 /**
- * Backpressure-honoring, order-preserving stdout writer.
+ * The maximum total size (summed string length — the same byte proxy
+ * `MAX_COMMAND_LINE_BYTES` uses) the {@link BackpressuredWriter}'s pending FIFO may
+ * hold before it coalesces away the OLDEST buffered output to stay bounded (issue
+ * #208). 8 MiB is far above any legitimate momentary burst — even many concurrent
+ * sessions each streaming, one microtask's worth of coalesced emits is a few KB,
+ * and the single largest event (a big-file `tool-result`) is hundreds of KB — yet
+ * it caps the sidecar heap so a reader that stalls FOREVER can never grow `pending`
+ * without bound and OOM-crash the process, losing every concurrent session's
+ * in-flight state. Order-of-magnitude aligned with `MAX_COMMAND_LINE_BYTES` (a
+ * 16 MB single inbound line), one level below it because this bounds an aggregate
+ * backlog rather than one line.
+ */
+export const MAX_PENDING_BYTES = 8 * 1024 * 1024;
+
+/** The coalesced totals + factory for the "output truncated" marker the writer
+ *  synthesizes when it drops queued output. Injectable so the byte-bounding logic
+ *  is testable without the contract; the live default frames a real
+ *  `stream-truncated` `NightcoreEvent`. */
+export type TruncationMarkerFactory = (dropped: {
+  droppedBytes: number;
+  droppedCount: number;
+  sessionId: number;
+}) => string;
+
+/** Running totals for one in-progress truncation EPISODE: bytes/lines coalesced
+ *  away since the last marker shipped, plus the live session the marker is
+ *  attributed to. `sessionId` is null only before any session has produced output
+ *  (in which case there is no session transcript to surface a marker in yet). */
+interface TruncationEpisode {
+  droppedBytes: number;
+  droppedCount: number;
+  sessionId: number | null;
+}
+
+/**
+ * Backpressure-honoring, order-preserving, MEMORY-BOUNDED stdout writer.
  *
  * The naive live sink was `(line) => { process.stdout.write(line); }` with the
  * boolean return discarded: when the Rust reader stalls and the OS pipe buffer
@@ -91,16 +130,32 @@ export interface BackpressureStream {
  *   - order and delivery are exact: a single FIFO, a single pump, and concatenated
  *     NDJSON lines are byte-identical on the wire to writing them one at a time.
  *
- * Residual (documented, not fixed here): under a reader that stalls FOREVER the
- * `pending` FIFO still grows — a hard memory ceiling would require propagating
- * writability back to the SDK consume loop through the engine's synchronous
- * `EventEmitter` emit path, a larger cross-cutting change deferred to keep the
- * core event ordering untouched. For the momentary/partial stalls the finding
- * calls out, this self-heals: one coalesced flush on `'drain'` clears the backlog.
+ * Memory ceiling (#208 — COALESCE + MARK TRUNCATED): the pending FIFO is bounded by
+ * {@link MAX_PENDING_BYTES}. When appending would exceed it, `write` drops the
+ * OLDEST queued lines (keeping the newest — the most useful in a live view) until
+ * back under the cap, folds the dropped bytes/lines into a running truncation
+ * EPISODE, and the pump ships ONE synthetic `stream-truncated` marker per episode
+ * carrying the running total. Consecutive drops before the queue recovers coalesce
+ * into that single marker rather than one-per-drop. The marker lives OUTSIDE
+ * `pending` (in {@link truncation}), so it can never itself be dropped and needs no
+ * queue headroom; it is prepended to the flush so the wire carries a VISIBLE "N
+ * bytes / M events dropped" gap signal exactly where the dropped output was —
+ * NEVER silent loss. `write` NEVER blocks (dropping-oldest, not an unbounded block
+ * that could deadlock a reader that never un-stalls), and `emit()` stays a plain
+ * synchronous `EventEmitter.emit` — nothing here can wedge the engine's consume
+ * loop.
  */
 export class BackpressuredWriter {
   private pending: string[] = [];
+  /** Summed string length of `pending`, maintained incrementally so the ceiling
+   *  check on the hot `write` path is O(1), not an O(n) re-scan per emit. */
+  private pendingBytes = 0;
   private flushing = false;
+  /** The in-progress truncation episode, or null when the queue is healthy. */
+  private truncation: TruncationEpisode | null = null;
+  /** Most recent `sessionId` seen on the sink — the session a truncation marker is
+   *  attributed to, so the Rust reader can correlate + forward it on `nc:session`. */
+  private lastSessionId: number | null = null;
   /** Resolves when the in-flight pump finishes (pending drained). Replaced each
    *  time a fresh pump starts; exposed via {@link whenDrained} for shutdown/tests. */
   private idle: Promise<void> = Promise.resolve();
@@ -110,12 +165,33 @@ export class BackpressuredWriter {
     private readonly stream: BackpressureStream,
     private readonly onError: (message: string) => void = (m) =>
       process.stderr.write(`${m}\n`),
+    private readonly maxPendingBytes: number = MAX_PENDING_BYTES,
+    /** Frames the coalesced truncation marker. Defaults to a real
+     *  `stream-truncated` event; tests may inject a stub to inspect totals. */
+    private readonly makeMarker: TruncationMarkerFactory = ({
+      droppedBytes,
+      droppedCount,
+      sessionId,
+    }) => encodeEvent({ type: 'stream-truncated', sessionId, droppedBytes, droppedCount }),
   ) {}
 
   /** Enqueue one already-framed line. Synchronous and non-blocking — an
    *  {@link EventSink}. Bound so it can be passed as the sink directly. */
-  write = (line: string): void => {
+  write = (line: string, sessionId?: number): void => {
+    if (sessionId !== undefined) {
+      this.lastSessionId = sessionId;
+      // Back-fill a marker opened before any session was known the instant a
+      // session appears, so a deferred episode is never stranded (defensive: an
+      // overflow is always driven by session output, which carries a sessionId).
+      if (this.truncation !== null && this.truncation.sessionId === null) {
+        this.truncation.sessionId = sessionId;
+      }
+    }
     this.pending.push(line);
+    this.pendingBytes += line.length;
+    // Bound the backlog: a stalled reader must never grow `pending` without limit
+    // (the #208 OOM). Only pays a cost on the rare overflow path.
+    if (this.pendingBytes > this.maxPendingBytes) this.enforceCeiling();
     if (!this.flushing) {
       this.flushing = true;
       this.idle = new Promise((resolve) => {
@@ -132,13 +208,71 @@ export class BackpressuredWriter {
     return this.idle;
   }
 
+  /** Current buffered backlog size (summed string length). Bounded by
+   *  {@link maxPendingBytes} except for a single in-flight line larger than the
+   *  cap. Exposed for observability and the memory-bound invariant tests; the
+   *  truncation marker is tracked out-of-band and is NOT counted here. */
+  get bufferedBytes(): number {
+    return this.pendingBytes;
+  }
+
+  /** Coalesce away the OLDEST queued lines until the backlog is back under the
+   *  ceiling, folding the dropped totals into the current truncation episode.
+   *  Never drops the just-enqueued newest line (dropping the output we are
+   *  actively writing would lose live data and, if that one line alone exceeds the
+   *  cap, spin forever) and never blocks. The marker lives in {@link truncation},
+   *  OUT of `pending`, so it is never at risk of being dropped here. */
+  private enforceCeiling(): void {
+    let droppedBytes = 0;
+    let droppedCount = 0;
+    // Drop from the front (oldest) while over the cap, always keeping the newest
+    // line (`length > 1`) so the most recent output survives.
+    while (this.pendingBytes > this.maxPendingBytes && this.pending.length > 1) {
+      const oldest = this.pending.shift()!;
+      this.pendingBytes -= oldest.length;
+      droppedBytes += oldest.length;
+      droppedCount += 1;
+    }
+    if (droppedCount === 0) return; // a single oversized newest line — nothing older to drop
+    // Open or extend the episode (coalesce): ONE marker with a running total,
+    // shipped at the next flush. Attribute to the most recent live session.
+    if (this.truncation === null) {
+      this.truncation = { droppedBytes, droppedCount, sessionId: this.lastSessionId };
+    } else {
+      this.truncation.droppedBytes += droppedBytes;
+      this.truncation.droppedCount += droppedCount;
+      if (this.lastSessionId !== null) this.truncation.sessionId = this.lastSessionId;
+    }
+  }
+
   private async pump(): Promise<void> {
     try {
-      while (this.pending.length > 0) {
+      // Loop while there is data OR an open episode whose marker still needs to
+      // ship — a truncation marker must always get through, even alone.
+      while (this.pending.length > 0 || this.truncation !== null) {
         // Coalesce everything queued so far into one write. NDJSON lines already
         // carry their own '\n', so concatenation is byte-identical on the wire.
-        const chunk = this.pending.join('');
+        const body = this.pending.join('');
         this.pending = [];
+        this.pendingBytes = 0;
+        // Prepend the coalesced truncation marker (once per episode) so the wire
+        // carries a VISIBLE gap signal right where the dropped (oldest) output was.
+        // It needs a live session to correlate to; if none has produced output yet
+        // there is no transcript to surface it in, so DEFER rather than emit an
+        // uncorrelatable (and thus lost) marker.
+        let chunk = body;
+        if (this.truncation !== null && this.truncation.sessionId !== null) {
+          chunk =
+            this.makeMarker({
+              droppedBytes: this.truncation.droppedBytes,
+              droppedCount: this.truncation.droppedCount,
+              sessionId: this.truncation.sessionId,
+            }) + body;
+          this.truncation = null;
+        }
+        // Nothing to write this turn (a marker is deferred for want of a session
+        // and no data is queued) — stop; the next write re-kicks the pump.
+        if (chunk.length === 0) break;
         if (!this.stream.write(chunk)) {
           await new Promise<void>((resolve) => this.stream.once('drain', resolve));
         }
@@ -147,6 +281,8 @@ export class BackpressuredWriter {
       // A dead reader (EPIPE) surfaces here now that writes are async. Drop the
       // backlog and log — process shutdown is driven by stdin close, not stdout.
       this.pending = [];
+      this.pendingBytes = 0;
+      this.truncation = null;
       this.onError(`sidecar: stdout write failed: ${String(error)}`);
     } finally {
       this.flushing = false;
@@ -262,12 +398,16 @@ export function createSidecar(
   onError: (message: string) => void = (m) => process.stderr.write(`${m}\n`),
 ): { handleLine: (line: string) => void } {
   manager.on((event) => {
+    // Tag each line with its session so the writer can attribute a backpressure
+    // truncation marker to a live session (#208); `query-result` is an RPC reply
+    // and carries no `sessionId`.
+    const sessionId = 'sessionId' in event ? event.sessionId : undefined;
     // Fast-path the hot, typed-translator-constructed variants (see
     // FAST_PATH_EVENT_TYPES): a full union safeParse would otherwise run once per
     // streamed token and dominate per-delta CPU, revalidating a shape the type
     // system already guarantees.
     if (FAST_PATH_EVENT_TYPES.has(event.type)) {
-      sink(encodeEvent(event));
+      sink(encodeEvent(event), sessionId);
       return;
     }
     // Validate OUTBOUND too (the inbound command path already does): the engine
@@ -279,7 +419,7 @@ export function createSidecar(
       onError(`sidecar: dropping malformed outbound event (${event.type}): ${valid.error.message}`);
       return;
     }
-    sink(encodeEvent(event));
+    sink(encodeEvent(event), sessionId);
   });
 
   function handleLine(line: string): void {

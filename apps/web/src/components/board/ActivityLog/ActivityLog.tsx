@@ -2,6 +2,7 @@
 import { memo } from 'react';
 
 import {
+  AlertIcon,
   ChevronDownIcon,
   LayersIcon,
   LogsIcon,
@@ -239,8 +240,23 @@ function TimelineBody({
  *  numeric ids, which restart at 1 per kind — a text turn and a tool call can
  *  both be `id: 1`, so the prefix keeps their keys distinct within the list. */
 function entryKey(entry: TimelineEntry): string {
-  const prefix = entry.kind === 'text' ? 't' : entry.kind === 'task' ? 's' : 'x';
+  const prefix =
+    entry.kind === 'text'
+      ? 't'
+      : entry.kind === 'task'
+        ? 's'
+        : entry.kind === 'notice'
+          ? 'n'
+          : 'x';
   return `${prefix}${entry.id}`;
+}
+
+/** Human-readable size for a truncation notice (`1.2 MB`, `48 KB`, `512 bytes`).
+ *  Uses the summed string length the writer reports as a byte proxy. */
+function formatDroppedBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${Math.round(bytes / 1024)} KB`;
+  return `${bytes} ${bytes === 1 ? 'byte' : 'bytes'}`;
 }
 
 /** Props for {@link TimelineEntryRow}. */
@@ -310,6 +326,25 @@ const TimelineEntryRow = memo(function TimelineEntryRow({
           {detail !== undefined && detail.length > 0 && (
             <span className="text-muted-foreground"> · {detail}</span>
           )}
+        </span>
+      </li>
+    );
+  }
+  if (entry.kind === 'notice') {
+    // A backpressure truncation marker (#208): the sidecar dropped buffered
+    // output to stay under its memory ceiling. Surfaced so the gap is visible,
+    // never silent.
+    return (
+      <li className="flex items-start gap-1.5 rounded-md border border-warning/40 bg-warning/[0.08] px-2 py-1 font-mono text-xs text-warning">
+        <AlertIcon size={12} className="mt-0.5 shrink-0" />
+        <span className="min-w-0 break-words">
+          <span className="font-semibold">Output truncated</span>
+          <span className="text-muted-foreground">
+            {' · '}
+            {formatDroppedBytes(entry.droppedBytes)} /{' '}
+            {entry.droppedCount} {entry.droppedCount === 1 ? 'event' : 'events'} dropped
+            under backpressure
+          </span>
         </span>
       </li>
     );
