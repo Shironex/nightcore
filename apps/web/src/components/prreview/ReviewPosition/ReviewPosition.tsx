@@ -15,8 +15,15 @@ import { hasPositionContent, useReasoningCollapse } from './ReviewPosition.hooks
 import type { ReviewPositionProps } from './ReviewPosition.types';
 
 export function ReviewPosition(props: ReviewPositionProps) {
-  const { verdict, verdictReasoning, reconciliation, stale, followup, onReReview } =
-    props;
+  const {
+    verdict,
+    verdictReasoning,
+    clampReason,
+    reconciliation,
+    stale,
+    followup,
+    onReReview,
+  } = props;
   const reasoning = useReasoningCollapse();
 
   if (!hasPositionContent(props)) return null;
@@ -115,6 +122,18 @@ export function ReviewPosition(props: ReviewPositionProps) {
               </span>
             )}
           </div>
+
+          {/* The clamp note: WHY the mechanical severity band overrode the model's
+              proposed verdict. Always shown (not behind the reasoning toggle) so a
+              clamped verdict is never silently different from what the model picked. */}
+          {verdictMeta !== null &&
+            clampReason !== null &&
+            clampReason.length > 0 && (
+              <p className="text-2xs-plus leading-relaxed text-muted-foreground">
+                <span className="font-medium text-warning">Verdict adjusted:</span>{' '}
+                {clampReason}
+              </p>
+            )}
 
           {/* The synthesis justification — Nightcore's own AI text, rendered as
               plain (escaped) text, never markdown/HTML. */}

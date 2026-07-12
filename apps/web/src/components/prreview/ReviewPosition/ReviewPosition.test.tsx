@@ -93,6 +93,7 @@ test('absent verdict renders no badge but still shows other signals', async () =
     <ReviewPosition
       verdict={null}
       verdictReasoning={null}
+      clampReason={null}
       reconciliation={[]}
       stale
       followup={null}
@@ -104,4 +105,23 @@ test('absent verdict renders no badge but still shows other signals', async () =
     .toBeInTheDocument();
   // An unknown/absent verdict never renders a merge badge.
   await expect.element(screen.getByText(/ready to merge/i)).not.toBeInTheDocument();
+});
+
+test('a clamped verdict surfaces the "Verdict adjusted" note alongside the badge', async () => {
+  const screen = render(
+    <ReviewPosition
+      verdict="needs_revision"
+      verdictReasoning={null}
+      clampReason='model proposed "merge_with_changes" but the worst finding severity is "high", which floors the verdict at "needs_revision"'
+      reconciliation={[]}
+      stale={false}
+      followup={null}
+      onReReview={vi.fn()}
+    />,
+  );
+  await expect.element(screen.getByText(/needs revision/i)).toBeInTheDocument();
+  await expect.element(screen.getByText(/verdict adjusted/i)).toBeInTheDocument();
+  await expect
+    .element(screen.getByText(/floors the verdict at/i))
+    .toBeInTheDocument();
 });

@@ -77,6 +77,8 @@ function persistedRun(over: Partial<PrReviewRun> = {}): PrReviewRun {
     error: null,
     verdict: null,
     verdictReasoning: null,
+    verdictClamped: null,
+    clampReason: null,
     headSha: null,
     postedVerdict: null,
     postedAt: null,

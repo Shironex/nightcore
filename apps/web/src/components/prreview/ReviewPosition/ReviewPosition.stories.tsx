@@ -16,6 +16,7 @@ const meta = {
   args: {
     verdict: null,
     verdictReasoning: null,
+    clampReason: null,
     reconciliation: [],
     stale: false,
     followup: null,
@@ -40,6 +41,18 @@ export const BlockedVerdict: Story = {
   args: {
     verdict: 'blocked',
     verdictReasoning: 'A critical auth bypass in the token-refresh path must be fixed first.',
+  },
+};
+
+/** A verdict the mechanical severity clamp overrode — the "Verdict adjusted" note
+ *  explains why the model's softer pick was floored. */
+export const ClampedVerdict: Story = {
+  args: {
+    verdict: 'needs_revision',
+    verdictReasoning:
+      'The change is coherent, but a high-severity finding in the auth path needs work.',
+    clampReason:
+      'model proposed "merge_with_changes" but the worst finding severity is "high", which floors the verdict at "needs_revision"',
   },
 };
 
