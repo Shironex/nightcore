@@ -1,0 +1,78 @@
+name: macOS confine.rs Seatbelt tests
+
+# Issue #293: apps/desktop/src-tauri/src/terminal/confine.rs has
+# `#[cfg(target_os = "macos")]` tests — including
+# `sandbox_exec_actually_parses_and_enforces_the_codex_db_regex`, a real
+# `sandbox-exec` parse/enforce regression test guarding the confined-terminal
+# Seatbelt profile — that run NOWHERE in CI: the Rust job (ci.yml
+# `rust-checks`) runs on ubuntu-latest, where every `target_os = "macos"` test
+# compiles out, and the existing `macos-sandbox` job only runs
+# `bun test packages/engine` (the engine's TS sandbox, not this Rust one) —
+# no `cargo test`. A malformed Seatbelt profile that breaks EVERY confined
+# terminal passed all of CI during #292; only a human running `sandbox-exec`
+# by hand caught it.
+#
+# This is a SEPARATE, path-filtered, NOT-required workflow — deliberately:
+#   - Compiling the tauri crate on macOS needs the sidecar externalBin built
+#     first (a heavy step) and macOS runner minutes bill at 10x. Folding this
+#     into ci.yml would tax every push/PR for a file most changes never touch.
+#   - The `paths:` filter below means this job is SKIPPED on the vast
+#     majority of PRs. A skipped job that is a REQUIRED status check can
+#     block merges under branch protection, so this workflow's job is
+#     intentionally NOT added to the required-checks set — treat it as an
+#     informational gate that only fires when Seatbelt-relevant code moves.
+#
+# To validate this workflow itself (e.g. after editing it, since editing it
+# doesn't touch confine.rs): run it manually via the Actions tab
+# (workflow_dispatch), or open a PR that touches confine.rs.
+on:
+  push:
+    branches: [main]
+    paths: &seatbelt-paths
+      - "apps/desktop/src-tauri/src/terminal/**"
+      - "apps/desktop/src-tauri/Cargo.toml"
+      - "apps/desktop/src-tauri/Cargo.lock"
+      - ".github/workflows/macos-confine.yml"
+  pull_request:
+    paths: *seatbelt-paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref == 'refs/heads/main' && github.run_id || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  confine-seatbelt-tests:
+    name: cargo test terminal::confine (macOS Seatbelt)
+    runs-on: macos-latest
+    # Cold sidecar + tauri-crate compile is the ceiling; a warm cache run is
+    # well under this. macOS minutes bill at 10x — a wedged run is the most
+    # expensive way to find out something hung (same rationale as
+    # ci.yml's macos-sandbox job).
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      # Pinned to match apps/desktop/src-tauri/rust-toolchain.toml, same as
+      # ci.yml's rust-checks job.
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.94.1"
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
+      - run: bun install --frozen-lockfile
+      # The tauri build script requires the sidecar externalBin to exist
+      # before the crate compiles — same prerequisite ci.yml's rust-checks
+      # job has via `bun run test:rust`.
+      - run: bun run --filter @nightcore/sidecar compile
+      # Scoped to the confine module only — NOT the full `cargo test` suite
+      # (that stays ci.yml's rust-checks job, on ubuntu). This is the macOS
+      # Seatbelt half that job can't run.
+      - name: "cargo test terminal::confine::"
+        run: cargo test -p nightcore --manifest-path apps/desktop/src-tauri/Cargo.toml "terminal::confine::"
