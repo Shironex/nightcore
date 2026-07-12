@@ -18,6 +18,7 @@
  * the `*View.hooks.ts` view models both resolve here.
  */
 export * from './scan-run/copy';
+export * from './scan-run/deep';
 export * from './scan-run/fold';
 export * from './scan-run/lifecycle';
 export * from './scan-run/narrow';

@@ -16,6 +16,7 @@ import {
 import { type MenuItem, useToast } from '@/components/ui';
 import type { PrReviewRun } from '@/lib/bridge';
 import { type EffortLevel, type ReviewLens } from '@/lib/bridge';
+import { DEFAULT_DEEP_SCAN_CONFIG } from '@/lib/scan-run';
 import type { ScanTarget } from '@/lib/source-ref';
 import { usePreselectNavigation } from '@/lib/usePreselectNavigation';
 import type { RunConfig } from '@/lib/useRunConfig';
@@ -32,6 +33,9 @@ export interface PrReviewNavigationConfig {
   setStartingPrs: Dispatch<SetStateAction<ReadonlySet<number>>>;
   runs: UsePrReviewRunsResult;
   config: RunConfig<ReviewLens>;
+  /** Opt-in DEEP scan mode (issue #294), lifted alongside `config` in the view model. */
+  deep: boolean;
+  setDeep: (deep: boolean) => void;
   /** The displayed stream (source of the "New review" prefill + cancel target). */
   displayStream: ReviewStream | null;
   /** The displayed run's id when running (the per-run cancel target), else null. */
@@ -78,6 +82,8 @@ export function usePrReviewNavigation({
   setStartingPrs,
   runs,
   config,
+  deep,
+  setDeep,
   displayStream,
   runningRunId,
   prHistory,
@@ -154,6 +160,9 @@ export function usePrReviewNavigation({
           model: config.model,
           effort: config.effort as EffortLevel | null,
           providerId: config.providerId,
+          // Explicit values only — see `DEFAULT_DEEP_SCAN_CONFIG`'s doc: the generated
+          // Rust struct zero-defaults any field an empty `{}` omits.
+          deep: deep ? DEFAULT_DEEP_SCAN_CONFIG : null,
         });
         // Leave config only once the run actually starts — a rejected start
         // lands in the per-PR startErrors and config STAYS up so the banner is
@@ -181,6 +190,8 @@ export function usePrReviewNavigation({
     config.orderedSelected,
     config.model,
     config.effort,
+    config.providerId,
+    deep,
   ]);
 
   const onCancelRun = useCallback(() => {
@@ -197,6 +208,9 @@ export function usePrReviewNavigation({
       model: displayStream?.model,
       categories: displayStream?.requestedLenses,
     });
+    // Deep is a deliberate, session-local opt-in — a "New review" reconfigure always
+    // resets it, so a long deep pass never silently sticks unnoticed (mirrors Insight).
+    setDeep(false);
     resetFindingUi();
     setReconfiguring(true);
   };

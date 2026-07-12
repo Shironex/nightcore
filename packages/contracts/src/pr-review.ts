@@ -128,6 +128,28 @@ export const PrReviewLensCompletedEvent = z.object({
   error: z.string().optional(),
 });
 
+/** An intermediate DEEP-mode event (issue #294): one ROUND of a review lens's
+ *  multi-round loop finished. Mirrors {@link import('./insight.js').AnalysisCategoryRoundCompletedEvent}
+ *  exactly, shaped for the PR review: the 1-based round index, how many NET-NEW
+ *  (post-dedup) findings this round contributed, the CUMULATIVE diff-grounded findings
+ *  for the lens so far, and this round's OWN cost/usage (per-round, not cumulative). The
+ *  Rust reader persists the cumulative set per ROUND via the same `accumulate_findings`
+ *  path `pr-review-lens-completed` uses. Because the review is DIFF-BOUNDED, the loop
+ *  self-limits — it converges in a round or two rather than open-endedly. Emitted ONLY
+ *  for deep runs; a classic single-pass run emits `pr-review-lens-completed` instead. */
+export const PrReviewRoundCompletedEvent = z.object({
+  type: z.literal('pr-review-round-completed'),
+  runId: z.string(),
+  lens: ReviewLensSchema,
+  /** 1-based round index within this lens's deep loop. */
+  round: z.number().int().positive(),
+  /** Net-new diff-grounded findings this round added (post-dedup vs prior rounds). */
+  newFindingsThisRound: z.number().int().nonnegative(),
+  /** The cumulative diff-grounded findings for this lens across all rounds so far. */
+  findings: z.array(ReviewFindingSchema),
+  ...runTotals,
+});
+
 /** The whole run finished: the final cross-lens-deduped findings plus run totals. The
  *  Rust reader persists from THIS event (authoritative). `lensesRun` is the count of
  *  lens passes that ran. */

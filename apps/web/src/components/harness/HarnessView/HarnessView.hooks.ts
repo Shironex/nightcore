@@ -151,7 +151,13 @@ export function useHarnessView({
 
   const onScan = useCallback(() => {
     resetRunTransient();
-    void harness.start(config.orderedSelected, config.model, config.effort, config.providerId);
+    void harness.start(
+      config.orderedSelected,
+      config.model,
+      config.effort,
+      config.providerId,
+      config.deep,
+    );
   }, [harness, config, resetRunTransient]);
 
   const summary = useMemo(() => {

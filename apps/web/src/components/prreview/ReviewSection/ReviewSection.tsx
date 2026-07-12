@@ -19,6 +19,7 @@ import {
   RefactorIcon,
   RetryIcon,
   RunProgress,
+  ScanModeToggle,
   Spinner,
   StopIcon,
   UsageLimitBanner,
@@ -67,8 +68,7 @@ export function ReviewSection({
 
   return (
     <section aria-label={`PR #${prNumber} review`} className="flex flex-col gap-3">
-      {/* Persistent run-state announcement: one polite live region across all
-          three modes, so config→running→results transitions are audible. */}
+      {/* Persistent run-state announcement: one polite live region across all modes. */}
       <span role="status" aria-live="polite" className="sr-only">
         {sectionStatusMessage(mode, stream)}
       </span>
@@ -183,6 +183,12 @@ export function ReviewSection({
             }}
           />
 
+          <ScanModeToggle
+            deep={configure.deep}
+            onToggle={configure.onToggleDeep}
+            unitNoun="lens"
+          />
+
           <div className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center gap-2">
               <Button
@@ -215,6 +221,7 @@ export function ReviewSection({
             categories={running.categories}
             categoryState={stream.lensState}
             findingCounts={running.findingCounts}
+            categoryRounds={running.lensRounds}
             unitLabel="lenses"
             costUsd={stream.costUsd}
             usage={stream.usage}
@@ -243,10 +250,9 @@ export function ReviewSection({
               </div>
             ))}
 
-          {/* Fail-visible signals (T10): a completed review that spent nothing is
-              a usage-limit tell, not a clean bill; a run with any errored lens is
-              degraded (incomplete). Both must show so a broken run never reads as a
-              full, clean review. The banner self-hides unless the $0 signature holds. */}
+          {/* Fail-visible signals (T10): a $0 completed review is a usage-limit tell,
+              and an errored lens means the review is incomplete — both must show so a
+              broken run never reads as clean. The banner self-hides unless $0 holds. */}
           <UsageLimitBanner
             status={stream.status}
             costUsd={stream.costUsd}
@@ -257,12 +263,10 @@ export function ReviewSection({
             <DegradedReviewChip lenses={degradedReview} />
           )}
 
-          {/* The review-position layer: reconciliation banner, staleness chip,
-              merge verdict, and follow-up summary (self-hides when empty). */}
+          {/* Review-position layer: reconciliation, staleness, verdict, follow-up. */}
           {results.position !== undefined && <ReviewPosition {...results.position} />}
 
-          {/* The review-arc timeline — a vertical stepper unifying what History +
-              FixRunCard show separately (self-hides when there's no arc). */}
+          {/* The review-arc timeline (History + FixRunCard unified; self-hides empty). */}
           <ReviewTimeline steps={results.timeline} />
 
           {stream.status === 'completed' && (
@@ -283,10 +287,9 @@ export function ReviewSection({
                   ? `Converting… ${toolbar.bulkProgress.done}/${toolbar.bulkProgress.total}`
                   : `Convert all to tasks (${toolbar.openCount})`}
               </Button>
-              {/* Sr-only disabled reasons: the guarded buttons below stay
-                  focusable (aria-disabled, the convert-all precedent) and point
-                  here via aria-describedby so keyboard/SR users hear WHY. The
-                  `title` twins stay for mouse hover. */}
+              {/* Sr-only disabled reasons: the guarded buttons stay focusable and
+                  point here via aria-describedby so keyboard/SR users hear WHY (the
+                  `title` twins cover mouse hover). */}
               <span id={ownPrReasonId} className="sr-only">
                 {OWN_PR_TITLE}
               </span>
@@ -294,10 +297,9 @@ export function ReviewSection({
                 {FIX_RUNNING_TITLE}
               </span>
 
-              {/* Address findings: opens the ConfirmDialog (the human gate for
-                  starting a paid agent session that commits to the PR branch —
-                  never auto-fires). Enabled by the OPEN selection; inert (but
-                  still focusable) while this PR already has a fix in flight. */}
+              {/* Address findings: opens the ConfirmDialog (the human gate for a paid
+                  agent session that commits to the PR branch — never auto-fires). Inert
+                  but focusable while this PR already has a fix in flight. */}
               <Button
                 variant="secondary"
                 aria-disabled={!toolbar.canAddress}
@@ -326,15 +328,13 @@ export function ReviewSection({
                 </span>
               )}
 
-              {/* Post-review toolbar: the three human-gated verdicts. Each opens
-                  the ConfirmDialog — none auto-fires. Approve/request-changes
-                  guard inert on the viewer's OWN PR (GitHub rejects them) but
-                  stay focusable so the aria-describedby reason is reachable. */}
+              {/* Post-review toolbar: the three human-gated verdicts (each opens the
+                  ConfirmDialog — none auto-fires). Approve/request-changes guard inert
+                  on the viewer's OWN PR but stay focusable for the aria reason. */}
               <div className="ml-auto flex items-center gap-2">
-                {/* Post-success micro-feedback: an auto-clearing confirmation the
-                    view model shows for a few seconds after a verdict posts.
-                    role=status announces it; the rise animation is neutralized
-                    under prefers-reduced-motion by the global CSS rule. */}
+                {/* Post-success micro-feedback: an auto-clearing confirmation the view
+                    model shows for a few seconds. role=status announces it; the rise
+                    is neutralized under prefers-reduced-motion by the global CSS. */}
                 {toolbar.postedFeedback !== null && (
                   <span
                     role="status"

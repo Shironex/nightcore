@@ -47,6 +47,11 @@ export function usePrReviewView({
   // The lens/model/effort form state — lives above the section so it survives
   // PR switches and prefills on "New review".
   const config = useRunConfig<ReviewLens>(ALL_LENSES, !hasProject);
+  // Opt-in DEEP scan mode (issue #294), lifted alongside `config`. Kept as its own
+  // state (not folded into the shared `RunConfig`, which Insight/Harness wrap
+  // per-feature) so the shared config stays deep-agnostic. A deliberate, session-local
+  // opt-in: reset on a "New review" reconfigure and on a project switch.
+  const [deep, setDeep] = useState(false);
 
   // --- Navigation state (owned here; the section projects against it, the
   //     navigation actions mutate it) -------------------------------------
@@ -69,6 +74,7 @@ export function usePrReviewView({
     setSelectedPr(null);
     setViewingRunId(null);
     setReconfiguring(false);
+    setDeep(false);
   }
 
   // --- The concern hooks, threaded in dependency order --------------------
@@ -110,6 +116,8 @@ export function usePrReviewView({
     setStartingPrs,
     runs,
     config,
+    deep,
+    setDeep,
     displayStream: section.streams.displayStream,
     runningRunId: section.streams.runningRunId,
     prHistory: section.prView?.history ?? [],
@@ -161,6 +169,8 @@ export function usePrReviewView({
     selectedPr,
     reconfiguring,
     config,
+    deep,
+    setDeep,
     section,
     selection,
     gates,

@@ -100,6 +100,7 @@ export type PrReviewEvent = Extract<
       | 'pr-review-started'
       | 'pr-review-lens-started'
       | 'pr-review-lens-completed'
+      | 'pr-review-round-completed'
       | 'pr-review-completed'
       | 'pr-review-failed'
       | 'pr-review-finding-converted';
@@ -175,6 +176,7 @@ export type HarnessScanEvent = Extract<
       | 'harness-profile-ready'
       | 'harness-category-started'
       | 'harness-category-completed'
+      | 'harness-category-round-completed'
       | 'harness-synthesis-started'
       | 'harness-proposals-ready'
       | 'harness-scan-completed'

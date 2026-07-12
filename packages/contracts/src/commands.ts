@@ -283,6 +283,10 @@ export const StartHarnessScanCommand = z.object({
   maxTurnsPerCategory: z.number().int().positive().optional(),
   /** Per-pass spend ceiling in USD (SDK `Options.maxBudgetUsd`). */
   maxBudgetUsdPerCategory: z.number().positive().optional(),
+  /** Opt-in DEEP mode (issue #294): run each convention lens as a multi-round,
+   *  exclusion-list convergence loop instead of a single pass. Absent ⇒ classic
+   *  single-pass Harness (byte-identical to pre-deep). See {@link DeepScanConfigSchema}. */
+  deep: DeepScanConfigSchema.optional(),
 });
 
 /** Cancel an in-flight Harness scan (aborts every convention pass + synthesis). */
@@ -360,6 +364,12 @@ export const StartPrReviewCommand = z.object({
   effort: EffortLevelSchema.optional(),
   /** Max lens passes to run at once. Absent ⇒ engine default (bounded). */
   maxConcurrency: z.number().int().positive().optional(),
+  /** Opt-in DEEP mode (issue #294): run each review lens as a multi-round,
+   *  exclusion-list convergence loop instead of a single pass. Absent ⇒ classic
+   *  single-pass PR review. Because the review is DIFF-BOUNDED (findings are
+   *  grounded against `changedFiles`), a deep run self-limits — it converges in a
+   *  round or two rather than open-endedly. See {@link DeepScanConfigSchema}. */
+  deep: DeepScanConfigSchema.optional(),
 });
 
 /** Cancel an in-flight PR Review run (aborts every lens pass). */

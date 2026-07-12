@@ -11,6 +11,7 @@ import { EMPTY_HARNESS_STREAM, type HarnessStream } from './harness-stream';
 function harnessRun(over: Partial<HarnessRun> = {}): HarnessRun {
   return {
     id: 'r1',
+    roundsByCategory: {},
     projectPath: '/proj',
     status: 'failed',
     categories: ['folder-structure'],

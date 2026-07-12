@@ -428,6 +428,7 @@ describe('normalizers', () => {
   it('streamFromRun projects a completed persisted run into the stream shape', () => {
     const run: HarnessRun = {
       id: 'run-1',
+      roundsByCategory: {},
       projectPath: '/proj',
       status: 'completed',
       categories: ['folder-structure'],
@@ -468,6 +469,7 @@ describe('normalizers', () => {
   it('streamFromRun projects a running mid-synthesis run as synthesizing + all lenses done', () => {
     const run: HarnessRun = {
       id: 'run-2',
+      roundsByCategory: {},
       projectPath: '/proj',
       status: 'running',
       categories: ['folder-structure', 'naming'],
@@ -596,6 +598,7 @@ describe('normalizers', () => {
   it('streamFromRun drops an unknown category from the stepper', () => {
     const run: HarnessRun = {
       id: 'run-3',
+      roundsByCategory: {},
       projectPath: '/proj',
       status: 'completed',
       categories: ['folder-structure', 'phantom-lens', 'naming'],

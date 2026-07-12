@@ -394,6 +394,28 @@ export const HarnessCategoryCompletedEvent = z.object({
   error: z.string().optional(),
 });
 
+/** An intermediate DEEP-mode event (issue #294): one ROUND of a convention lens's
+ *  multi-round loop finished. Mirrors {@link import('./insight.js').AnalysisCategoryRoundCompletedEvent}
+ *  exactly, shaped for conventions: the 1-based round index, how many NET-NEW
+ *  (post-dedup) findings this round contributed, the CUMULATIVE grounded findings for
+ *  the lens so far, and this round's OWN cost/usage (per-round, not cumulative). The
+ *  Rust reader persists the cumulative set per ROUND via the same `accumulate_findings`
+ *  path `harness-category-completed` uses, so a multi-hour lens that crashes keeps every
+ *  prior round's paid findings. Emitted ONLY for deep runs; a classic single-pass run
+ *  emits `harness-category-completed` instead. */
+export const HarnessCategoryRoundCompletedEvent = z.object({
+  type: z.literal('harness-category-round-completed'),
+  runId: z.string(),
+  category: ConventionCategorySchema,
+  /** 1-based round index within this lens's deep loop. */
+  round: z.number().int().positive(),
+  /** Net-new grounded findings this round added (post-dedup vs prior rounds). */
+  newFindingsThisRound: z.number().int().nonnegative(),
+  /** The cumulative grounded findings for this lens across all rounds so far. */
+  findings: z.array(ConventionFindingSchema),
+  ...runTotals,
+});
+
 /** The synthesis pass began (after every convention pass, before proposals).
  *  Carries no payload beyond `runId`: it exists so the UI can show a
  *  "Synthesizing harness…" state instead of a frozen, all-lenses-done dead zone,

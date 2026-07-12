@@ -8,6 +8,7 @@
 import {
   ModelSelectField,
   ScanConfigForm,
+  ScanModeToggle,
   Spinner,
   useShowCostLine,
   VerifiedIcon,
@@ -32,6 +33,7 @@ function modelLabel(model: string | null): string {
 export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
   const lensCount = config.orderedSelected.length;
   const showCost = useShowCostLine();
+  const { deep, setDeep } = config;
 
   return (
     <ScanConfigForm
@@ -50,6 +52,9 @@ export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
           }}
         />
       }
+      beforeChips={
+        <ScanModeToggle deep={deep} onToggle={setDeep} unitNoun="lens" />
+      }
       heading={`Lenses (${lensCount}/${ALL_CATEGORIES.length})`}
       chips={CHIPS}
       selected={config.selected}
@@ -67,7 +72,10 @@ export function RunControls({ config, isStarting, onScan }: RunControlsProps) {
         <>
           Scans the whole repo across {lensCount} {lensCount === 1 ? 'lens' : 'lenses'}{' '}
           · ~{config.providerId === 'codex' ? 'Codex' : PROVIDER_LABEL} {modelLabel(config.model)}
-          {showCost && ' · cost depends on repo size'}.
+          {showCost && ' · cost depends on repo size'}
+          {deep &&
+            ' · Deep mode: multiple rounds per lens until convergence — can run long'}
+          .
         </>
       }
     />

@@ -14,6 +14,7 @@ import type {
   StoredReviewFinding,
 } from '@/lib/bridge';
 import {
+  addUsage,
   enumGuard,
   makeScanFold,
   narrowMembers,
@@ -26,6 +27,16 @@ import type { ReviewFindingView, RunStatus } from './prreview.types';
 
 /** A lens's progress within a run. */
 export type LensProgress = 'pending' | 'running' | 'done' | 'error';
+
+/** Deep mode (issue #294): one lens's round progress — the 1-based round index and how
+ *  many net-new (post-dedup) findings that round contributed. Keyed by lens in
+ *  {@link ReviewStream.lensRounds}; a missing key means that lens hasn't completed a
+ *  round yet (classic single-pass reviews never populate this map at all). Because the
+ *  review is diff-bounded, a deep run self-limits (converges in a round or two). */
+export interface LensRoundInfo {
+  round: number;
+  newFindingsThisRound: number;
+}
 
 /** Membership guard for the web-local `FindingStatus` union (no contract schema),
  *  mirroring `prreview.types.ts` exactly. */
@@ -58,6 +69,9 @@ export interface ReviewStream {
   requestedLenses: ReviewLens[];
   lensState: Record<string, LensProgress>;
   findings: ReviewFindingView[];
+  /** Deep mode (issue #294): per-lens round progress, keyed by lens. Empty for a classic
+   *  single-pass review (which never emits round events). */
+  lensRounds: Record<string, LensRoundInfo>;
   costUsd: number;
   usage: { inputTokens: number; outputTokens: number };
   durationMs: number;
@@ -75,6 +89,7 @@ export const EMPTY_REVIEW_STREAM: ReviewStream = {
   requestedLenses: [],
   lensState: {},
   findings: [],
+  lensRounds: {},
   costUsd: 0,
   usage: { inputTokens: 0, outputTokens: 0 },
   durationMs: 0,
@@ -154,6 +169,15 @@ export function streamFromRun(run: PrReviewRun): ReviewStream {
     requestedLenses: lenses,
     lensState: seedStepStateFromRun(lenses, status === 'running'),
     findings: run.findings.map(storedToFinding),
+    // Deep mode (issue #294): the persisted per-lens round count survives
+    // reconcile/resume; `newFindingsThisRound` isn't persisted (a point-in-time delta),
+    // so a reloaded run reports 0 for it.
+    lensRounds: Object.fromEntries(
+      Object.entries(run.roundsByLens).map(([lens, round]) => [
+        lens,
+        { round, newFindingsThisRound: 0 },
+      ]),
+    ),
     costUsd: run.costUsd,
     usage: run.usage,
     durationMs: run.durationMs,
@@ -211,6 +235,32 @@ export const foldReview = makeScanFold<
           errored: Boolean(event.error),
           costUsd: event.costUsd,
           usage: event.usage,
+        };
+      // Deep mode (issue #294): one round of a lens's multi-round loop finished.
+      // `event.findings` is already the CUMULATIVE diff-grounded set for that lens across
+      // every round so far, so this REPLACES (not appends to) the lens's slice of
+      // `findings` — the same replace-by-step shape `step-completed` uses, via the
+      // `apply` escape hatch so the lens stays `running` (more rounds may still land;
+      // deep mode never emits a per-lens terminal event).
+      case 'pr-review-round-completed':
+        return {
+          kind: 'apply',
+          next: (prev) => ({
+            ...prev,
+            findings: [
+              ...prev.findings.filter((f) => f.lens !== event.lens),
+              ...event.findings.map(wireToFinding),
+            ],
+            costUsd: prev.costUsd + event.costUsd,
+            usage: addUsage(prev.usage, event.usage),
+            lensRounds: {
+              ...prev.lensRounds,
+              [event.lens]: {
+                round: event.round,
+                newFindingsThisRound: event.newFindingsThisRound,
+              },
+            },
+          }),
         };
       case 'pr-review-completed':
         return {

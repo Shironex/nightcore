@@ -49,6 +49,7 @@ function run(over: Partial<PrReviewRun> = {}): PrReviewRun {
     durationMs: 10,
     usage: { inputTokens: 0, outputTokens: 0 },
     findings: [],
+    roundsByLens: {},
     error: null,
     verdict: null,
     verdictReasoning: null,

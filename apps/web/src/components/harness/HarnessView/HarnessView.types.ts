@@ -8,7 +8,6 @@ import type {
 } from '@/components/ui';
 import type { ConventionCategory, CoverageStatus } from '@/lib/bridge';
 import type { ScanTarget } from '@/lib/source-ref';
-import type { RunConfig } from '@/lib/useRunConfig';
 
 import type { CategoryTab } from '../CategoryTabs';
 import type {
@@ -24,6 +23,7 @@ import type {
   HarnessSectionTab,
 } from '../harness-sections';
 import type { HarnessStream } from '../harness-stream';
+import type { HarnessRunConfig } from '../RunControls/RunControls.types';
 
 /** Re-exported for the existing `./HarnessView.hooks` → `./HarnessView` import
  *  chain; the canonical home is `../harness-sections`. */
@@ -65,7 +65,7 @@ export interface HarnessViewModel {
   reconfigure: () => void;
   /** Lifted CONFIGURE run config (survives phase swaps, pre-fills on a new run).
    *  The shared shape Insight uses too. */
-  config: RunConfig<ConventionCategory>;
+  config: HarnessRunConfig;
   /** RUNNING-screen RunProgress inputs (view-agnostic shape). */
   progressCategories: RunProgressCategory[];
   categoryRunState: Record<string, CategoryRunState>;

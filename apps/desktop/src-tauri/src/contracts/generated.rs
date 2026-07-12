@@ -116,6 +116,8 @@ pub enum SurfaceCommand {
         max_turns_per_category: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_budget_usd_per_category: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deep: Option<DeepScanConfig>,
     },
     #[serde(rename_all = "camelCase")]
     CancelHarnessScan { run_id: String },
@@ -155,6 +157,8 @@ pub enum SurfaceCommand {
         effort: Option<EffortLevel>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_concurrency: Option<u64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deep: Option<DeepScanConfig>,
     },
     #[serde(rename_all = "camelCase")]
     CancelPrReview { run_id: String },
@@ -491,6 +495,19 @@ pub enum NightcoreEvent {
         error: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
+    HarnessCategoryRoundCompleted {
+        run_id: String,
+        category: ConventionCategory,
+        round: u64,
+        new_findings_this_round: u64,
+        findings: Vec<ConventionFinding>,
+        cost_usd: f64,
+        #[serde(default)]
+        duration_ms: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<SessionCompletedUsage>,
+    },
+    #[serde(rename_all = "camelCase")]
     HarnessSynthesisStarted { run_id: String },
     #[serde(rename_all = "camelCase")]
     HarnessProposalsReady {
@@ -584,6 +601,19 @@ pub enum NightcoreEvent {
         cost_usd: f64,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    #[serde(rename_all = "camelCase")]
+    PrReviewRoundCompleted {
+        run_id: String,
+        lens: ReviewLens,
+        round: u64,
+        new_findings_this_round: u64,
+        findings: Vec<ReviewFinding>,
+        cost_usd: f64,
+        #[serde(default)]
+        duration_ms: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<SessionCompletedUsage>,
     },
     #[serde(rename_all = "camelCase")]
     PrReviewCompleted {

@@ -4,6 +4,7 @@ import { PermissionModeSchema } from './config.js';
 import { TokenUsageSchema } from './event-fragments.js';
 import {
   HarnessCategoryCompletedEvent,
+  HarnessCategoryRoundCompletedEvent,
   HarnessCategoryStartedEvent,
   HarnessProfileReadyEvent,
   HarnessProposalsReadyEvent,
@@ -34,6 +35,7 @@ import {
   PrReviewFindingConvertedEvent,
   PrReviewLensCompletedEvent,
   PrReviewLensStartedEvent,
+  PrReviewRoundCompletedEvent,
   PrReviewStartedEvent,
 } from './pr-review.js';
 import { ProviderCapabilitiesSchema } from './provider.js';
@@ -488,6 +490,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   HarnessProfileReadyEvent,
   HarnessCategoryStartedEvent,
   HarnessCategoryCompletedEvent,
+  HarnessCategoryRoundCompletedEvent,
   HarnessSynthesisStartedEvent,
   HarnessProposalsReadyEvent,
   HarnessScanCompletedEvent,
@@ -500,6 +503,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   PrReviewStartedEvent,
   PrReviewLensStartedEvent,
   PrReviewLensCompletedEvent,
+  PrReviewRoundCompletedEvent,
   PrReviewCompletedEvent,
   PrReviewFailedEvent,
   PrReviewFindingConvertedEvent,

@@ -1,15 +1,13 @@
 import type { Meta, StoryObj } from '@storybook/react-vite';
 import { fn } from 'storybook/test';
 
-import type { ConventionCategory } from '@/lib/bridge';
-import { useRunConfig } from '@/lib/useRunConfig';
-
-import { ALL_CATEGORIES } from '../harness.constants';
 import { RunControls } from './RunControls';
+import { useRunConfig } from './RunControls.hooks';
 
-/** Drives `RunControls` with a live shared `useRunConfig` so the chips, model/effort,
- *  and the Scan gate are interactive in the story/test — the form state is owned here
- *  exactly as the HarnessView hook owns it in the app. */
+/** Drives `RunControls` with a live Harness `useRunConfig` (the shared config + the
+ *  Deep toggle) so the chips, model/effort, mode, and the Scan gate are interactive in
+ *  the story/test — the form state is owned here exactly as the HarnessView hook owns it
+ *  in the app. */
 function ConfiguredRunControls({
   isStarting,
   onScan,
@@ -17,7 +15,7 @@ function ConfiguredRunControls({
   isStarting: boolean;
   onScan: () => void;
 }) {
-  const config = useRunConfig<ConventionCategory>(ALL_CATEGORIES, false);
+  const config = useRunConfig(false);
   return <RunControls config={config} isStarting={isStarting} onScan={onScan} />;
 }
 
