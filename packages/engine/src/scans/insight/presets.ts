@@ -104,10 +104,15 @@ export function analysisPreset(category: FindingCategory): AnalysisPreset {
  * Build the JSON output contract appended to every pass. Describes the exact
  * shape the engine will parse (it forces `category`, assigns ids, and grounds
  * file refs — so the model need not supply those). `maxFindings` caps the pass.
+ * In deep mode's round ≥ 2 (`newOnly`), the lead line demands NEW findings not
+ * already listed in the round's exclusion block, so each round elicits distinct
+ * issues rather than re-reporting the ones prior rounds already found.
  */
-export function outputContract(maxFindings: number): string {
+export function outputContract(maxFindings: number, newOnly = false): string {
   return [
-    `Return AT MOST ${maxFindings} findings, highest-impact first.`,
+    newOnly
+      ? `Return AT MOST ${maxFindings} **NEW** findings **not already listed above**, highest-impact first.`
+      : `Return AT MOST ${maxFindings} findings, highest-impact first.`,
     'Output ONLY a JSON array (no prose, no markdown fences) where each element is:',
     '{',
     '  "severity": "info|low|medium|high|critical",',

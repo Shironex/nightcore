@@ -14,6 +14,7 @@ import {
 } from './harness.js';
 import {
   AnalysisCategoryCompletedEvent,
+  AnalysisCategoryRoundCompletedEvent,
   AnalysisCategoryStartedEvent,
   AnalysisCompletedEvent,
   AnalysisFailedEvent,
@@ -480,6 +481,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   AnalysisStartedEvent,
   AnalysisCategoryStartedEvent,
   AnalysisCategoryCompletedEvent,
+  AnalysisCategoryRoundCompletedEvent,
   AnalysisCompletedEvent,
   AnalysisFailedEvent,
   HarnessScanStartedEvent,

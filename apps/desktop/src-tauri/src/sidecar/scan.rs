@@ -461,6 +461,7 @@ mod tests {
             duration_ms: 0,
             usage: InsightUsage::default(),
             findings: Vec::new(),
+            rounds_by_category: std::collections::HashMap::new(),
             error: None,
         }
     }

@@ -35,6 +35,7 @@ import {
   type FinalizeArgs,
   type ItemCompletedArgs,
   RETRY_REMINDER_ARRAY,
+  type RoundCompletedInfo,
   type ScanFailureReason,
   ScanManager,
   type ScanManagerDeps,
@@ -105,6 +106,32 @@ export class AnalysisManager extends ScanManager<
     return buildCategoryPrompt(command, preset, inventory);
   }
 
+  /** Deep mode: round 1 caps at `maxFindingsPerRound`; round ≥ 2 appends the
+   *  exclusion list of `foundSoFar` (titles + locations) and flips the output
+   *  contract to "NEW findings not already listed above". */
+  protected buildRoundPrompt(
+    command: StartAnalysis,
+    preset: AnalysisPreset,
+    _context: Record<string, never>,
+    inventory: string,
+    _round: number,
+    foundSoFar: readonly Finding[],
+  ): string {
+    return buildCategoryPrompt(
+      command,
+      preset,
+      inventory,
+      command.deep?.maxFindingsPerRound ?? MAX_FINDINGS_PER_CATEGORY,
+      foundSoFar,
+    );
+  }
+
+  /** Deep mode: net-new across rounds keys on the SAME `fingerprint` the final
+   *  cross-category `dedupeFindings` collapses on, so the two can never diverge. */
+  protected deepFingerprint(finding: Finding): string {
+    return finding.fingerprint;
+  }
+
   protected parse(
     result: string,
     category: FindingCategory,
@@ -163,6 +190,30 @@ export class AnalysisManager extends ScanManager<
     );
   }
 
+  /** Deep mode: one round of a category finished. Streams the cumulative grounded
+   *  findings + this round's own spend so the Rust reader persists per ROUND (the
+   *  crash-safe unit) and the live UI can show "round N, M new". */
+  protected emitRoundCompleted(
+    command: StartAnalysis,
+    category: FindingCategory,
+    info: RoundCompletedInfo<Finding>,
+  ): void {
+    this.deps.emit({
+      type: 'analysis-category-round-completed',
+      runId: command.runId,
+      category,
+      round: info.round,
+      newFindingsThisRound: info.newFindingsThisRound,
+      findings: info.cumulative,
+      usage: info.outcome.usage,
+      costUsd: info.outcome.costUsd,
+      durationMs: info.elapsedMs,
+    });
+    this.deps.logger?.info(
+      `[insight] category ${category}: round ${info.round} — ${info.newFindingsThisRound} new (${info.cumulative.length} total), ${fmtCost(info.outcome.costUsd)}, ${fmtSecs(info.elapsedMs)}`,
+    );
+  }
+
   protected async finalize(
     args: FinalizeArgs<StartAnalysis, FindingCategory, Finding, Record<string, never>>,
   ): Promise<void> {
@@ -203,11 +254,17 @@ export class AnalysisManager extends ScanManager<
 
 /** The per-run user prompt for a category pass. The deterministic top-level
  *  `inventory` is injected so the pass targets its reads from a known map instead of
- *  re-listing the tree (cuts redundant exploration turns). */
+ *  re-listing the tree (cuts redundant exploration turns). `maxFindings` caps the
+ *  pass (8 single-pass, `maxFindingsPerRound` in deep mode); a non-empty `exclusions`
+ *  (deep mode's round ≥ 2) appends the already-found list and flips the output
+ *  contract to "NEW findings not already listed above". With the defaults the output
+ *  is byte-identical to the classic single-pass prompt. */
 function buildCategoryPrompt(
   command: StartAnalysis,
   preset: AnalysisPreset,
   inventory: string,
+  maxFindings: number = MAX_FINDINGS_PER_CATEGORY,
+  exclusions: readonly Finding[] = [],
 ): string {
   const scopeLine =
     command.scope === 'diff' &&
@@ -218,7 +275,8 @@ function buildCategoryPrompt(
           .join('\n')}`
       : 'Analyze the whole repository. Use the repo map above to target the entry points and the most relevant areas, then drill into where issues are most likely — do not spend turns re-listing the tree.';
 
-  return [
+  const newOnly = exclusions.length > 0;
+  const lines = [
     `You are analyzing the project at: ${command.projectPath}`,
     `Category: ${preset.label}.`,
     '',
@@ -226,7 +284,27 @@ function buildCategoryPrompt(
     inventory,
     '',
     scopeLine,
-    '',
-    outputContract(MAX_FINDINGS_PER_CATEGORY),
+  ];
+  if (newOnly) {
+    lines.push('', exclusionList(exclusions));
+  }
+  lines.push('', outputContract(maxFindings, newOnly));
+  return lines.join('\n');
+}
+
+/** Render the deep-mode exclusion block for round ≥ 2: the titles (+ file:line
+ *  locations, when grounded) of every finding accumulated in earlier rounds, so the
+ *  model is told what NOT to re-report and steers toward NEW, distinct issues. */
+function exclusionList(exclusions: readonly Finding[]): string {
+  const items = exclusions.map((f) => {
+    const loc = f.location;
+    const at = loc
+      ? ` (${loc.file}${loc.startLine !== undefined ? `:${loc.startLine}` : ''})`
+      : '';
+    return `- ${f.title}${at}`;
+  });
+  return [
+    'ALREADY FOUND in earlier rounds — do NOT report these again; find NEW, distinct issues:',
+    ...items,
   ].join('\n');
 }

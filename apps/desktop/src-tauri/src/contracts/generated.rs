@@ -94,6 +94,8 @@ pub enum SurfaceCommand {
         max_turns_per_category: Option<u64>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         max_budget_usd_per_category: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deep: Option<DeepScanConfig>,
     },
     #[serde(rename_all = "camelCase")]
     CancelAnalysis { run_id: String },
@@ -431,6 +433,19 @@ pub enum NightcoreEvent {
         error: Option<String>,
     },
     #[serde(rename_all = "camelCase")]
+    AnalysisCategoryRoundCompleted {
+        run_id: String,
+        category: FindingCategory,
+        round: u64,
+        new_findings_this_round: u64,
+        findings: Vec<Finding>,
+        cost_usd: f64,
+        #[serde(default)]
+        duration_ms: f64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        usage: Option<SessionCompletedUsage>,
+    },
+    #[serde(rename_all = "camelCase")]
     AnalysisCompleted {
         run_id: String,
         findings: Vec<Finding>,
@@ -742,6 +757,17 @@ pub enum CoverageStatus {
     Enforced,
     DocumentedOnly,
     Unenforced,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepScanConfig {
+    #[serde(default)]
+    pub max_rounds_per_category: u64,
+    #[serde(default)]
+    pub convergence_empty_rounds: u64,
+    #[serde(default)]
+    pub max_findings_per_round: u64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

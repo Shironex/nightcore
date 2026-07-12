@@ -53,6 +53,31 @@ export const WireImageSchema = z.object({
 });
 export type WireImage = z.infer<typeof WireImageSchema>;
 
+/**
+ * Opt-in DEEP scan mode (issue #294). When present on a scan command the engine runs
+ * each item (category / lens) as a MULTI-ROUND loop instead of a single pass: each
+ * round is told the issues already found and asked for NEW distinct ones,
+ * accumulating + de-duplicating until CONVERGENCE — `convergenceEmptyRounds` (K)
+ * consecutive rounds that add ZERO net-new (post-dedup) findings — or the
+ * `maxRoundsPerCategory` non-convergence backstop is hit. Absent ⇒ the classic
+ * single-pass behavior (one pass + one corrective retry), byte-identical to pre-deep.
+ *
+ * This is NOT a cost cap: the user steers spend by watching the live running total
+ * and cancelling. `maxRoundsPerCategory` exists ONLY to guarantee termination for a
+ * model that emits one junk net-new finding per round forever — not to bound cost.
+ * Modeled on the shared scan command surface (`BaseScanCommand.deep` on the engine
+ * side) so the round loop reads it generically, though only `start-analysis` sets it.
+ */
+export const DeepScanConfigSchema = z.object({
+  /** Non-convergence safety backstop: hard cap on rounds per item. NOT a cost cap. */
+  maxRoundsPerCategory: z.number().int().positive().default(15),
+  /** Convergence rule K: stop after this many consecutive rounds with zero net-new. */
+  convergenceEmptyRounds: z.number().int().positive().default(2),
+  /** Per-round findings cap (vs the single-pass 8); deep volume = rounds × this. */
+  maxFindingsPerRound: z.number().int().positive().default(20),
+});
+export type DeepScanConfig = z.infer<typeof DeepScanConfigSchema>;
+
 /** Start a new session. The engine assigns the monotonic id and echoes it back
  *  via a `session-started` event. */
 export const StartSessionCommand = z.object({
@@ -218,6 +243,10 @@ export const StartAnalysisCommand = z.object({
   maxTurnsPerCategory: z.number().int().positive().optional(),
   /** Per-category spend ceiling in USD (SDK `Options.maxBudgetUsd`). */
   maxBudgetUsdPerCategory: z.number().positive().optional(),
+  /** Opt-in DEEP mode (issue #294): run each category as a multi-round,
+   *  exclusion-list convergence loop instead of a single pass. Absent ⇒ classic
+   *  single-pass Insight (byte-identical to pre-deep). See {@link DeepScanConfigSchema}. */
+  deep: DeepScanConfigSchema.optional(),
 });
 
 /** Cancel an in-flight Insight analysis run (aborts every category pass). */

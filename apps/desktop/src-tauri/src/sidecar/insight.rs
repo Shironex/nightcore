@@ -85,6 +85,7 @@ pub async fn start_analysis(
         duration_ms: 0,
         usage: InsightUsage::default(),
         findings: Vec::new(),
+        rounds_by_category: std::collections::HashMap::new(),
         error: None,
     };
     // Single-flight: reject a second concurrent analysis for this project (a stray
@@ -119,6 +120,9 @@ pub async fn start_analysis(
         max_concurrency: None,
         max_turns_per_category: None,
         max_budget_usd_per_category: None,
+        // Deep mode is not yet driven from the Rust core (no web toggle in slice 1);
+        // the round-loop backbone is exercised via the contract field + engine tests.
+        deep: None,
     };
     dispatch_scan_command(&app, "insight", &run_id, command, |msg| {
         insight_store
@@ -357,6 +361,45 @@ pub(crate) async fn handle_analysis_event(app: &AppHandle, event_type: &str, eve
                 token("outputTokens"),
             );
             tracing::info!(target: "nightcore", run_id, category, findings = count, cost_usd = cost, "insight category completed");
+        }
+        // Deep mode (issue #294): one ROUND of a category finished. Persist the round's
+        // cumulative grounded findings + its OWN (per-round) spend via the SAME
+        // running-only `accumulate_findings` path `analysis-category-completed` uses, so
+        // a multi-hour category that crashes keeps every prior round's paid work; also
+        // record the per-category round count for the live "round N" indicator. Both are
+        // no-ops once the run leaves `running` (the terminal event is authoritative).
+        "analysis-category-round-completed" => {
+            let category = event.get("category").and_then(Value::as_str).unwrap_or("");
+            let round = event.get("round").and_then(Value::as_u64).unwrap_or(0);
+            let new_this_round = event
+                .get("newFindingsThisRound")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            let cost = event.get("costUsd").and_then(Value::as_f64).unwrap_or(0.0);
+            let usage = event.get("usage");
+            let token = |key: &str| {
+                usage
+                    .and_then(|u| u.get(key))
+                    .and_then(Value::as_u64)
+                    .unwrap_or(0)
+            };
+            let parsed: Vec<StoredFinding> = event
+                .get("findings")
+                .and_then(Value::as_array)
+                .map(|arr| arr.iter().filter_map(StoredFinding::from_wire).collect())
+                .unwrap_or_default();
+            let count = parsed.len();
+            let dismissed = insight_store.dismissed_fingerprints(Some(run_id));
+            let _ = insight_store.accumulate_findings(
+                run_id,
+                parsed,
+                &dismissed,
+                cost,
+                token("inputTokens"),
+                token("outputTokens"),
+            );
+            insight_store.record_category_round(run_id, category, round as u32);
+            tracing::info!(target: "nightcore", run_id, category, round, new_findings = new_this_round, cumulative = count, cost_usd = cost, "insight category round completed");
         }
         _ => {}
     }
