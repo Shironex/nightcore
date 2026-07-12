@@ -59,7 +59,7 @@ export function NewProjectDialog({
       label="New project"
       onClose={close}
       overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-      panelClassName="flex max-h-[calc(100vh-3rem)] w-[520px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+      panelClassName="flex max-h-[calc(100vh-3rem)] w-[520px] max-w-full flex-col"
     >
         <div className="flex items-center gap-3 border-b border-border px-5 py-4">
           <IconTile size="sm">

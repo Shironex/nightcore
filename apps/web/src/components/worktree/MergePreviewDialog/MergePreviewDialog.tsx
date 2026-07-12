@@ -59,7 +59,7 @@ export function MergePreviewDialog({
     <Modal
       open={open}
       label="Merge preview"
-      panelClassName="w-full max-w-md overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl"
+      panelClassName="w-full max-w-md"
       onClose={onClose}
       onEnter={mergeDisabled ? undefined : onMerge}
     >

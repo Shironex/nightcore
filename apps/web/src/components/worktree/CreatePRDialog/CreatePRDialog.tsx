@@ -39,7 +39,7 @@ export function CreatePRDialog({ open, task, onCreate, onClose }: CreatePRDialog
     <Modal
       open={open && shownTask !== null}
       label="Create pull request"
-      panelClassName="w-full max-w-md overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl"
+      panelClassName="w-full max-w-md"
       onClose={v.requestClose}
     >
       <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-5">

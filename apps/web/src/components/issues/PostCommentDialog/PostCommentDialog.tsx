@@ -17,9 +17,6 @@ import {
 import { usePostConfirm } from './PostCommentDialog.hooks';
 import type { PostCommentDialogProps } from './PostCommentDialog.types';
 
-const PANEL =
-  'w-full max-w-lg overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl';
-
 export function PostCommentDialog({
   open,
   body,
@@ -40,7 +37,7 @@ export function PostCommentDialog({
       role="dialog"
       label="Preview comment before posting"
       initialFocus="[data-cancel]"
-      panelClassName={PANEL}
+      panelClassName="w-full max-w-lg"
       onClose={onClose}
     >
       <div className="flex flex-col gap-2 px-5 pb-3 pt-5">

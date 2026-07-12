@@ -70,7 +70,7 @@ export function NewTabPicker({
     <Modal
       open={open}
       label="Open a terminal"
-      panelClassName="w-full max-w-md overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl"
+      panelClassName="w-full max-w-md"
       onClose={onClose}
     >
       <div className="flex flex-col gap-1 px-5 pb-3 pt-5">

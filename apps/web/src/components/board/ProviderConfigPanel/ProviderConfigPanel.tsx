@@ -54,7 +54,8 @@ export function ProviderConfigPanel({
       label="Provider configuration"
       onClose={onClose}
       overlayClassName="fixed inset-0 z-20 flex justify-end bg-black/60 backdrop-blur-sm"
-      panelClassName="flex h-full w-full max-w-md flex-col overflow-hidden border-l border-border bg-popover shadow-2xl"
+      variant="sheet"
+      panelClassName="max-w-md"
       panelVariants={slideIn}
     >
       <div className="flex items-center gap-3 border-b border-border px-5 py-4">

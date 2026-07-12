@@ -24,6 +24,45 @@ function renderModal(ui: React.ReactElement) {
   return render(<MotionProvider>{ui}</MotionProvider>);
 }
 
+test('dialog variant (default) renders the canonical 14px card chrome', async () => {
+  const screen = renderModal(
+    <Modal open label="Dialog chrome" onClose={vi.fn()}>
+      <Body />
+    </Modal>,
+  );
+  const panel = screen.getByRole('dialog', { name: 'Dialog chrome' }).element();
+  // Canonical radius + a full (four-sided) border — never a side-sheet border.
+  expect(panel.className).toContain('rounded-[14px]');
+  expect(panel.className).toContain('border-border');
+  expect(panel.className).not.toContain('border-l');
+});
+
+test('dialog variant composes the caller width onto the variant chrome', async () => {
+  const screen = renderModal(
+    <Modal open label="Sized dialog" panelClassName="w-[480px] max-w-full" onClose={vi.fn()}>
+      <Body />
+    </Modal>,
+  );
+  const panel = screen.getByRole('dialog', { name: 'Sized dialog' }).element();
+  // The caller contributes only width; the chrome still comes from the variant.
+  expect(panel.className).toContain('w-[480px]');
+  expect(panel.className).toContain('rounded-[14px]');
+});
+
+test('sheet variant renders the full-height side-sheet chrome with no radius', async () => {
+  const screen = renderModal(
+    <Modal open label="Sheet chrome" variant="sheet" panelClassName="max-w-md" onClose={vi.fn()}>
+      <Body />
+    </Modal>,
+  );
+  const panel = screen.getByRole('dialog', { name: 'Sheet chrome' }).element();
+  // Left border + full-height column layout, and crucially NO corner radius.
+  expect(panel.className).toContain('border-l');
+  expect(panel.className).toContain('h-full');
+  expect(panel.className).toContain('max-w-md');
+  expect(panel.className).not.toContain('rounded-');
+});
+
 test('Escape routes to onClose', async () => {
   const onClose = vi.fn();
   renderModal(

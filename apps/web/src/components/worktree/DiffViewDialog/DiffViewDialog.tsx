@@ -45,7 +45,7 @@ export function DiffViewDialog({
       label={title}
       onClose={onClose}
       overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-      panelClassName="flex max-h-[80vh] w-[560px] max-w-full flex-col overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+      panelClassName="flex max-h-[80vh] w-[560px] max-w-full flex-col"
     >
       <header className="flex items-center gap-3 border-b border-border px-5 py-4">
         <IconTile size="sm">

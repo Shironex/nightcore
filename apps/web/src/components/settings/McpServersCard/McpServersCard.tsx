@@ -84,7 +84,7 @@ export function McpServersCard({ servers, onChange }: McpServersCardProps) {
         label={shownDraft?.id === null ? 'Add MCP server' : 'Edit MCP server'}
         onClose={closeEditor}
         overlayClassName="fixed inset-0 z-[70] flex items-center justify-center bg-black/60 p-6 backdrop-blur-sm"
-        panelClassName="w-[480px] max-w-full overflow-hidden rounded-2xl border border-border bg-popover shadow-2xl"
+        panelClassName="w-[480px] max-w-full"
       >
         {shownDraft !== null && (
           <>

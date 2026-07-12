@@ -37,7 +37,7 @@ export function IssueMapDialog({
     <Modal
       open={open}
       label="Export to GitHub"
-      panelClassName="w-full max-w-lg overflow-hidden rounded-[14px] border border-border bg-popover shadow-2xl"
+      panelClassName="w-full max-w-lg"
       onClose={v.requestClose}
     >
       <div className="flex items-start justify-between gap-3 px-5 pb-3 pt-5">

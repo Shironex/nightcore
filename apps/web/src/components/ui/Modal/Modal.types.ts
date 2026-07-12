@@ -12,13 +12,20 @@ export interface ModalProps {
   label: string;
   /** `dialog` (default) or `alertdialog` (destructive confirmations). */
   role?: 'dialog' | 'alertdialog';
+  /** Panel chrome preset. `dialog` (default) = a centered card with the canonical
+   *  14px radius; `sheet` = a full-height edge sheet with a left border and no
+   *  radius. The variant OWNS the shared chrome (`border`/`bg-popover`/`shadow`),
+   *  so call sites pass only their own width/height via {@link panelClassName}. */
+  variant?: 'dialog' | 'sheet';
   /** CSS selector for the element to focus on open. Defaults to the first
    *  focusable descendant. */
   initialFocus?: string;
   /** Classes for the centered overlay (positioning + backdrop). A sensible
    *  centered default is used when omitted. */
   overlayClassName?: string;
-  /** Classes for the dialog panel (width, chrome). */
+  /** Extra panel classes — width/height/layout ONLY (e.g. `w-[480px]`,
+   *  `max-w-lg`, `flex max-h-[80vh] flex-col`). The chrome (border, background,
+   *  shadow, radius) comes from {@link variant}; don't repeat it here. */
   panelClassName?: string;
   /** Motion variants for the panel's enter/exit. Defaults to `scaleFade` (centered
    *  dialogs); pass `slideIn` for an edge sheet. Must be transform + opacity only. */

@@ -33,6 +33,28 @@ export const Default: Story = {
   },
 };
 
+/** The `sheet` variant: a full-height edge sheet (left border, no radius) instead
+ *  of a centered card. The overlay pins it to the right; the caller passes only its
+ *  width via `panelClassName` while the variant owns the sheet chrome. */
+export const Sheet: Story = {
+  args: {
+    variant: 'sheet',
+    overlayClassName:
+      'fixed inset-0 z-30 flex justify-end bg-black/60 backdrop-blur-sm',
+    panelClassName: 'max-w-md',
+    children: (
+      <div className="flex flex-col gap-3 p-5">
+        <h2 className="text-base font-semibold text-foreground">Side sheet</h2>
+        <input aria-label="First field" placeholder="First field" className="rounded border px-2 py-1" />
+        <div className="flex justify-end gap-2">
+          <Button variant="ghost">Cancel</Button>
+          <Button data-confirm>Save</Button>
+        </div>
+      </div>
+    ),
+  },
+};
+
 /** Play test: Escape routes to onClose. */
 export const EscapeCloses: Story = {
   args: { ...Default.args },
