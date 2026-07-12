@@ -2,7 +2,7 @@
 import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
-import { afterAll, beforeAll, describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
 
 import type { Finding } from '@nightcore/contracts';
 
@@ -199,6 +199,59 @@ describe('groundFindings', () => {
       dir,
     );
     expect(out).toHaveLength(0);
+  });
+
+  test('does not read the file when the location has no line numbers', () => {
+    // The core perf fix: a located-but-line-less finding needs no clamp, so the
+    // whole-file read must be skipped — only the (stat-based) existence check runs.
+    const spy = spyOn(fs, 'readFileSync');
+    try {
+      const out = groundFindings(
+        [finding({ location: { file: 'src/real.ts' } })],
+        dir,
+      );
+      expect(out).toHaveLength(1);
+      expect(out[0]?.location?.file).toBe('src/real.ts');
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('reads a referenced file at most once across findings (memoized)', () => {
+    const spy = spyOn(fs, 'readFileSync');
+    try {
+      groundFindings(
+        [
+          finding({ location: { file: 'src/real.ts', startLine: 2 } }),
+          finding({ location: { file: 'src/real.ts', startLine: 999 } }),
+        ],
+        dir,
+      );
+      // Same file referenced by two findings ⇒ one read, then cache hits.
+      expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  test('stats a shared path once across findings (memoized existence)', () => {
+    const spy = spyOn(fs, 'statSync');
+    try {
+      groundFindings(
+        [
+          finding({ affectedFiles: ['src/real.ts'] }),
+          finding({ location: { file: 'src/real.ts' } }),
+        ],
+        dir,
+      );
+      const realStats = spy.mock.calls.filter(
+        (c) => typeof c[0] === 'string' && (c[0] as string).endsWith('real.ts'),
+      );
+      expect(realStats).toHaveLength(1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
 
