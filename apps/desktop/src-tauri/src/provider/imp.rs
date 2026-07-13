@@ -200,17 +200,22 @@ impl Provider for SidecarProvider {
     }
 
     async fn stream_input(&self, session_id: u64, text: String) -> Result<(), String> {
-        // Fire-and-forget, exactly like `interrupt`: the `send-input` SurfaceCommand
-        // is routed to the session by `sessionId`, and the runner enqueues `text` as
-        // the next user turn. No pending-launch FIFO push (this is not a session
-        // start) and no correlated reply. `text` is user content — never logged.
+        // The `send-input` SurfaceCommand is routed to the session by `sessionId`,
+        // and the runner enqueues `text` as the next user turn. No pending-launch
+        // FIFO push (this is not a session start) and no correlated reply. `text`
+        // is user content — never logged.
+        //
+        // Unlike `interrupt`/`set_autonomy`/`decide_permission` (best-effort
+        // controls with no user-facing "it didn't go through" moment), this is the
+        // sanctioned human→running-agent chat path (`send_input`, its only
+        // caller): silently swallowing the write when the sidecar stdin is down
+        // would leave the user believing their message was sent. Surface it as an
+        // `Err` instead so `send_input` can bubble it to the webview toast.
         let command = serde_json::to_value(SurfaceCommand::SendInput { session_id, text })
             .map_err(|e| e.to_string())?;
         let mut guard = self.stdin.lock().await;
-        if let Some(stdin) = guard.as_mut() {
-            Self::write_line(stdin, &command).await?;
-        }
-        Ok(())
+        let stdin = guard.as_mut().ok_or("sidecar stdin unavailable")?;
+        Self::write_line(stdin, &command).await
     }
 
     async fn set_autonomy(&self, session_id: u64, autonomy: AutonomyLevel) -> Result<(), String> {

@@ -69,8 +69,12 @@ pub trait Provider: Send + Sync {
     /// Stream a user message into a LIVE run by session id — the sanctioned
     /// human→running-agent chat path (`send-input`). Writes a `send-input`
     /// SurfaceCommand; the engine's session runner enqueues `text` as the next user
-    /// turn. Fire-and-forget like [`Provider::interrupt`] (no correlated reply). The
-    /// `text` is user content — never logged.
+    /// turn. No correlated reply (like [`Provider::interrupt`]), but UNLIKE
+    /// `interrupt`/`set_autonomy`/`decide_permission` this returns `Err` when the
+    /// local write itself can't happen (no sidecar stdin handle) rather than
+    /// dropping the message silently — its only caller, `send_input`, surfaces that
+    /// to the user as a failed-to-send toast. The `text` is user content — never
+    /// logged.
     async fn stream_input(&self, session_id: u64, text: String) -> Result<(), String>;
 
     /// Change a live run's autonomy ceiling. Carries the neutral [`AutonomyLevel`];
