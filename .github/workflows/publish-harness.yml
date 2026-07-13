@@ -89,7 +89,10 @@ jobs:
           fi
           echo "Publishing @noctcore/harness@${PKG_VERSION}"
       - run: bun run --filter @noctcore/harness build
-      - run: bun run test:node
+      # Test ONLY the package being published — it is zero-dep + self-contained, so it
+      # needs no workspace-wide `tsc -b` barrel build. (The full monorepo `test:node`
+      # suite is the merge-gate's job and requires every @nightcore/* dist barrel built.)
+      - run: bun run --filter @noctcore/harness test
       - name: Publish to npm (public, with provenance)
         working-directory: packages/harness
         run: npm publish --provenance --access public
