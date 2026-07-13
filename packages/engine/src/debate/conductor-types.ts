@@ -15,6 +15,7 @@
  * production seam is `session-seat-driver.ts`.
  */
 import type {
+  CouncilConvergeDecision,
   CouncilSeat,
   DebateSeatRole,
   DebateStage,
@@ -152,3 +153,33 @@ export interface CouncilRunResult {
 
 /** The seats a run drives, in preset order. */
 export type CouncilSeatList = readonly CouncilSeat[];
+
+/**
+ * The human judge's Converge verdict the Conductor resolves a parked run with (issue
+ * #353, safety #7). P1 Converge is HUMAN-only. `kind` is the verdict; `seatId` names
+ * the adopted seat for an `accept` (must be one of the parked positions); `note` is the
+ * ruling for a `judge` (or optional reason for accept/reject). Mirrors the
+ * `resolve-council-converge` command contract.
+ */
+export interface ConvergeDecision {
+  readonly kind: CouncilConvergeDecision;
+  readonly seatId?: string;
+  readonly note?: string;
+}
+
+/**
+ * The outcome of resolving a parked Converge decision. `ok` is false (with a `reason`)
+ * when the run has no parked decision (unknown / already resolved) or the verdict is
+ * malformed for its kind (an `accept` without a valid seat, a `judge` without a
+ * ruling); on success the recorded verdict `entry` and the closing `transcript` are
+ * returned so the resolution is provably auditable (safety #7).
+ */
+export interface ConvergeResolution {
+  readonly ok: boolean;
+  /** Why the resolution was refused, when `ok` is false. */
+  readonly reason?: string;
+  /** The append-only verdict entry the Conductor recorded, when `ok` is true. */
+  readonly entry?: DebateTranscriptEntry;
+  /** The run's full closing transcript (verdict included), when `ok` is true. */
+  readonly transcript?: readonly DebateTranscriptEntry[];
+}

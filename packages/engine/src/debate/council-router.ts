@@ -27,6 +27,7 @@ import { SessionSeatDriver } from './session-seat-driver.js';
 const COUNCIL_COMMAND_TYPES = [
   'start-council',
   'kill-council',
+  'resolve-council-converge',
 ] as const satisfies readonly SurfaceCommand['type'][];
 
 type CouncilCommandType = (typeof COUNCIL_COMMAND_TYPES)[number];
@@ -97,6 +98,17 @@ export class CouncilRouter {
         ...(command.projectPath !== undefined
           ? { cwd: command.projectPath }
           : {}),
+      });
+      return;
+    }
+    if (command.type === 'resolve-council-converge') {
+      // The human judge's terminal Converge verdict (issue #353, safety #7). The
+      // Conductor records it onto the append-only transcript, which streams the verdict
+      // back over `nc:debate` — the surface's confirmation that the run closed.
+      this.council.resolveConverge(command.runId, {
+        kind: command.decision,
+        ...(command.seatId !== undefined ? { seatId: command.seatId } : {}),
+        ...(command.note !== undefined ? { note: command.note } : {}),
       });
       return;
     }

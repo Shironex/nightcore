@@ -97,7 +97,19 @@ export interface ConductorBus {
   deliverBetweenSeats(delivery: InterSeatDelivery): DeliveryOutcome;
   /** Record a conductor/system annotation (a stage transition, a moderation note). */
   note(stage: DebateStage, content: string): DebateTranscriptEntry;
+  /** Record the HUMAN judge's terminal Converge verdict (issue #353, safety #7 — the
+   *  human is the terminal authority). Recorded as a `human`-role `note` in the
+   *  `converge` stage: the conductor still owns the write (the human's decision flows
+   *  THROUGH the conductor, never a direct store write from the surface — safety #1).
+   *  The verdict closes the run; the `content` is the canonical, auditable summary the
+   *  Conductor renders from the human's `accept`/`reject`/`judge` choice. */
+  recordVerdict(content: string): DebateTranscriptEntry;
 }
+
+/** The seat id the human judge's Converge verdict is recorded under (issue #353). The
+ *  author of a verdict is the human — never a debating seat — so it is a fixed,
+ *  system-minted id, mirroring the conductor's own reserved id. */
+export const HUMAN_JUDGE_SEAT_ID = 'human';
 
 /**
  * The debate bus. Owns the append-only transcript store PRIVATELY and mints the two
@@ -170,6 +182,15 @@ export class DebateBus {
           stage,
           seatId: conductorId,
           role: 'conductor',
+          kind: 'note',
+          content,
+        });
+      },
+      recordVerdict(content) {
+        return append({
+          stage: 'converge',
+          seatId: HUMAN_JUDGE_SEAT_ID,
+          role: 'human',
           kind: 'note',
           content,
         });

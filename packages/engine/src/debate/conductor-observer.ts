@@ -39,5 +39,10 @@ export function observeBus(
       onEntry(entry);
       return entry;
     },
+    recordVerdict(content) {
+      const entry = bus.recordVerdict(content);
+      onEntry(entry);
+      return entry;
+    },
   };
 }

@@ -20,37 +20,49 @@ async function waitFor(cond: () => boolean, tries = 100): Promise<void> {
   }
 }
 
+const isDebateEntry = (e: NightcoreEvent): e is DebateEntryEvent =>
+  e.type === 'debate-entry';
+
+/** A router wired to fake seat sessions: each seat turn completes on the next macrotask
+ *  with stable content, so the run drives Frame → Propose → Debate → Converge and the
+ *  emit seam forwards every appended entry into `emitted`. */
+function setup(): {
+  router: CouncilRouter;
+  emitted: NightcoreEvent[];
+} {
+  let nextSessionId = 1;
+  const listeners = new Set<(event: NightcoreEvent) => void>();
+  const emitted: NightcoreEvent[] = [];
+
+  const router = new CouncilRouter({
+    startSession: () => {
+      const sessionId = nextSessionId++;
+      setTimeout(() => {
+        const completed = {
+          type: 'session-completed',
+          sessionId,
+          result: `seat-${sessionId} position`,
+          numTurns: 1,
+          durationMs: 0,
+        } as unknown as NightcoreEvent;
+        for (const listener of [...listeners]) listener(completed);
+      }, 0);
+      return sessionId;
+    },
+    subscribe: (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    emit: (event) => emitted.push(event),
+    logger: undefined,
+  });
+
+  return { router, emitted };
+}
+
 describe('CouncilRouter — the nc:debate emit seam', () => {
   test('a start-council run round-trips every appended entry to a debate-entry event', async () => {
-    let nextSessionId = 1;
-    const listeners = new Set<(event: NightcoreEvent) => void>();
-    const emitted: NightcoreEvent[] = [];
-
-    const router = new CouncilRouter({
-      // Each seat turn spawns a one-shot session; complete it on the next macrotask
-      // with stable content so the run drives Frame → Propose → Debate → Converge and
-      // appends transcript entries the emit seam forwards.
-      startSession: () => {
-        const sessionId = nextSessionId++;
-        setTimeout(() => {
-          const completed = {
-            type: 'session-completed',
-            sessionId,
-            result: `seat-${sessionId} position`,
-            numTurns: 1,
-            durationMs: 0,
-          } as unknown as NightcoreEvent;
-          for (const listener of [...listeners]) listener(completed);
-        }, 0);
-        return sessionId;
-      },
-      subscribe: (listener) => {
-        listeners.add(listener);
-        return () => listeners.delete(listener);
-      },
-      emit: (event) => emitted.push(event),
-      logger: undefined,
-    });
+    const { router, emitted } = setup();
 
     const command: SurfaceCommand = {
       type: 'start-council',
@@ -61,8 +73,6 @@ describe('CouncilRouter — the nc:debate emit seam', () => {
     expect(router.handles(command)).toBe(true);
     router.dispatch(command);
 
-    const isDebateEntry = (e: NightcoreEvent): e is DebateEntryEvent =>
-      e.type === 'debate-entry';
     // The run parks a Converge decision for the human judge — its converge note is the
     // last thing recorded, so waiting for it means the whole transcript has streamed.
     await waitFor(() =>
@@ -87,13 +97,62 @@ describe('CouncilRouter — the nc:debate emit seam', () => {
     ).toBe(true);
   });
 
-  test('kill-council for an unknown run is a no-op (never throws)', () => {
-    const router = new CouncilRouter({
-      startSession: () => 1,
-      subscribe: () => () => {},
-      emit: () => {},
-      logger: undefined,
+  test('resolve-council-converge routes the human verdict through the Conductor onto the stream (safety #7)', async () => {
+    const { router, emitted } = setup();
+
+    router.dispatch({
+      type: 'start-council',
+      runId: 'council-run-2',
+      presetId: 'research',
+      objective: 'Pick a strategy.',
     });
+
+    // Wait for the CONDUCTOR park note — the run is now awaiting the human judge.
+    await waitFor(() =>
+      emitted
+        .filter(isDebateEntry)
+        .some(
+          (e) =>
+            e.entry.stage === 'converge' &&
+            e.entry.kind === 'note' &&
+            e.entry.role === 'conductor',
+        ),
+    );
+
+    // The human rules — the verdict must flow command → router → CouncilManager →
+    // Conductor (the sole bus writer) → append-only transcript → the nc:debate stream.
+    const resolve: SurfaceCommand = {
+      type: 'resolve-council-converge',
+      runId: 'council-run-2',
+      decision: 'reject',
+      note: 'None is safe until the backfill is rehearsed.',
+    };
+    expect(router.handles(resolve)).toBe(true);
+    router.dispatch(resolve);
+
+    await waitFor(() =>
+      emitted
+        .filter(isDebateEntry)
+        .some((e) => e.entry.role === 'human' && e.entry.stage === 'converge'),
+    );
+
+    const verdict = emitted
+      .filter(isDebateEntry)
+      .map((e) => e.entry)
+      .find((entry) => entry.role === 'human' && entry.stage === 'converge');
+    // The verdict landed on the append-only transcript as a human-role converge note.
+    expect(verdict).toBeDefined();
+    expect(verdict?.kind).toBe('note');
+    expect(verdict?.content).toContain('REJECT');
+    // It rides the same run-tagged debate event every entry does.
+    const verdictEvent = emitted
+      .filter(isDebateEntry)
+      .find((e) => e.entry.role === 'human');
+    expect(verdictEvent?.runId).toBe('council-run-2');
+  });
+
+  test('kill-council for an unknown run is a no-op (never throws)', () => {
+    const { router } = setup();
     expect(() =>
       router.dispatch({ type: 'kill-council', runId: 'nope' }),
     ).not.toThrow();

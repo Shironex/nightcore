@@ -35,6 +35,8 @@ export { Conductor } from './conductor.js';
 export { RunGovernor } from './conductor-budget.js';
 export type {
   BudgetHaltCause,
+  ConvergeDecision,
+  ConvergeResolution,
   CouncilRunResult,
   CouncilRunStatus,
   CouncilRunUsage,
