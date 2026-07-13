@@ -9,7 +9,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 ## Hard import boundaries
 - The Claude Agent SDK (`@anthropic-ai/claude-agent-sdk`) may ONLY be a dependency of `@nightcore/engine`. Its **runtime** API (`query()` and the session-store functions) is confined to `packages/engine/src/session/sdk-adapter.ts` — enforced by lint (`@typescript-eslint/no-restricted-imports` with `allowTypeImports`). Other engine modules may `import type` SDK shapes (e.g. `policy/permission-layer.ts`, `policy/question-layer.ts`, `policy/hook-bus.ts`) but never a runtime value. Every surface and capability package reaches the model through the `@nightcore/engine` façade. If a new package needs the model, route it through the engine — do not add an SDK dependency.
 - Library packages below the engine (`contracts`, `shared`, `storage`, `config`, `session-fold`) MUST NEVER import `@nightcore/engine`. The engine pulls capabilities in (dependency inversion), never the reverse; any future `packages/skills` capability tier is bound by the same rule.
-- Cross-package imports use the package barrel `@nightcore/<pkg>` ONLY — never a deep subpath `@nightcore/<pkg>/...` into internals (enforced by `nightcore/no-deep-package-imports`). If a deep entry is truly needed, add an explicit `exports` subpath to that package.
+- Cross-package imports use the package barrel `@nightcore/<pkg>` ONLY — never a deep subpath `@nightcore/<pkg>/...` into internals (enforced by `noctcore-monorepo/no-deep-package-imports`). If a deep entry is truly needed, add an explicit `exports` subpath to that package.
 - A package may only import workspace siblings it declares as `workspace:*` deps, and `tsconfig` `references` must mirror those edges. Add both in the same change.
 
 ## Contracts & codegen — regenerate, never hand-edit
@@ -18,7 +18,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 - Persisted/wire structs are serde-additive: every new field is `Option` (Rust) / optional (zod) with a `None`/absent default in its own additive block, plus a field-absent pinning test. Never add a breaking required field.
 
 ## Naming
-- Exported zod schema = PascalCase const suffixed `Schema`, paired with `export type Foo = z.infer<typeof FooSchema>` — enforced by `nightcore/zod-schema-naming` (`error` on `packages/contracts/src/**`). Discriminated-union *member* schemas intentionally use role suffixes `Event`/`Command`/`Query`, not `Schema`; the rule carves them out (their naming contract is `nightcore/wire-message-naming`).
+- Exported zod schema = PascalCase const suffixed `Schema`, paired with `export type Foo = z.infer<typeof FooSchema>` — enforced by `noctcore-contracts/zod-schema-naming` (`error` on `packages/contracts/src/**`). Discriminated-union *member* schemas intentionally use role suffixes `Event`/`Command`/`Query`, not `Schema`; the rule carves them out (their naming contract is `noctcore-contracts/wire-message-naming`).
 - Wire field names are camelCase on BOTH sides; Rust structs serialized to the contract carry `#[serde(rename_all = "camelCase")]`.
 - Message schemas: `<Noun><PastVerb>Event` / `<Verb><Noun>Command` / `<Verb><Noun>Query`; the wire `type` discriminant is the const name minus its role suffix, kebab-cased.
 - Numeric Nightcore session id is `sessionId` (number); the SDK UUID is `sdkSessionId` (string). Never reuse one name for the other.
@@ -40,7 +40,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 
 These guardrails are mechanical — `bun run lint` runs the ESLint plugin then `tools/lint-meta`. Severity is **error or off, never warn** (enforced by `no-warn-severity`).
 
-- `nightcore/wire-message-naming` (ESLint, error on `packages/contracts/src/**`): a const ending `Event`/`Command`/`Query` whose zod object declares a `type: z.literal(...)` MUST set that literal to `kebab-case(constName minus its role suffix)` — e.g. `TaskCompletedEvent` → `'task-completed'`, `RunTaskCommand` → `'run-task'`.
+- `noctcore-contracts/wire-message-naming` (ESLint, error on `packages/contracts/src/**`): a const ending `Event`/`Command`/`Query` whose zod object declares a `type: z.literal(...)` MUST set that literal to `kebab-case(constName minus its role suffix)` — e.g. `TaskCompletedEvent` → `'task-completed'`, `RunTaskCommand` → `'run-task'`.
 - `package-shape` (lint-meta): every workspace is named `@nightcore/<dir>`; library packages expose `src/index.ts` and point `main`/`module`/`types`/`exports` at `./dist/`.
 - `layer-rank` (lint-meta): the spine `contracts → shared → storage → engine → surfaces` is enforced — a module may import only strictly-lower-ranked `@nightcore` packages; upward/sideways imports fail CI. (The rule also reserves a co-tier `skills` rank next to `storage`, currently unused.)
 - `workspace-graph-parity` (lint-meta): every imported `@nightcore/*` must be a declared `workspace:*` dep, and `tsconfig` `references` must mirror those deps.
