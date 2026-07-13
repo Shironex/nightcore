@@ -1,5 +1,4 @@
 {
-  "packages/engine/src/policy/harness-policy.ts": 578,
   "packages/engine/src/policy/tool-deny-policy.ts": 641,
   "packages/engine/src/providers/claude/session-options.ts": 519,
   "packages/engine/src/providers/claude/session-runner.ts": 717,
