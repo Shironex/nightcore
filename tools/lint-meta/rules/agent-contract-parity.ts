@@ -7,6 +7,12 @@ import type { IMetaRule } from '../types';
  * `nightcore/*` lint rule that is wired (registered in the plugin's recommended
  * config). If a guardrail is dropped from the docs but still enforced, an agent
  * would work from a stale contract — so CI fails until the doc is updated.
+ *
+ * Scope is the LOCAL plugin only: it reads the local `recommended.ts`, so it
+ * governs exactly the `nightcore/*` rules that still live in this repo
+ * (`enforce-context-consumption`). The migrated component-architecture rules now
+ * ship from the published `@noctcore/eslint-plugin-*` packages and are
+ * documented in their own repo, so they are intentionally out of scope here.
  */
 export const agentContractParityRule: IMetaRule = {
   id: 'agent-contract-parity',
