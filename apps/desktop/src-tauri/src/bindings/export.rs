@@ -36,7 +36,9 @@ fn export_all_bindings() {
         AppInfo, BoardAppearance, BoardBackgroundRef, McpServerEntry, McpServerTransport, Settings,
         SettingsOverride, SettingsPatch,
     };
-    use crate::sidecar::{ProviderConfigSnapshotView, SessionInfoView, SessionMessageView};
+    use crate::sidecar::{
+        PortableLockExport, ProviderConfigSnapshotView, SessionInfoView, SessionMessageView,
+    };
     use crate::store::harness_manifest::{
         ArmedCheckFile, HarnessPolicyFile, HarnessPolicyPatch, PolicyDiffBudget,
     };
@@ -224,6 +226,10 @@ fn export_all_bindings() {
         GroupIntro,
         Narrative,
         IssueMapResult,
+        // Portable Structure-Lock export (#134 PR 3): the staging-bundle descriptor the
+        // Enforce-stage "Export portable lock" button renders (staging path + files +
+        // workflow YAML + pinned runner version).
+        PortableLockExport,
         // Provider usage meter (issue #121): the whole-meter snapshot + per-provider
         // row + window/credits/status shapes, plus the popover-only cost estimate.
         // `export_all` on `UsageMeter` also writes its nested `ProviderUsage` /
@@ -348,6 +354,7 @@ mod tests {
             "GroupIntro.ts",
             "IssueMapNarrative.ts",
             "IssueMapResult.ts",
+            "PortableLockExport.ts",
             "UsageMeter.ts",
             "ProviderUsage.ts",
             "RateWindow.ts",

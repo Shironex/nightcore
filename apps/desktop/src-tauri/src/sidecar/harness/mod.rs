@@ -25,6 +25,7 @@ mod apply;
 mod commands;
 mod convert;
 mod events;
+mod export;
 mod lint_wiring;
 
 // Module facade: preserve the historical `crate::sidecar::harness::*` paths after the
@@ -37,6 +38,14 @@ pub use commands::*;
 // phase D); re-exported so `sidecar::convert_harness_finding_to_task` /
 // `sidecar::convert_harness_proposal` resolve for `generate_handler!`.
 pub use convert::*;
+// The portable-lock export writer (#134 PR 3) lives in `export`; its command flows up
+// via `pub use commands::*` (below), and the result TYPE is re-exported here so
+// `bindings/export.rs` can register it as a ts-rs boundary at `sidecar::PortableLockExport`
+// (the `sidecar/mod.rs` facade glob), mirroring how the sidecar view types surface. The
+// re-export is consumed only by the `#[cfg(test)]` ts-rs aggregator (commands.rs imports
+// the type directly from `super::export`), so it reads as unused in the release build.
+#[allow(unused_imports)]
+pub use export::PortableLockExport;
 // `handle_harness_event` is crate-internal (`pub(crate)`), so re-export at crate visibility:
 // a `pub` glob over a non-`pub` item warns "doesn't reexport anything with visibility `pub`".
 pub(crate) use events::*;
