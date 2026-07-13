@@ -45,9 +45,12 @@ jobs:
       - name: Prove the tarball ships dist + bin and nothing leaked
         working-directory: packages/harness
         run: |
+          # dist is already built by the step above; pass --ignore-scripts so the
+          # `prepack` (tsup) does NOT re-run and interleave its build log onto stdout,
+          # which would corrupt the --json output the parser reads.
           echo "--- npm pack --dry-run ---"
-          npm pack --dry-run
-          FILES="$(npm pack --dry-run --json \
+          npm pack --dry-run --ignore-scripts
+          FILES="$(npm pack --dry-run --json --ignore-scripts \
             | node -e "const d=JSON.parse(require('fs').readFileSync(0,'utf8'));console.log(d[0].files.map(f=>f.path).join('\n'))")"
           echo "--- tarball file list ---"
           echo "$FILES"
