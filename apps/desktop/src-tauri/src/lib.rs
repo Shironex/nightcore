@@ -342,6 +342,7 @@ pub fn run() {
             sidecar::apply_harness_artifact,
             sidecar::apply_harness_proposal,
             sidecar::arm_harness_gauntlet_check,
+            sidecar::export_portable_lock,
             sidecar::start_scorecard,
             sidecar::cancel_scorecard,
             sidecar::list_scorecard_runs,

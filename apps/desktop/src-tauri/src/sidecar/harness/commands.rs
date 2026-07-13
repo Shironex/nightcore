@@ -27,6 +27,7 @@ use crate::store::harness::{
 };
 
 use super::apply::{write_create, write_merge_manifest, write_merge_section};
+use super::export::{write_portable_lock, PortableLockExport};
 
 /// The check kinds the Structure-Lock gauntlet knows how to run — the single source
 /// of truth lives beside the runner (`workflow::gauntlet_project::ARMABLE_CHECK_KINDS`,
@@ -530,6 +531,34 @@ pub fn arm_harness_gauntlet_check(
     );
     tracing::info!(target: "nightcore", run_id = %run_id, name = %name, kind = %kind, path = %dest.display(), "structure-lock check armed in harness.json");
     Ok(())
+}
+
+/// Export a portable Structure-Lock bundle for `project_path` into the CONTAINED
+/// staging dir `.nightcore/export/portable-lock/` (#134 PR 3, spec §3.4): a
+/// `schemaVersion`-stamped copy of the live manifest, the deterministic
+/// `nightcore-lock.yml` CI workflow that invokes the published `@noctcore/harness`
+/// runner, and a README with the ONE manual step (copy the workflow into
+/// `.github/workflows/` yourself and commit it).
+///
+/// The workflow is STAGED, never auto-written into `.github/workflows/` — that sink is
+/// a DENIED apply target (`infra::safe_join`) precisely because a file there runs on the
+/// next push, so a CI workflow stays human-committed by design (the `apply.rs` invariant
+/// is untouched). Every byte written is deterministic Rust template output, never model
+/// output — the same trust basis as `write_merge_manifest`'s Rust-built entry — and each
+/// destination resolves through the shared `safe_join` (symlink-escape + containment)
+/// before any write. Re-export overwrites ONLY the staging dir (reviewable via
+/// `git diff`). Async + `spawn_blocking` for the file writes: a sync `#[tauri::command]`
+/// would freeze the WKWebView (`reference_tauri_command_threading`).
+#[tauri::command]
+pub async fn export_portable_lock(project_path: String) -> Result<PortableLockExport, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        write_portable_lock(&project_path).map_err(|e| {
+            tracing::warn!(target: "nightcore", project = %project_path, error = %e, "portable-lock export failed");
+            e
+        })
+    })
+    .await
+    .map_err(|e| format!("portable lock export failed to run: {e}"))?
 }
 
 #[cfg(test)]
