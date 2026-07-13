@@ -28,7 +28,6 @@ import { SessionStore } from '@nightcore/storage';
 import type {
   AgentProvider,
   AgentSession,
-  StartSessionParams,
 } from '../providers/agent-provider.js';
 import {
   AutonomyNotPermittedError,
@@ -41,6 +40,7 @@ import {
 } from '../providers/provider-factory.js';
 import { ScanRouter } from '../scans/scan-router.js';
 import { handleSessionQuery } from './session-query.js';
+import { resolveStartSessionParams } from './session-start-params.js';
 
 interface ManagedSession {
   id: number;
@@ -250,53 +250,9 @@ export class SessionManager {
   ): number {
     const id = this.nextSessionId();
     const provider = this.providers.forSession(command.providerId);
-    const model = command.model ?? this.config.model;
-    const effort = command.effort ?? this.config.effort;
-    const cwd = command.cwd ?? process.cwd();
-    // Autonomy ceilings: a per-task override wins, else the `@nightcore/config`
-    // default. `maxTurns` always resolves to a finite guard; `maxBudgetUsd` is
-    // uncapped unless the task or config sets it.
-    const maxTurns = command.maxTurns ?? this.config.maxTurns;
-    const maxBudgetUsd = command.maxBudgetUsd ?? this.config.maxBudgetUsd;
-
-    // Neutral start params. The provider owns the kind preset, the permission-mode
-    // precedence (override → preset default → configured default), and the whole
-    // SDK-facing config assembly; the supervisor only resolves the plain
-    // `?? config default` knobs and forwards the command's runtime inputs verbatim
-    // (MCP servers, context pack, harness policy, ledger path, OS sandbox request,
-    // resume id, images, task kind).
-    const params: StartSessionParams = {
-      sessionId: id,
-      prompt: command.prompt,
-      model,
-      cwd,
-      maxTurns,
-      ...(command.images !== undefined ? { images: command.images } : {}),
-      ...(effort !== undefined ? { effort } : {}),
-      ...(command.autonomy !== undefined
-        ? { autonomyOverride: command.autonomy }
-        : {}),
-      ...(command.kind !== undefined ? { kind: command.kind } : {}),
-      ...(maxBudgetUsd !== undefined ? { maxBudgetUsd } : {}),
-      ...(command.resumeSessionId !== undefined
-        ? { resumeSessionId: command.resumeSessionId }
-        : {}),
-      ...(command.mcpServers !== undefined
-        ? { mcpServers: command.mcpServers }
-        : {}),
-      ...(command.appendContextPack !== undefined
-        ? { appendContextPack: command.appendContextPack }
-        : {}),
-      ...(command.harnessPolicy !== undefined
-        ? { harnessPolicy: command.harnessPolicy }
-        : {}),
-      ...(command.ledgerPath !== undefined
-        ? { ledgerPath: command.ledgerPath }
-        : {}),
-      ...(command.sandboxWrites !== undefined
-        ? { sandboxWrites: command.sandboxWrites }
-        : {}),
-    };
+    // Neutral start params (extracted to `resolveStartSessionParams` for the
+    // file-size ratchet; behavior verbatim).
+    const params = resolveStartSessionParams(id, command, this.config);
 
     // Construct the run through the provider seam. The fail-closed hooks invariant
     // AND the fail-closed governance invariant (issue #296) both run inside
@@ -334,9 +290,9 @@ export class SessionManager {
     const record: SessionRecord = {
       id,
       prompt: command.prompt,
-      model,
+      model: params.model,
       permissionMode,
-      cwd,
+      cwd: params.cwd,
       status: 'starting',
       createdAt: Date.now(),
     };
@@ -347,7 +303,7 @@ export class SessionManager {
 
     this.logger?.info('session started', {
       id,
-      model,
+      model: params.model,
       kind: command.kind ?? 'build',
       permissionMode,
     });
@@ -356,7 +312,7 @@ export class SessionManager {
       type: 'session-started',
       sessionId: id,
       prompt: command.prompt,
-      model,
+      model: params.model,
       permissionMode,
     });
     this.setStatus(session, 'running');
