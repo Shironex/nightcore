@@ -37,15 +37,21 @@ import type { Logger } from '@nightcore/shared';
 import { collectBroadcast } from './broadcast-collector.js';
 import type { ConductorBus, DebateBus } from './bus.js';
 import { RunGovernor } from './conductor-budget.js';
+import {
+  parkConverge,
+  type ParkedConverge,
+  resolveParkedConverge,
+} from './conductor-converge.js';
 import { observeBus } from './conductor-observer.js';
 import { debatePrompt, proposePrompt } from './conductor-prompts.js';
 import type {
   BudgetHaltCause,
+  ConvergeDecision,
+  ConvergeResolution,
   CouncilRunResult,
   CouncilRunStatus,
   SeatContext,
   SeatDriver,
-  SeatPosition,
   SeatTurnResult,
   TurnEstimate,
 } from './conductor-types.js';
@@ -91,6 +97,10 @@ export interface CouncilRunInput {
 export class Conductor {
   /** Governors of currently-running councils, so {@link kill} can reach a live run. */
   private readonly active = new Map<string, RunGovernor>();
+
+  /** Runs parked at Converge, awaiting the human judge's verdict ({@link
+   *  resolveConverge}) — the P1 terminal authority is the human (safety #7). */
+  private readonly parked = new Map<string, ParkedConverge>();
 
   constructor(private readonly deps: ConductorDeps) {}
 
@@ -247,8 +257,9 @@ export class Conductor {
     return outputs;
   }
 
-  /** Converge stage (HUMAN): record each seat's final position and park the decision
-   *  for the human judge. No agent-judge, no vote (P1). */
+  /** Converge stage (HUMAN): PARK the seats' final positions for the human judge and
+   *  surface the pending decision on the run result. No agent-judge, no vote (P1). The
+   *  parked run is later closed by {@link resolveConverge} when the human rules. */
   private converge(
     input: CouncilRunInput,
     bus: ConductorBus,
@@ -256,27 +267,40 @@ export class Conductor {
     seats: SeatContext[],
     finalOutputs: Map<string, string>,
   ): CouncilRunResult {
-    const positions: SeatPosition[] = seats.map((seat) => ({
-      seatId: seat.seatId,
-      role: seat.role,
-      content: finalOutputs.get(seat.seatId) ?? '',
-    }));
-
-    bus.note(
-      'converge',
-      `Debate closed after ${governor.totals.rounds} round(s). ` +
-        `Parking ${positions.length} final position(s) for the human judge.`,
-    );
-
+    const pending = parkConverge({
+      parked: this.parked,
+      bus,
+      councilRunId: input.councilRunId,
+      seats,
+      finalOutputs,
+      successCriterion: input.preset.successCriterion,
+      rounds: governor.totals.rounds,
+    });
     const base = this.result(input.councilRunId, 'converged', governor);
-    return {
-      ...base,
-      pendingDecision: {
-        councilRunId: input.councilRunId,
-        successCriterion: input.preset.successCriterion,
-        positions,
-      },
-    };
+    return { ...base, pendingDecision: pending };
+  }
+
+  /** Whether a run is parked at Converge, awaiting the human judge's verdict. */
+  isAwaitingConverge(councilRunId: string): boolean {
+    return this.parked.has(councilRunId);
+  }
+
+  /** Resolve a run's PARKED Converge decision with the human judge's verdict (issue
+   *  #353, safety #7 — the human is the terminal authority). Delegates to {@link
+   *  resolveParkedConverge}, which records the verdict onto the append-only transcript
+   *  through the run's mediated bus (never a direct store write — safety #1) and closes
+   *  the run. A refused verdict records nothing and leaves the run parked. */
+  resolveConverge(
+    councilRunId: string,
+    decision: ConvergeDecision,
+  ): ConvergeResolution {
+    return resolveParkedConverge(
+      this.parked,
+      councilRunId,
+      decision,
+      () => this.deps.bus.seatView(councilRunId, 'conductor').read(),
+      this.deps.logger,
+    );
   }
 
   /** Drive one seat turn through the {@link SeatDriver} seam, threading the collector's

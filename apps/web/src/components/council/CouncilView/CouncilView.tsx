@@ -12,8 +12,10 @@
  */
 import { AgentsIcon, BroadcastIcon, Button, EmptyState, FolderIcon } from '@/components/ui';
 
+import { ConvergeGavel } from '../ConvergeGavel';
 import type { CouncilPhase } from '../council.types';
 import { CouncilStartPanel } from '../CouncilStartPanel';
+import { ReplyDiff } from '../ReplyDiff';
 import { SeatCanvas } from '../SeatCanvas';
 import { TeamChat } from '../TeamChat';
 import { useCouncilView } from './CouncilView.hooks';
@@ -24,12 +26,16 @@ const PHASE_STATUS: Record<CouncilPhase, { label: string; className: string }> =
   idle: { label: 'Idle', className: 'text-muted-foreground' },
   running: { label: 'Live', className: 'text-emerald-400' },
   converged: { label: 'Converged — awaiting your judgment', className: 'text-primary' },
+  resolved: { label: 'Resolved — you ruled', className: 'text-emerald-400' },
   stopped: { label: 'Stopped', className: 'text-muted-foreground' },
 };
 
 export function CouncilView(props: CouncilViewProps) {
   const view = useCouncilView(props);
   const status = PHASE_STATUS[view.phase];
+  // At Converge the board becomes the judging surface: the seats' replies aligned
+  // side-by-side (disagreement is the product) beneath the human's gavel (#353).
+  const atConverge = view.phase === 'converged' || view.phase === 'resolved';
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -72,24 +78,40 @@ export function CouncilView(props: CouncilViewProps) {
       ) : (
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">
-            <SeatCanvas seats={view.transcript.seats} phase={view.phase} />
-            {/* Broadcast/DM/steer bar — DEFERRED: a conductor-mediated human-input
-                command is a follow-up slice; feeding text straight into a seat would
-                bypass the moderated bus (safety #1/#2). Rendered disabled so the layout
-                matches the design intent and the deferral is visible, not silent. */}
-            <div
-              className="flex shrink-0 items-center gap-2 border-t border-border bg-card/40 px-4 py-2.5"
-              aria-label="Broadcast to the council (coming soon)"
-            >
-              <BroadcastIcon size={14} className="text-muted-foreground" aria-hidden />
-              <span className="text-2xs text-muted-foreground">
-                Broadcast · DM · steer-stage arrive with the conductor's mediated
-                human-input seam — the canvas stays read-only until then.
-              </span>
-              <Button variant="secondary" disabled className="ml-auto">
-                Broadcast to all
-              </Button>
-            </div>
+            {atConverge ? (
+              <ReplyDiff rounds={view.replyRounds} />
+            ) : (
+              <SeatCanvas seats={view.transcript.seats} phase={view.phase} />
+            )}
+            {atConverge ? (
+              // The human Converge gavel (#353) — P1's terminal authority (safety #7).
+              // It only DISPATCHES the human's verdict through the Conductor; it never
+              // feeds text into a seat prompt (the moderated bus stays the sole path).
+              <ConvergeGavel
+                positions={view.positions}
+                onResolve={view.resolve}
+                resolved={view.resolved}
+                verdict={view.verdict}
+              />
+            ) : (
+              // Broadcast/DM/steer bar — DEFERRED: a conductor-mediated human-input
+              // command is a follow-up slice (#361); feeding text straight into a seat
+              // would bypass the moderated bus (safety #1/#2). Rendered disabled so the
+              // layout matches the design intent and the deferral is visible, not silent.
+              <div
+                className="flex shrink-0 items-center gap-2 border-t border-border bg-card/40 px-4 py-2.5"
+                aria-label="Broadcast to the council (coming soon)"
+              >
+                <BroadcastIcon size={14} className="text-muted-foreground" aria-hidden />
+                <span className="text-2xs text-muted-foreground">
+                  Broadcast · DM · steer-stage arrive with the conductor's mediated
+                  human-input seam — the canvas stays read-only until then.
+                </span>
+                <Button variant="secondary" disabled className="ml-auto">
+                  Broadcast to all
+                </Button>
+              </div>
+            )}
           </div>
           <TeamChat chat={view.transcript.chat} />
         </div>

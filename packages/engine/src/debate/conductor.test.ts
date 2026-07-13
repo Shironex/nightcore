@@ -1,7 +1,11 @@
 /// <reference types="bun" />
 import { describe, expect, test } from 'bun:test';
 
-import type { CouncilPreset, TokenUsage } from '@nightcore/contracts';
+import type {
+  CouncilPreset,
+  DebateTranscriptEntry,
+  TokenUsage,
+} from '@nightcore/contracts';
 
 import { DebateBus } from './bus.js';
 import { Conductor } from './conductor.js';
@@ -458,5 +462,98 @@ describe('Conductor — Converge parks a decision for the HUMAN judge (safety #7
     expect(
       result.transcript.some((e) => e.stage === 'converge' && e.kind === 'note'),
     ).toBe(true);
+  });
+});
+
+// ── Converge resolution (the human gavel, issue #353) ───────────────────────────
+
+describe('Conductor — resolveConverge closes the parked run (the human gavel, safety #7)', () => {
+  async function converged(runId = 'run-x') {
+    const driver = new FakeSeatDriver((req) => ({
+      content: `final-${req.seat.seatId}`,
+    }));
+    const { conductor, bus } = makeConductor(driver);
+    const result = await conductor.run({ councilRunId: runId, preset: preset(), objective: 'o' });
+    return { conductor, bus, result };
+  }
+
+  test('an ACCEPT verdict lands on the append-only transcript and closes the run', async () => {
+    const { conductor, bus, result } = await converged();
+    expect(conductor.isAwaitingConverge('run-x')).toBe(true);
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+
+    const resolution = conductor.resolveConverge('run-x', {
+      kind: 'accept',
+      seatId: adopted,
+      note: 'clearest plan',
+    });
+
+    expect(resolution.ok).toBe(true);
+    // The verdict is recorded through the MEDIATED bus as a HUMAN-role converge note —
+    // never a direct store write (safety #1) — and it is the run's final entry.
+    const verdict = resolution.transcript!.at(-1)!;
+    expect(verdict.role).toBe('human');
+    expect(verdict.stage).toBe('converge');
+    expect(verdict.kind).toBe('note');
+    expect(verdict.content).toContain('ACCEPT');
+    expect(verdict.content).toContain(adopted);
+    // Proven against the STORE, not just the returned copy (the append actually landed).
+    const stored = bus.seatView('run-x', 'conductor').read();
+    expect(stored.at(-1)!.role).toBe('human');
+    expect(stored.map((e) => e.seq)).toEqual(
+      [...stored.map((e) => e.seq)].sort((a, b) => a - b),
+    );
+
+    // The run is closed: it is no longer awaiting, and a second resolve is a no-op.
+    expect(conductor.isAwaitingConverge('run-x')).toBe(false);
+    expect(conductor.resolveConverge('run-x', { kind: 'reject' }).ok).toBe(false);
+  });
+
+  test('the verdict fans out through the observer (the nc:debate emit seam)', async () => {
+    const emitted: DebateTranscriptEntry[] = [];
+    const driver = new FakeSeatDriver((req) => ({
+      content: `final-${req.seat.seatId}`,
+    }));
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: driver,
+      onEntry: (_runId, entry) => emitted.push(entry),
+    });
+    await conductor.run({ councilRunId: 'run-e', preset: preset(), objective: 'o' });
+
+    emitted.length = 0; // isolate the resolution's emission
+    conductor.resolveConverge('run-e', {
+      kind: 'judge',
+      note: 'Adopt A but stage the cutover behind a flag.',
+    });
+
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]!.role).toBe('human');
+    expect(emitted[0]!.content).toContain('RULING');
+  });
+
+  test('an accept naming no parked seat is refused WITHOUT recording — the run stays parked', async () => {
+    const { conductor, bus } = await converged('run-ghost');
+    const before = bus.seatView('run-ghost', 'conductor').read().length;
+
+    const resolution = conductor.resolveConverge('run-ghost', {
+      kind: 'accept',
+      seatId: 'not-a-seat',
+    });
+
+    expect(resolution.ok).toBe(false);
+    expect(bus.seatView('run-ghost', 'conductor').read()).toHaveLength(before);
+    expect(conductor.isAwaitingConverge('run-ghost')).toBe(true);
+  });
+
+  test('a judge verdict with no ruling is refused', async () => {
+    const { conductor } = await converged('run-judge');
+    expect(conductor.resolveConverge('run-judge', { kind: 'judge' }).ok).toBe(false);
+  });
+
+  test('resolving an unknown / never-converged run is a refused no-op', () => {
+    const driver = new FakeSeatDriver(() => ({ content: 'x' }));
+    const { conductor } = makeConductor(driver);
+    expect(conductor.resolveConverge('nope', { kind: 'reject' }).ok).toBe(false);
   });
 });

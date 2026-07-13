@@ -80,13 +80,50 @@ export function foldCouncilTranscript(
   return { seats: [...seatMap.values()], chat };
 }
 
-/** Whether the run has parked a Converge decision — a conductor `note` in the
- *  `converge` stage. Drives the canvas phase (`running` → `converged`); #353 wires the
- *  human judge/accept/reject on top of this signal. */
+/** Whether the run has parked a Converge decision — a CONDUCTOR `note` in the
+ *  `converge` stage. Drives the canvas phase (`running` → `converged`); the human
+ *  judge/accept/reject gavel (#353) mounts on this signal. Distinct from the human
+ *  verdict below (a `human`-role note), so the park is detected even before the human
+ *  rules. */
 export function hasConvergeDecision(
   entries: readonly DebateTranscriptEntry[],
 ): boolean {
   return entries.some(
-    (entry) => entry.stage === 'converge' && entry.kind === 'note',
+    (entry) =>
+      entry.stage === 'converge' &&
+      entry.kind === 'note' &&
+      entry.role === 'conductor',
   );
+}
+
+/** Whether the human judge has RULED — a `human`-role `converge` note (the recorded
+ *  verdict, safety #7). Drives the canvas phase (`converged` → `resolved`): the verdict
+ *  streams back over `nc:debate`, so its arrival is the run's terminal signal (#353). */
+export function hasConvergeVerdict(
+  entries: readonly DebateTranscriptEntry[],
+): boolean {
+  return entries.some(
+    (entry) =>
+      entry.stage === 'converge' &&
+      entry.kind === 'note' &&
+      entry.role === 'human',
+  );
+}
+
+/** The recorded human verdict's text (the most recent `human`-role converge note), or
+ *  `null` when the run isn't resolved. Shown read-only once the gavel has ruled. */
+export function convergeVerdictText(
+  entries: readonly DebateTranscriptEntry[],
+): string | null {
+  let verdict: string | null = null;
+  for (const entry of entries) {
+    if (
+      entry.stage === 'converge' &&
+      entry.kind === 'note' &&
+      entry.role === 'human'
+    ) {
+      verdict = entry.content;
+    }
+  }
+  return verdict;
 }

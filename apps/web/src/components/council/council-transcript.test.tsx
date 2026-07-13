@@ -2,7 +2,12 @@ import { expect, test } from 'vitest';
 
 import type { DebateTranscriptEntry } from '@/lib/bridge';
 
-import { foldCouncilTranscript, hasConvergeDecision } from './council-transcript';
+import {
+  convergeVerdictText,
+  foldCouncilTranscript,
+  hasConvergeDecision,
+  hasConvergeVerdict,
+} from './council-transcript';
 
 /** Build a transcript entry with sensible defaults for the fields a test doesn't set. */
 function entry(over: Partial<DebateTranscriptEntry> & { seq: number }): DebateTranscriptEntry {
@@ -95,4 +100,19 @@ test('hasConvergeDecision flips on a converge-stage conductor note', () => {
       entry({ seq: 1, seatId: 'conductor', role: 'conductor', kind: 'note', stage: 'converge', content: 'parked for the human judge' }),
     ]),
   ).toBe(true);
+});
+
+test('hasConvergeVerdict flips only on the HUMAN converge note, not the conductor park', () => {
+  const park = entry({ seq: 0, seatId: 'conductor', role: 'conductor', kind: 'note', stage: 'converge', content: 'parked' });
+  // The conductor park alone is NOT a verdict — the human hasn't ruled yet.
+  expect(hasConvergeVerdict([park])).toBe(false);
+  const verdict = entry({ seq: 1, seatId: 'human', role: 'human', kind: 'note', stage: 'converge', content: 'Human verdict — ACCEPT: adopted seat "proposer-1" (proposer).' });
+  expect(hasConvergeVerdict([park, verdict])).toBe(true);
+});
+
+test('convergeVerdictText returns the recorded human verdict (or null before ruling)', () => {
+  const park = entry({ seq: 0, seatId: 'conductor', role: 'conductor', kind: 'note', stage: 'converge', content: 'parked' });
+  expect(convergeVerdictText([park])).toBeNull();
+  const verdict = entry({ seq: 1, seatId: 'human', role: 'human', kind: 'note', stage: 'converge', content: 'Human verdict — REJECT: no position adopted.' });
+  expect(convergeVerdictText([park, verdict])).toBe('Human verdict — REJECT: no position adopted.');
 });

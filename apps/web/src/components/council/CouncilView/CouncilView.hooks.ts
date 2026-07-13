@@ -14,11 +14,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useToast } from '@/components/ui';
-import type { DebateTranscriptEntry } from '@/lib/bridge';
-import { killCouncil, onDebateEvent, startCouncil } from '@/lib/bridge';
+import type { CouncilConvergeDecision, DebateTranscriptEntry } from '@/lib/bridge';
+import {
+  killCouncil,
+  onDebateEvent,
+  resolveCouncilConverge,
+  startCouncil,
+} from '@/lib/bridge';
 
-import type { CouncilPhase, CouncilTranscript } from '../council.types';
-import { foldCouncilTranscript, hasConvergeDecision } from '../council-transcript';
+import type {
+  ConvergePosition,
+  CouncilPhase,
+  CouncilTranscript,
+} from '../council.types';
+import {
+  convergeVerdictText,
+  foldCouncilTranscript,
+  hasConvergeDecision,
+  hasConvergeVerdict,
+} from '../council-transcript';
+import { groupReplyRounds, type ReplyRound } from '../reply-diff';
 import type { CouncilViewProps } from './CouncilView.types';
 
 /** The only P1 preset (a `research` council of ≥2 distinct models). */
@@ -36,12 +51,27 @@ export interface CouncilViewModel {
   runId: string | null;
   /** The folded transcript: seat nodes + the team-chat projection. */
   transcript: CouncilTranscript;
+  /** The broadcast rounds, side-by-side (Propose + each Debate round) — the reply diff. */
+  replyRounds: ReplyRound[];
+  /** The seats' final positions the human judges at Converge (one per seat). */
+  positions: ConvergePosition[];
   /** True while a run is live (drives the Kill affordance + the "live" badge). */
   isLive: boolean;
+  /** True once the human judge has ruled and the run is closed (#353, safety #7). */
+  resolved: boolean;
+  /** The recorded human verdict text, shown read-only once `resolved`. */
+  verdict: string | null;
   /** Start a council over `objective` (a fresh run id is minted). */
   start: (objective: string) => void;
   /** Throw the running council's kill switch (safety #4). */
   kill: () => void;
+  /** Resolve the parked Converge decision with the human judge's verdict (#353). The
+   *  verdict routes through the Conductor onto the append-only transcript and streams
+   *  back over `nc:debate`, closing the run. Rejects so the gavel can surface + retry. */
+  resolve: (
+    decision: CouncilConvergeDecision,
+    options?: { seatId?: string; note?: string },
+  ) => Promise<void>;
   /** Return to the idle start panel to convene another council. */
   reset: () => void;
 }
@@ -77,10 +107,12 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
     };
   }, []);
 
-  // A converge note parks the decision for the human judge — flip the phase so the
-  // board shows "awaiting judge" (#353 wires the accept/reject gavel on top of this).
+  // Advance the phase off the append-only stream: a CONDUCTOR converge note parks the
+  // decision (→ the gavel mounts); the HUMAN verdict note the gavel produces streams
+  // back and closes the run (→ resolved). Both are pure reads of the transcript (#353).
   useEffect(() => {
     if (phase === 'running' && hasConvergeDecision(entries)) setPhase('converged');
+    else if (phase === 'converged' && hasConvergeVerdict(entries)) setPhase('resolved');
   }, [entries, phase]);
 
   const start = useCallback(
@@ -110,6 +142,29 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
     });
   }, [toast]);
 
+  const resolve = useCallback(
+    async (
+      decision: CouncilConvergeDecision,
+      options?: { seatId?: string; note?: string },
+    ) => {
+      const id = runIdRef.current;
+      if (id === null) return;
+      try {
+        await resolveCouncilConverge(id, decision, {
+          seatId: options?.seatId ?? null,
+          note: options?.note ?? null,
+        });
+      } catch (error) {
+        // Surface both channels: a toast (like start/kill) and — by rethrowing — the
+        // gavel's inline error so it re-enables for a retry. The recorded verdict is the
+        // confirmation, arriving over `nc:debate`.
+        toast.error('Could not record your verdict', error);
+        throw error;
+      }
+    },
+    [toast],
+  );
+
   const reset = useCallback(() => {
     setRunId(null);
     setEntries([]);
@@ -117,6 +172,17 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
   }, []);
 
   const transcript = useMemo(() => foldCouncilTranscript(entries), [entries]);
+  const replyRounds = useMemo(() => groupReplyRounds(entries), [entries]);
+  const verdict = useMemo(() => convergeVerdictText(entries), [entries]);
+  const positions = useMemo<ConvergePosition[]>(
+    () =>
+      transcript.seats.map((seat) => ({
+        seatId: seat.seatId,
+        role: seat.role,
+        content: seat.latestContent,
+      })),
+    [transcript.seats],
+  );
 
   return {
     hasProject: props.projectPath !== null,
@@ -124,9 +190,14 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
     phase,
     runId,
     transcript,
+    replyRounds,
+    positions,
     isLive: phase === 'running',
+    resolved: phase === 'resolved',
+    verdict,
     start,
     kill,
+    resolve,
     reset,
   };
 }

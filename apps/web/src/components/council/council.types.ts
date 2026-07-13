@@ -71,6 +71,17 @@ export interface CouncilTranscript {
   chat: TeamChatEntry[];
 }
 
+/** One seat's final position the human judge weighs at Converge (issue #353) — the
+ *  seat's most recent contribution. An `accept` verdict adopts exactly one of these. */
+export interface ConvergePosition {
+  /** The seat that authored the position. */
+  seatId: string;
+  /** The seat's asymmetric role (proposer / critic / judge). */
+  role: DebateSeatRole;
+  /** The seat's final contribution (markdown) — what "accept this seat" adopts. */
+  content: string;
+}
+
 /** The canvas lifecycle phase, tracked web-side (the run result stays engine-side; the
  *  canvas infers phase from the stream + the human's start/kill actions). */
 export type CouncilPhase =
@@ -78,8 +89,11 @@ export type CouncilPhase =
   | 'idle'
   /** A run is live — seats are debating. */
   | 'running'
-  /** The run parked a Converge decision for the human judge (a converge note arrived);
-   *  #353 wires the judge/accept/reject UI. */
+  /** The run parked a Converge decision for the human judge (a converge note arrived) —
+   *  the judge/accept/reject gavel is shown (#353). */
   | 'converged'
+  /** The human judge ruled: the verdict landed on the append-only transcript and the
+   *  run is closed (#353, safety #7). */
+  | 'resolved'
   /** The human threw the kill switch (safety #4). */
   | 'stopped';

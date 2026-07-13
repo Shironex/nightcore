@@ -26,7 +26,11 @@ import type { Logger } from '@nightcore/shared';
 
 import { DebateBus } from './bus.js';
 import { Conductor } from './conductor.js';
-import type { SeatDriver } from './conductor-types.js';
+import type {
+  ConvergeDecision,
+  ConvergeResolution,
+  SeatDriver,
+} from './conductor-types.js';
 import { resolveCouncilPreset } from './preset-registry.js';
 
 export interface CouncilManagerDeps {
@@ -109,5 +113,25 @@ export class CouncilManager {
         councilRunId,
       });
     }
+  }
+
+  /** Resolve a run's PARKED Converge decision with the human judge's verdict (issue
+   *  #353, safety #7). Delegates to the {@link Conductor}, the sole bus writer, which
+   *  records the verdict onto the append-only transcript and closes the run. A refused
+   *  resolution (unknown/already-resolved run, or a malformed verdict) is logged, not
+   *  thrown — mirroring the fire-and-forget dispatch every council command uses. */
+  resolveConverge(
+    councilRunId: string,
+    decision: ConvergeDecision,
+  ): ConvergeResolution {
+    const resolution = this.conductor.resolveConverge(councilRunId, decision);
+    if (!resolution.ok) {
+      this.logger?.warn('council converge resolution refused', {
+        councilRunId,
+        decision: decision.kind,
+        reason: resolution.reason,
+      });
+    }
+    return resolution;
   }
 }

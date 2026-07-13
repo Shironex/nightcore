@@ -150,7 +150,15 @@ export async function runDebateRounds(
     for (const outcome of broadcast.responders) {
       const { seatId, role } = outcome.seat;
       const content = outcome.result?.content ?? '';
-      bus.postSeatMessage({ stage: 'debate', seatId, role, content });
+      // Carry the round's broadcast id so a round's replies group side-by-side in the
+      // reply diff (issue #353) — the same grouping Propose's replies already get.
+      bus.postSeatMessage({
+        stage: 'debate',
+        seatId,
+        role,
+        content,
+        broadcastId: outcome.broadcastId,
+      });
       if (content !== (current.get(seatId) ?? '')) changed = true;
       next.set(seatId, content);
     }
