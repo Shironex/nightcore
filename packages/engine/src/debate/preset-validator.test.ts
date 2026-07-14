@@ -68,6 +68,40 @@ describe('validateCouncilPreset', () => {
     );
   });
 
+  test('REJECTS a seat with the reserved `human` role (verdict-forgery guard, PR #362)', () => {
+    const humanSeat: CouncilPreset = {
+      ...basePreset,
+      seats: [
+        { id: 'a', role: 'proposer', model: 'claude-opus-4-8' },
+        { id: 'impostor', role: 'human', model: 'claude-sonnet-4-6' },
+      ],
+    };
+    expect(issueCodes(humanSeat)).toContain('reserved-seat-role');
+  });
+
+  test('REJECTS a seat with the reserved `conductor` role', () => {
+    const conductorSeat: CouncilPreset = {
+      ...basePreset,
+      seats: [
+        { id: 'a', role: 'proposer', model: 'claude-opus-4-8' },
+        { id: 'impostor', role: 'conductor', model: 'claude-sonnet-4-6' },
+      ],
+    };
+    expect(issueCodes(conductorSeat)).toContain('reserved-seat-role');
+  });
+
+  test('ACCEPTS the debating roles (proposer / critic / judge)', () => {
+    const judged: CouncilPreset = {
+      ...basePreset,
+      seats: [
+        { id: 'a', role: 'proposer', model: 'claude-opus-4-8' },
+        { id: 'b', role: 'critic', model: 'claude-sonnet-4-6' },
+        { id: 'c', role: 'judge', model: 'claude-haiku-4-5' },
+      ],
+    };
+    expect(validateCouncilPreset(judged)).toEqual({ valid: true });
+  });
+
   test('REJECTS a zero budget/round cap', () => {
     const zeroCap: CouncilPreset = {
       ...basePreset,

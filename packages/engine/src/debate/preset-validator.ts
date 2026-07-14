@@ -12,6 +12,13 @@
  *  - **Present, positive budget/round caps** (safety non-negotiable #4: hard caps +
  *    a kill switch, never "run until they agree"). The conductor's kill/early-stop
  *    reads these, so a missing or non-positive cap is rejected.
+ *  - **Seat roles are DEBATING roles only** (`proposer | critic | judge`). The
+ *    `conductor`/`human` roles in {@link DebateSeatRoleSchema} are RESERVED for the
+ *    orchestrator and the terminal human authority — a seat claiming one is a
+ *    verdict-forgery footgun (a `human`-role seat message reads like the human
+ *    gavel's converge note). The conductor-only write surface + the
+ *    `kind:'note'`/`stage:'converge'` gates already defuse it, but the validator
+ *    rejects a reserved seat role up front (defense-in-depth, PR #362 carry-forward).
  *
  * The result is a TYPED value, never a throw: callers (the future conductor, a
  * preset editor) surface `issues` to the user instead of catching an exception.
@@ -19,18 +26,28 @@
  * structural validation; the caps are re-checked here so a preset hand-built in TS
  * (bypassing `parse`) is caught too.
  */
-import type { CouncilPreset } from '@nightcore/contracts';
+import type { CouncilPreset, DebateSeatRole } from '@nightcore/contracts';
 
 /** The maximum number of seats a P1 council preset may define. */
 export const COUNCIL_MAX_SEATS = 4;
 /** The minimum number of DISTINCT models required across a council's seats. */
 export const COUNCIL_MIN_DISTINCT_MODELS = 2;
 
+/** The asymmetric roles a DEBATING seat may hold. `conductor` (the orchestrator) and
+ *  `human` (the terminal gavel) are RESERVED — never a seat (PR #362 carry-forward). */
+export const COUNCIL_SEAT_ROLES = ['proposer', 'critic', 'judge'] as const;
+
+/** Whether `role` is a role a debating seat is allowed to hold. */
+function isSeatRole(role: DebateSeatRole): boolean {
+  return (COUNCIL_SEAT_ROLES as readonly DebateSeatRole[]).includes(role);
+}
+
 /** A machine-branchable code for one preset-validation failure. */
 export type CouncilPresetIssueCode =
   | 'no-seats'
   | 'too-many-seats'
   | 'insufficient-model-diversity'
+  | 'reserved-seat-role'
   | 'missing-budget-cap'
   | 'non-positive-budget-cap';
 
@@ -104,6 +121,21 @@ export function validateCouncilPreset(
         `(homogeneous seats produce sycophantic agreement, not real disagreement); ` +
         `got ${distinctModels.size}.`,
     });
+  }
+
+  // Reserved-role guard (PR #362): a seat may only hold a DEBATING role. `conductor`
+  // and `human` are reserved for the orchestrator + the terminal gavel; a seat
+  // claiming one could forge a verdict-shaped contribution.
+  for (const seat of preset.seats) {
+    if (!isSeatRole(seat.role)) {
+      issues.push({
+        code: 'reserved-seat-role',
+        message:
+          `Seat "${seat.id}" has reserved role "${seat.role}"; a debating seat may only be ` +
+          `one of ${COUNCIL_SEAT_ROLES.join(' | ')} (conductor/human are reserved for the ` +
+          `orchestrator and the terminal human authority).`,
+      });
+    }
   }
 
   for (const cap of BUDGET_CAPS) {
