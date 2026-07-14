@@ -10,10 +10,18 @@
  * this slice keeps the canvas a pure READER and renders those controls as a disabled
  * affordance. #353 adds the human Converge (judge/accept/reject).
  */
-import { AgentsIcon, BroadcastIcon, Button, EmptyState, FolderIcon } from '@/components/ui';
+import {
+  AgentsIcon,
+  BroadcastIcon,
+  Button,
+  EmptyState,
+  FolderIcon,
+  HistoryIcon,
+} from '@/components/ui';
 
 import { ConvergeGavel } from '../ConvergeGavel';
 import type { CouncilPhase } from '../council.types';
+import { CouncilReplay } from '../CouncilReplay';
 import { CouncilStartPanel } from '../CouncilStartPanel';
 import { ReplyDiff } from '../ReplyDiff';
 import { SeatCanvas } from '../SeatCanvas';
@@ -55,8 +63,16 @@ export function CouncilView(props: CouncilViewProps) {
         )}
         <div className="ml-auto flex items-center gap-2">
           {view.isLive && (
+            // The kill switch (safety #4) — always live while a council runs, prominent +
+            // labeled (danger), halts turn-taking immediately.
             <Button variant="danger" onClick={view.kill}>
               Kill council
+            </Button>
+          )}
+          {view.replay.available && !view.replay.active && (
+            <Button variant="secondary" onClick={view.replay.enter}>
+              <HistoryIcon size={13} aria-hidden />
+              Replay
             </Button>
           )}
           {view.phase !== 'idle' && !view.isLive && (
@@ -75,6 +91,10 @@ export function CouncilView(props: CouncilViewProps) {
         />
       ) : view.phase === 'idle' ? (
         <CouncilStartPanel onStart={view.start} disabled={!view.hasProject} />
+      ) : view.replay.active ? (
+        // Read-only replay of the finished run (safety #7): reconstruct the append-only
+        // transcript in order. It re-renders recorded entries — never re-dispatches.
+        <CouncilReplay transcript={view.replay.transcript} onExit={view.replay.exit} />
       ) : (
         <div className="flex min-h-0 flex-1">
           <div className="flex min-w-0 flex-1 flex-col">

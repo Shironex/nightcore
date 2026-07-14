@@ -39,6 +39,20 @@ import type { CouncilViewProps } from './CouncilView.types';
 /** The only P1 preset (a `research` council of ≥2 distinct models). */
 const COUNCIL_PRESET = 'research' as const;
 
+/** Read-only replay affordance for a finished run (safety #7). */
+export interface CouncilReplayControls {
+  /** Whether replay can be offered — a finished run with a captured transcript. */
+  available: boolean;
+  /** Whether replay is currently showing (the board is swapped for the replay surface). */
+  active: boolean;
+  /** The finished run's append-only transcript to reconstruct. */
+  transcript: DebateTranscriptEntry[];
+  /** Enter replay (no-op unless `available`). */
+  enter: () => void;
+  /** Leave replay and return to the finished run's board. */
+  exit: () => void;
+}
+
 /** The model the canvas shell renders from. */
 export interface CouncilViewModel {
   /** Whether a project is active (a council debates over the active project's root). */
@@ -61,6 +75,9 @@ export interface CouncilViewModel {
   resolved: boolean;
   /** The recorded human verdict text, shown read-only once `resolved`. */
   verdict: string | null;
+  /** Read-only transcript REPLAY of a finished run (safety #7). Bundled so the view can
+   *  offer + drive replay without growing the model surface. */
+  replay: CouncilReplayControls;
   /** Start a council over `objective` (a fresh run id is minted). */
   start: (objective: string) => void;
   /** Throw the running council's kill switch (safety #4). */
@@ -81,6 +98,7 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
   const [phase, setPhase] = useState<CouncilPhase>('idle');
   const [runId, setRunId] = useState<string | null>(null);
   const [entries, setEntries] = useState<DebateTranscriptEntry[]>([]);
+  const [replayActive, setReplayActive] = useState(false);
 
   // The active run id, read INSIDE the once-installed stream subscription without
   // re-installing it on every run change (the subscription is stable for the view).
@@ -122,6 +140,7 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
       const id = crypto.randomUUID();
       setRunId(id);
       setEntries([]);
+      setReplayActive(false);
       setPhase('running');
       void startCouncil(id, COUNCIL_PRESET, trimmed, props.projectPath).catch(
         (error: unknown) => {
@@ -168,8 +187,17 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
   const reset = useCallback(() => {
     setRunId(null);
     setEntries([]);
+    setReplayActive(false);
     setPhase('idle');
   }, []);
+
+  // Replay is offered only for a FINISHED run that captured a transcript — never mid-run
+  // (a live run has no terminal record to reconstruct). Entering swaps the board for the
+  // read-only replay surface; the transcript is the captured `nc:debate` entries.
+  const replayAvailable =
+    (phase === 'resolved' || phase === 'stopped') && entries.length > 0;
+  const enterReplay = useCallback(() => setReplayActive(true), []);
+  const exitReplay = useCallback(() => setReplayActive(false), []);
 
   const transcript = useMemo(() => foldCouncilTranscript(entries), [entries]);
   const replyRounds = useMemo(() => groupReplyRounds(entries), [entries]);
@@ -195,6 +223,13 @@ export function useCouncilView(props: CouncilViewProps): CouncilViewModel {
     isLive: phase === 'running',
     resolved: phase === 'resolved',
     verdict,
+    replay: {
+      available: replayAvailable,
+      active: replayActive,
+      transcript: entries,
+      enter: enterReplay,
+      exit: exitReplay,
+    },
     start,
     kill,
     resolve,
