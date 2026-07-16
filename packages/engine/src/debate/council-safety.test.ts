@@ -29,6 +29,7 @@ import type {
   SeatTurnResult,
 } from './conductor-types.js';
 import { scanForInjection } from './injection-scan.js';
+import type { ObjectiveGate } from './objective-gate.js';
 import { assemblePeerContext } from './peer-context.js';
 import { RESEARCH_COUNCIL_PRESET } from './preset-registry.js';
 import { COUNCIL_SEAT_ROLES, validateCouncilPreset } from './preset-validator.js';
@@ -330,10 +331,11 @@ describe('Safety #5 — no Council path performs an un-isolated write in P1', ()
 
 describe('Safety #6 — objective gates outrank debate (human Converge is terminal in P1)', () => {
   test('the P1 preset converges by HUMAN only — no agent-judge / vote auto-convergence', () => {
-    // P1 has no objective-gate convergence; the guard is that NO autonomous path can
-    // declare consensus — the human is always the terminal authority (safety #7). When
-    // objective gates arrive (P2), a failing gate must OVERRIDE consensus; until then the
-    // convergence is pinned to `human`.
+    // The P1 RESEARCH preset is a PURE-REASONING task: it wires no objective gate, so the
+    // human is the sole terminal authority (safety #7) and no autonomous path declares
+    // consensus. The ACTIVE objective-gate override (P2, issue #365) — a failing gate
+    // OVERRIDING consensus — is certified in the "Safety #6 (P2)" block below; here we
+    // pin that a gate-less preset stays human-convergent.
     expect(RESEARCH_COUNCIL_PRESET.convergence).toBe('human');
     expect(COUNCIL_SEAT_ROLES).not.toContain('conductor');
     expect(COUNCIL_SEAT_ROLES).not.toContain('human');
@@ -380,6 +382,93 @@ describe('Safety #6 — objective gates outrank debate (human Converge is termin
     expect(conductor.resolveConverge('run-verdict', { kind: 'accept', seatId: 'x' }).ok).toBe(
       false,
     );
+  });
+});
+
+// ── Safety #6 (P2) — objective gates ACTIVELY outrank debate (issue #365) ────────
+
+describe('Safety #6 (P2) — a failing objective gate OVERRIDES debate consensus', () => {
+  /** A deterministic objective gate (no live exec) — the terminal judge for an
+   *  objective task. Mirrors how the whole suite drives seats with fakes. */
+  function gate(passed: boolean, summary: string): ObjectiveGate {
+    return { evaluate: () => Promise.resolve({ passed, summary }) };
+  }
+
+  test('confident consensus + a RED gate ⇒ the consensus is NOT adopted; the gate wins', async () => {
+    // Every seat reaches confident, identical consensus on ONE answer...
+    const driver = new RecordingDriver(() => turn('we all agree: ship option A'));
+    // ...but the objective check (tests / repro / build) is RED.
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: driver,
+      objectiveGate: gate(false, 'repro still red: 2 tests fail'),
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-gate-override',
+      preset: preset(),
+      objective: 'o',
+    });
+
+    // The run reached Converge and parked, but the RED gate rides the decision.
+    expect(result.status).toBe('converged');
+    expect(result.pendingDecision).toBeDefined();
+    expect(result.pendingDecision?.positions.length).toBeGreaterThan(0);
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(false);
+
+    // The gate verdict landed on the APPEND-ONLY transcript THROUGH the conductor bus (a
+    // conductor-role converge note) — trusted deterministic data, never a direct store
+    // write (safety #1). It records that consensus is overridden.
+    const gateEntry = result.transcript.find(
+      (e) =>
+        e.stage === 'converge' &&
+        e.role === 'conductor' &&
+        e.content.includes('Objective gate FAILED'),
+    );
+    expect(gateEntry).toBeDefined();
+    expect(gateEntry?.content).toContain('OVERRIDDEN');
+
+    // THE OVERRIDE (safety #6 ACTIVE, no longer a guard): the debate's answer cannot be
+    // adopted over a red gate. A plain accept is REFUSED and the run stays parked —
+    // nothing was adopted, the gate outranks the debate.
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    const refused = conductor.resolveConverge('run-gate-override', {
+      kind: 'accept',
+      seatId: adopted,
+    });
+    expect(refused.ok).toBe(false);
+    expect(conductor.isAwaitingConverge('run-gate-override')).toBe(true);
+
+    // The human is STILL the ultimate authority (safety #7): an explicit gate override
+    // adopts the consensus anyway, and the override is audited on the transcript.
+    const override = conductor.resolveConverge('run-gate-override', {
+      kind: 'accept',
+      seatId: adopted,
+      overrideGate: true,
+    });
+    expect(override.ok).toBe(true);
+    expect(override.entry?.content).toContain('OVERRODE the red objective gate');
+  });
+
+  test('a GREEN gate greenlights consensus — accept proceeds with no override', async () => {
+    const driver = new RecordingDriver(() => turn('we all agree: ship option A'));
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: driver,
+      objectiveGate: gate(true, 'all checks green'),
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-gate-green',
+      preset: preset(),
+      objective: 'o',
+    });
+
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(true);
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    expect(
+      conductor.resolveConverge('run-gate-green', { kind: 'accept', seatId: adopted }).ok,
+    ).toBe(true);
   });
 });
 
