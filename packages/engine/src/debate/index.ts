@@ -62,6 +62,15 @@ export type {
 export { runDebateRounds } from './debate-round.js';
 export type { InjectionScanResult } from './injection-scan.js';
 export { scanForInjection } from './injection-scan.js';
+export type {
+  GauntletLikeResult,
+  ObjectiveGate,
+  ObjectiveGateCheck,
+  ObjectiveGateContext,
+  ObjectiveGatePosition,
+  ObjectiveGateVerdict,
+} from './objective-gate.js';
+export { gauntletObjectiveGate } from './objective-gate.js';
 export type { PeerContext, PeerOutput } from './peer-context.js';
 export { assemblePeerContext } from './peer-context.js';
 export {
