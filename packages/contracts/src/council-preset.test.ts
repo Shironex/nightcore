@@ -8,9 +8,12 @@ import {
 } from './council-preset.js';
 
 describe('CouncilPresetIdSchema', () => {
-  test('accepts the P1 `research` id and rejects unknown ids', () => {
+  test('accepts the shipped preset ids (research / ui-bug / coding) and rejects unknown ids', () => {
     expect(CouncilPresetIdSchema.parse('research')).toBe('research');
-    expect(CouncilPresetIdSchema.safeParse('coding').success).toBe(false);
+    expect(CouncilPresetIdSchema.parse('ui-bug')).toBe('ui-bug');
+    // `coding` is the P2 Coding preset id (issue #368 — debate the plan only).
+    expect(CouncilPresetIdSchema.parse('coding')).toBe('coding');
+    expect(CouncilPresetIdSchema.safeParse('nonexistent').success).toBe(false);
   });
 });
 

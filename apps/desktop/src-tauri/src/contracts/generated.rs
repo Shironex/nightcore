@@ -827,6 +827,7 @@ pub enum CouncilConvergeDecision {
 pub enum CouncilPresetId {
     Research,
     UiBug,
+    Coding,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
