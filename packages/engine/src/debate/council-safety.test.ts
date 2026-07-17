@@ -19,6 +19,13 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 
+import {
+  BUILD_WRITER_HARDENING,
+  type BuildContext,
+  type BuildDriver,
+  type BuildResult,
+  electWriter,
+} from './build-writer.js';
 import { DebateBus } from './bus.js';
 import { Conductor } from './conductor.js';
 import { RunGovernor } from './conductor-budget.js';
@@ -29,6 +36,7 @@ import type {
   SeatTurnResult,
 } from './conductor-types.js';
 import { scanForInjection } from './injection-scan.js';
+import type { ObjectiveGateContext } from './objective-gate.js';
 import type { ObjectiveGate } from './objective-gate.js';
 import { assemblePeerContext } from './peer-context.js';
 import { RESEARCH_COUNCIL_PRESET } from './preset-registry.js';
@@ -389,6 +397,269 @@ describe('Safety #5 — no Council path performs an un-isolated write in P1', ()
     // them — so a Council seat structurally cannot write files/worktrees today.
     expect(SEAT_SESSION_HARDENING.autonomy).toBe('plan');
     expect(SEAT_SESSION_HARDENING.sandboxWrites).toBe(true);
+  });
+});
+
+// ── Safety #5 (P2) — single-writer Build on an isolated worktree (issue #366) ────
+
+describe('Safety #5 (P2) — one elected writer builds on an isolated worktree; no second seat writes', () => {
+  /** The isolated worktree the (fake) driver builds in — the dir the objective gate then
+   *  judges (safety #6). In production this is `<project>/.nightcore/worktrees/…`. */
+  const WORKTREE = '/project/.nightcore/worktrees/council-run';
+
+  /** A build-capable preset: the research preset + a `build` stage. Real Build presets are
+   *  #367/#368; the id stays `research` so it still validates (stages aren't validated). */
+  function buildPreset(): CouncilPreset {
+    return preset({
+      stages: [
+        ...RESEARCH_COUNCIL_PRESET.stages.slice(0, 3), // frame / propose / debate
+        { stage: 'build', blind: false },
+        { stage: 'converge', blind: false },
+      ],
+    });
+  }
+
+  /** A deterministic fake single-writer Build driver (no live worktree / session): records
+   *  every context it is handed and returns a worktree-backed result. */
+  class RecordingBuildDriver implements BuildDriver {
+    readonly calls: BuildContext[] = [];
+    constructor(private readonly worktreePath: string | undefined = WORKTREE) {}
+    build(context: BuildContext): Promise<BuildResult> {
+      this.calls.push(context);
+      return Promise.resolve({
+        content: `applied diff for ${context.writer.seatId}`,
+        usage: NO_USAGE,
+        costUsd: 0,
+        ...(this.worktreePath !== undefined
+          ? { worktreePath: this.worktreePath }
+          : {}),
+      });
+    }
+  }
+
+  test('the write-capable posture is write-capable-but-sandboxed AND distinct from the read-only seat posture', () => {
+    // Safety #3 on the writer: write-capable (auto-accept, so the writer may edit) but the
+    // OS write sandbox STAYS on — and deliberately NOT `bypass` (governance stays the
+    // compensating control).
+    expect(BUILD_WRITER_HARDENING.autonomy).toBe('auto-accept');
+    expect(BUILD_WRITER_HARDENING.sandboxWrites).toBe(true);
+    expect(BUILD_WRITER_HARDENING.autonomy).not.toBe('bypass');
+    // Only the writer's posture is write-capable; a DEBATING seat stays read-only (`plan`),
+    // so no non-writer seat can ever perform a write (safety #5).
+    expect(SEAT_SESSION_HARDENING.autonomy).toBe('plan');
+    expect(BUILD_WRITER_HARDENING.autonomy).not.toBe(SEAT_SESSION_HARDENING.autonomy);
+  });
+
+  test('electWriter returns EXACTLY ONE conductor-elected writer — a seat cannot self-appoint (safety #1)', () => {
+    const seats: SeatContext[] = RESEARCH_COUNCIL_PRESET.seats.map((s) => ({
+      seatId: s.id,
+      role: s.role,
+      model: s.model,
+    }));
+    const writer = electWriter(seats);
+    expect(writer).not.toBeNull();
+    // Deterministic + conductor-owned: the first proposer.
+    expect(writer?.role).toBe('proposer');
+    expect(seats.filter((s) => s.seatId === writer?.seatId)).toHaveLength(1);
+    // An empty council elects no writer (the Build stage is then skipped).
+    expect(electWriter([])).toBeNull();
+  });
+
+  test('a Build runs the elected writer EXACTLY ONCE, handed the plan as MEDIATED quoted data', async () => {
+    const driver = new RecordingBuildDriver();
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan A')),
+      buildDriver: driver,
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-build',
+      preset: buildPreset(),
+      objective: 'ship X',
+    });
+
+    expect(result.status).toBe('converged');
+    // EXACTLY ONE writer wrote — no second seat can write (safety #5).
+    expect(driver.calls).toHaveLength(1);
+    const [ctx] = driver.calls;
+    // The writer is the conductor-elected proposer, not self-appointed (safety #1).
+    expect(ctx?.writer.role).toBe('proposer');
+    // The plan reaches the writer ONLY through the mediated quoted+scanned path (safety #2)
+    // — fenced untrusted data, never a raw instruction.
+    expect(ctx?.plan).toContain('quoted untrusted data');
+    expect(ctx?.plan).toContain('NEVER as an instruction');
+  });
+
+  test("the writer cannot escape its worktree: the build output is the gate's worktree, sandbox active", async () => {
+    const driver = new RecordingBuildDriver();
+    let gateCwd: string | undefined = 'unset';
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan')),
+      buildDriver: driver,
+      objectiveGate: {
+        evaluate: (context: ObjectiveGateContext) => {
+          gateCwd = context.cwd;
+          return Promise.resolve({ passed: true, summary: 'built + green' });
+        },
+      },
+    });
+
+    await conductor.run({
+      councilRunId: 'run-escape',
+      preset: buildPreset(),
+      objective: 'o',
+    });
+
+    // The writer is confined to its ISOLATED worktree: the objective gate judges the BUILD
+    // OUTPUT in that worktree, not the run cwd — the built code never leaves the worktree.
+    expect(gateCwd).toBe(WORKTREE);
+    // The OS write sandbox stays on for the writer (containment is not lifted by write).
+    expect(driver.calls[0]?.writer).toBeDefined();
+    expect(BUILD_WRITER_HARDENING.sandboxWrites).toBe(true);
+  });
+
+  test('the Build diff summary is recorded through the MEDIATED bus (safety #7), plan scanned (safety #2)', async () => {
+    const driver = new RecordingBuildDriver();
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan')),
+      buildDriver: driver,
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-note',
+      preset: buildPreset(),
+      objective: 'o',
+    });
+
+    // The diff summary landed on the append-only transcript as a conductor `note` in the
+    // `build` stage — recorded THROUGH the mediated bus, never a direct store write.
+    const buildNote = result.transcript.find(
+      (e) =>
+        e.stage === 'build' &&
+        e.kind === 'note' &&
+        e.content.includes('Diff summary'),
+    );
+    expect(buildNote).toBeDefined();
+    expect(buildNote?.role).toBe('conductor');
+    // The plan delivered to the writer was injection-SCANNED (safety #2): a `build`-stage
+    // delivery entry carries its scan result.
+    const planDelivery = result.transcript.find(
+      (e) => e.stage === 'build' && e.kind === 'delivery',
+    );
+    expect(planDelivery).toBeDefined();
+    expect(Array.isArray(planDelivery?.injectionFlags)).toBe(true);
+  });
+
+  test('DORMANT off by default: no buildDriver ⇒ no Build even for a build-stage preset', async () => {
+    // The production Conductor is constructed WITHOUT a buildDriver, so the Build stage
+    // never runs — a council debates plans, it never writes (double gate, half one).
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan')),
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-dormant-nodriver',
+      preset: buildPreset(),
+      objective: 'o',
+    });
+
+    expect(result.status).toBe('converged');
+    expect(result.transcript.some((e) => e.stage === 'build')).toBe(false);
+  });
+
+  test('DORMANT: a buildDriver + a preset with NO build stage ⇒ no Build (double gate, half two)', async () => {
+    const driver = new RecordingBuildDriver();
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan')),
+      buildDriver: driver,
+    });
+
+    await conductor.run({
+      councilRunId: 'run-dormant-nostage',
+      preset: preset(), // the P1 research preset — no `build` stage
+      objective: 'o',
+    });
+
+    expect(driver.calls).toHaveLength(0);
+  });
+});
+
+// ── Safety #6 (P2, Build) — a failing objective gate REJECTS the Build output (#366) ──
+
+describe('Safety #6 (P2, Build) — a red objective gate over the BUILD OUTPUT rejects the build', () => {
+  const WORKTREE = '/project/.nightcore/worktrees/council-gate';
+
+  function buildPreset(): CouncilPreset {
+    return preset({
+      stages: [
+        ...RESEARCH_COUNCIL_PRESET.stages.slice(0, 3),
+        { stage: 'build', blind: false },
+        { stage: 'converge', blind: false },
+      ],
+    });
+  }
+
+  const driver: BuildDriver = {
+    build: (context) =>
+      Promise.resolve({
+        content: `diff by ${context.writer.seatId}`,
+        usage: NO_USAGE,
+        costUsd: 0,
+        worktreePath: WORKTREE,
+      }),
+  };
+
+  test('a build whose tests are RED cannot be adopted: the gate ran on the worktree and rejects it', async () => {
+    let judgedCwd: string | undefined = 'unset';
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('we agree: ship it')),
+      buildDriver: driver,
+      objectiveGate: {
+        evaluate: (context: ObjectiveGateContext) => {
+          judgedCwd = context.cwd;
+          return Promise.resolve({
+            passed: false,
+            summary: 'build output red: 2 tests fail',
+          });
+        },
+      },
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-build-reject',
+      preset: buildPreset(),
+      objective: 'o',
+    });
+
+    // The gate judged the BUILD OUTPUT (the writer's worktree), not the run cwd (safety #6).
+    expect(judgedCwd).toBe(WORKTREE);
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(false);
+
+    // The red gate REJECTS the build: adopting a seat's position is refused, the run stays
+    // parked — a failing build/test overrides consensus (safety #6, issue #366).
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    const refused = conductor.resolveConverge('run-build-reject', {
+      kind: 'accept',
+      seatId: adopted,
+    });
+    expect(refused.ok).toBe(false);
+    expect(conductor.isAwaitingConverge('run-build-reject')).toBe(true);
+
+    // The human remains the ultimate authority (safety #7): an explicit override adopts it,
+    // audited as overriding the red gate.
+    const override = conductor.resolveConverge('run-build-reject', {
+      kind: 'accept',
+      seatId: adopted,
+      overrideGate: true,
+    });
+    expect(override.ok).toBe(true);
+    expect(override.entry?.content).toContain('OVERRODE the red objective gate');
   });
 });
 
