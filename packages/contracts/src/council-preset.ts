@@ -30,12 +30,14 @@ import { DebateSeatRoleSchema, DebateStageSchema } from './debate.js';
 /**
  * The id of a council preset — the shared cross-tier vocabulary (mirrors
  * `TaskKind`). P1 shipped `research`; P2 adds `ui-bug` (issue #367 — the
- * reproduce-first council whose objective gate is a repro that must go RED → GREEN).
+ * reproduce-first council whose objective gate is a repro that must go RED → GREEN)
+ * and `coding` (issue #368 — the Coding council that debates the implementation PLAN
+ * only; the single-writer Build executes it and a build/test gate decides success).
  * Adding a preset id touches this enum, the Rust `CouncilPresetId` (force-emitted by
  * `gen-rust-contracts.ts`), and `ENUM_NAMES` — the same three-site house rule
  * `TaskKind` follows.
  */
-export const CouncilPresetIdSchema = z.enum(['research', 'ui-bug']);
+export const CouncilPresetIdSchema = z.enum(['research', 'ui-bug', 'coding']);
 export type CouncilPresetId = z.infer<typeof CouncilPresetIdSchema>;
 
 /**
@@ -49,6 +51,13 @@ export type CouncilPresetId = z.infer<typeof CouncilPresetIdSchema>;
  *    bug), the single-writer Build then turns it GREEN, and this gate — run over the
  *    build output — is the terminal check: a still-RED repro cannot be adopted over a
  *    confident debate consensus.
+ *  - `build` — the **build/test** gate (the P2 Coding preset, #368). The council debates
+ *    the implementation PLAN only (approach, tradeoffs, risks — never keystrokes); the
+ *    single-writer Build then executes the converged plan, and this gate — a
+ *    typecheck/lint/test gauntlet run over the writer's worktree — is the terminal check:
+ *    a RED build/test cannot be adopted over debate consensus (safety #6). Distinct from
+ *    `repro` (a failing-first repro) — this is the whole build/test suite, not a single
+ *    bug reproduction.
  *
  * This is ENGINE-INTERNAL preset data (like {@link CouncilConvergenceSchema}), NOT part
  * of the cross-tier `CouncilPresetId` vocabulary, so it never crosses to Rust. The
@@ -56,7 +65,7 @@ export type CouncilPresetId = z.infer<typeof CouncilPresetIdSchema>;
  * (`packages/engine/src/debate/objective-preset.ts`), reusing the existing pre-merge
  * gauntlet exec — no new exec sink.
  */
-export const CouncilObjectiveGateSchema = z.enum(['repro']);
+export const CouncilObjectiveGateSchema = z.enum(['repro', 'build']);
 export type CouncilObjectiveGate = z.infer<typeof CouncilObjectiveGateSchema>;
 
 /**

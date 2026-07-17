@@ -5,6 +5,7 @@ import { CouncilPresetSchema } from '@nightcore/contracts';
 
 import { electWriter } from './build-writer.js';
 import {
+  CODING_COUNCIL_PRESET,
   COUNCIL_PRESETS,
   RESEARCH_COUNCIL_PRESET,
   resolveCouncilPreset,
@@ -21,6 +22,11 @@ describe('council preset registry', () => {
   test('resolves the UI-bug preset by id (round-trips through the registry)', () => {
     expect(resolveCouncilPreset('ui-bug')).toBe(UI_BUG_COUNCIL_PRESET);
     expect(COUNCIL_PRESETS['ui-bug']).toBe(UI_BUG_COUNCIL_PRESET);
+  });
+
+  test('resolves the Coding preset by id (round-trips through the registry)', () => {
+    expect(resolveCouncilPreset('coding')).toBe(CODING_COUNCIL_PRESET);
+    expect(COUNCIL_PRESETS.coding).toBe(CODING_COUNCIL_PRESET);
   });
 
   test('every registered preset is structurally valid (parses through the contract)', () => {
@@ -68,6 +74,34 @@ describe('council preset registry', () => {
     // The Build's single writer is elected from the proposers, never the critic — the
     // reproduce-first fix has one author (safety #5/#1).
     const seats = UI_BUG_COUNCIL_PRESET.seats.map((s) => ({
+      seatId: s.id,
+      role: s.role,
+      model: s.model,
+    }));
+    expect(electWriter(seats)?.role).toBe('proposer');
+  });
+
+  test('the Coding preset debates the plan, then builds and gates on build/test (issue #368)', () => {
+    // Debate-the-plan-only: the same Frame → Propose → Debate → Build → Converge sequence,
+    // but the objective gate is the `build` (typecheck/lint/test) terminal judge, not a repro.
+    expect(CODING_COUNCIL_PRESET.objectiveGate).toBe('build');
+    expect(CODING_COUNCIL_PRESET.convergence).toBe('human');
+    expect(CODING_COUNCIL_PRESET.stages.map((stage) => stage.stage)).toEqual([
+      'frame',
+      'propose',
+      'debate',
+      'build',
+      'converge',
+    ]);
+    // Propose stays blind (diversity survives into the debate); Debate loops ≤2.
+    expect(
+      CODING_COUNCIL_PRESET.stages.find((s) => s.stage === 'propose')?.blind,
+    ).toBe(true);
+    expect(
+      CODING_COUNCIL_PRESET.stages.find((s) => s.stage === 'debate')?.maxRounds,
+    ).toBe(2);
+    // The plan's single implementer is a proposer, never the critic — one writer types code.
+    const seats = CODING_COUNCIL_PRESET.seats.map((s) => ({
       seatId: s.id,
       role: s.role,
       model: s.model,

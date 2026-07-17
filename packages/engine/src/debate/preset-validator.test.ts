@@ -245,4 +245,27 @@ describe('validateCouncilPreset', () => {
     // satisfied, so the new rules never regress the pure-reasoning path.
     expect(validateCouncilPreset(basePreset)).toEqual({ valid: true });
   });
+
+  // ── Coding preset: the `build` gate reuses the same build ⟺ gate coupling (issue #368) ──
+
+  test('ACCEPTS a Coding-shaped preset: a `build` stage paired with a `build` gate', () => {
+    const codingShaped: CouncilPreset = { ...objectivePreset, objectiveGate: 'build' };
+    expect(validateCouncilPreset(codingShaped)).toEqual({ valid: true });
+  });
+
+  test('REJECTS a `build` gate with NO build stage (nothing to build/test, #368)', () => {
+    // The coupling is GENERAL — every objective gate judges the build output, so the `build`
+    // gate inherits the same "requires a build stage" rule the `repro` gate has.
+    const buildGateNoBuild: CouncilPreset = {
+      ...objectivePreset,
+      objectiveGate: 'build',
+      stages: [
+        { stage: 'frame', blind: false },
+        { stage: 'propose', blind: true },
+        { stage: 'debate', blind: false, maxRounds: 2 },
+        { stage: 'converge', blind: false },
+      ],
+    };
+    expect(issueCodes(buildGateNoBuild)).toContain('objective-gate-requires-build-stage');
+  });
 });

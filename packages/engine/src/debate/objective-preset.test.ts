@@ -15,6 +15,7 @@ import type {
 } from './objective-gate.js';
 import { isObjectivePreset, objectiveGateForPreset } from './objective-preset.js';
 import {
+  CODING_COUNCIL_PRESET,
   RESEARCH_COUNCIL_PRESET,
   UI_BUG_COUNCIL_PRESET,
 } from './preset-registry.js';
@@ -42,9 +43,31 @@ function reproRunner(green: boolean): (ctx: ObjectiveGateContext) => GauntletLik
         };
 }
 
+/** A fake build/test gauntlet runner — the injected typecheck/lint/test exec (#368). */
+function buildRunner(green: boolean): (ctx: ObjectiveGateContext) => GauntletLikeResult {
+  return () =>
+    green
+      ? {
+          passed: true,
+          checks: [
+            { name: 'typecheck', status: 'passed' },
+            { name: 'test', status: 'passed' },
+          ],
+        }
+      : {
+          passed: false,
+          failedCheck: 'test',
+          checks: [
+            { name: 'typecheck', status: 'passed' },
+            { name: 'test', status: 'failed', output: '2 tests fail' },
+          ],
+        };
+}
+
 describe('isObjectivePreset', () => {
-  test('the UI-bug preset is objective; the Research preset is not', () => {
+  test('the UI-bug + Coding presets are objective; the Research preset is not', () => {
     expect(isObjectivePreset(UI_BUG_COUNCIL_PRESET)).toBe(true);
+    expect(isObjectivePreset(CODING_COUNCIL_PRESET)).toBe(true);
     expect(isObjectivePreset(RESEARCH_COUNCIL_PRESET)).toBe(false);
   });
 });
@@ -93,5 +116,29 @@ describe('objectiveGateForPreset — data-driven gate resolution', () => {
     // resolves a gate regardless of stages.
     const noBuild: CouncilPreset = { ...RESEARCH_COUNCIL_PRESET, objectiveGate: 'repro' };
     expect(objectiveGateForPreset(noBuild, reproRunner(true))).toBeDefined();
+  });
+
+  test('the Coding preset resolves the `build` gate — a RED build/test overrides consensus (#368)', async () => {
+    const gate = objectiveGateForPreset(CODING_COUNCIL_PRESET, buildRunner(false));
+    expect(gate).toBeDefined();
+    const verdict = await gate!.evaluate(context());
+    // A red build/test FAILS the gate: the plan compiled/ran but the suite is red, so
+    // consensus cannot be adopted over it (safety #6 — the gate decides, not the debate).
+    expect(verdict.passed).toBe(false);
+    expect(verdict.summary).toContain('FAILED');
+    expect(verdict.checks?.some((c) => !c.passed && c.name === 'test')).toBe(true);
+  });
+
+  test('the Coding preset `build` gate maps a GREEN build/test to a PASSED verdict (#368)', async () => {
+    const gate = objectiveGateForPreset(CODING_COUNCIL_PRESET, buildRunner(true));
+    const verdict = await gate!.evaluate(context());
+    expect(verdict.passed).toBe(true);
+    expect(verdict.summary).toContain('passed');
+  });
+
+  test('no injected gauntlet runner ⇒ the Coding preset resolves NO gate (DORMANT production)', () => {
+    // Symmetry with the UI-bug DORMANT case: production injects no runner, so the Coding
+    // council debates the plan but never gates (the write step is deferred to #383).
+    expect(objectiveGateForPreset(CODING_COUNCIL_PRESET, undefined)).toBeUndefined();
   });
 });

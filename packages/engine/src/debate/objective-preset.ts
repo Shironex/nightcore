@@ -65,9 +65,10 @@ export function isObjectivePreset(preset: CouncilPreset): boolean {
  *  - `undefined` when no gauntlet runner is injected — the gate's exec is the gauntlet's;
  *    with no runner there is nothing to run, so the run degrades to human-only (the DORMANT
  *    production state until the writer + its worktree land).
- *  - otherwise the `repro` reproduce-first gate, built on {@link gauntletObjectiveGate}
- *    (reusing the gauntlet exec — no new sink). A RED repro FAILS the gate and overrides
- *    consensus; a GREEN repro passes it (pending the human, who stays terminal — safety #7).
+ *  - otherwise a gauntlet-backed gate, built on {@link gauntletObjectiveGate} (reusing the
+ *    gauntlet exec — no new sink): the `repro` reproduce-first gate (#367) or the Coding
+ *    preset's `build` build/test gate (#368). A RED gauntlet FAILS the gate and overrides
+ *    consensus; a GREEN one passes it (pending the human, who stays terminal — safety #7).
  *
  * The `objectiveGate` enum is exhaustive: every kind maps to a gate here, so adding a kind
  * fails to type-check until it is handled.
@@ -83,6 +84,11 @@ export function objectiveGateForPreset(
     case 'repro':
       // The reproduce-first repro gate: the repro check runs as a Structure-Lock gauntlet
       // over the build output. Reuse the gauntlet adapter — this module invents no exec.
+      return gauntletObjectiveGate(runGauntlet);
+    case 'build':
+      // The Coding preset's build/test gate (#368): a typecheck/lint/test gauntlet runs
+      // over the writer's worktree — the SAME gauntlet adapter, no new exec sink. The
+      // council debates the PLAN; this gate judges whether the built plan compiles + passes.
       return gauntletObjectiveGate(runGauntlet);
   }
 }

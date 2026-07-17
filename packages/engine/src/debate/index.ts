@@ -111,6 +111,7 @@ export {
 export type { PeerContext, PeerOutput } from './peer-context.js';
 export { assemblePeerContext } from './peer-context.js';
 export {
+  CODING_COUNCIL_PRESET,
   COUNCIL_PRESETS,
   RESEARCH_COUNCIL_PRESET,
   resolveCouncilPreset,

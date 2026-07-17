@@ -84,8 +84,9 @@ export type CouncilPresetIssueCode =
   /** A `build` stage must declare an `objectiveGate` — a write is never un-gated (#367,
    *  safety #6: an objective gate must judge the build output). */
   | 'build-stage-requires-objective-gate'
-  /** The reproduce-first `repro` gate needs a `build` stage — the write is what turns the
-   *  repro RED → GREEN, so a `repro` preset without a build could never pass (#367). */
+  /** An `objectiveGate` needs a `build` stage — every gate judges the BUILD OUTPUT, so
+   *  with no build there is nothing to judge: the `repro` gate never flips RED → GREEN
+   *  (#367) and the `build` build/test gate runs over an unchanged cwd (#368). */
   | 'objective-gate-requires-build-stage';
 
 /** One reason a preset is invalid — a code to branch on and a human-readable message. */
@@ -186,16 +187,19 @@ export function validateCouncilPreset(
 }
 
 /**
- * Enforce the objective-preset invariants (issue #367, safety #6). An OBJECTIVE preset
- * couples a `build` stage with an `objectiveGate` gate, and neither is valid alone:
+ * Enforce the objective-preset invariants (issue #367 `repro` / #368 `build`, safety #6).
+ * An OBJECTIVE preset couples a `build` stage with an `objectiveGate` gate, and neither is
+ * valid alone:
  *
  *  - **A `build` stage requires an `objectiveGate`.** A council's write must always be
  *    judged by a deterministic gate — a build with no objective gate could be adopted on
  *    debate consensus alone, which is exactly what safety #6 forbids. So a `build` stage
  *    without a gate is REJECTED.
- *  - **The `repro` gate requires a `build` stage.** Reproduce-first means the Build turns a
- *    RED repro GREEN; a `repro` preset with no `build` stage can never flip the repro, so
- *    its gate could never pass. A `repro` gate without a build is REJECTED.
+ *  - **An `objectiveGate` requires a `build` stage.** Every gate judges the BUILD OUTPUT,
+ *    so with no build stage there is nothing to judge: a `repro` gate (#367) can never flip
+ *    its repro RED → GREEN, and the `build` build/test gate (#368) would run over an
+ *    unchanged cwd. An objective gate without a build is REJECTED — this holds for every
+ *    gate kind, so a new objective preset inherits the coupling for free.
  *
  * A pure-reasoning preset (`research`: no build, no gate) satisfies both trivially.
  */
@@ -215,12 +219,13 @@ function checkObjective(
     });
   }
 
-  if (preset.objectiveGate === 'repro' && !hasBuildStage) {
+  if (preset.objectiveGate !== undefined && !hasBuildStage) {
     issues.push({
       code: 'objective-gate-requires-build-stage',
       message:
-        'The reproduce-first `repro` gate needs a `build` stage: the Build is what turns ' +
-        'the repro from RED to GREEN, so a `repro` preset without a build could never pass.',
+        `The \`${preset.objectiveGate}\` objective gate needs a \`build\` stage: the gate ` +
+        'judges the build output (the writer turns a red repro green / makes the build+test ' +
+        'suite pass), so a gated preset without a build could never pass.',
     });
   }
 }

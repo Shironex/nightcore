@@ -51,6 +51,7 @@ import type {
 } from './objective-gate.js';
 import { assemblePeerContext } from './peer-context.js';
 import {
+  CODING_COUNCIL_PRESET,
   RESEARCH_COUNCIL_PRESET,
   UI_BUG_COUNCIL_PRESET,
 } from './preset-registry.js';
@@ -1139,6 +1140,202 @@ describe('Safety #6 (P2) — UI-bug preset: the reproduce-first repro gate is th
     const result = await conductor.run({
       councilRunId: 'run-ui-dormant',
       preset: UI_BUG_COUNCIL_PRESET,
+      objective: 'o',
+    });
+
+    expect(result.status).toBe('converged');
+    expect(result.transcript.some((e) => e.stage === 'build')).toBe(false);
+    expect(result.pendingDecision?.gateVerdict).toBeUndefined();
+  });
+});
+
+// ── Safety #5/#6 (P2) — Coding preset: debate the PLAN; the build/test gate is terminal (issue #368) ─
+
+describe('Safety #6 (P2) — Coding preset: the build/test gate is the terminal judge (issue #368)', () => {
+  /** The isolated worktree the (fake) writer builds in — the dir the build/test gate then
+   *  runs typecheck/lint/test in (safety #5/#6). In production `<project>/.nightcore/worktrees/…`. */
+  const WORKTREE = '/project/.nightcore/worktrees/council-coding';
+
+  /** A fake single-writer Build driver: "executes the plan" and returns the isolated worktree
+   *  the build/test gate judges. No live worktree/session — the driver seam is exec-neutral. */
+  function recordingDriver(): { driver: BuildDriver; calls: BuildContext[] } {
+    const calls: BuildContext[] = [];
+    return {
+      calls,
+      driver: {
+        build: (context) => {
+          calls.push(context);
+          return Promise.resolve({
+            content: `implemented plan by ${context.writer.seatId}`,
+            usage: NO_USAGE,
+            costUsd: 0,
+            worktreePath: WORKTREE,
+          });
+        },
+      },
+    };
+  }
+
+  /** A fake build/test gauntlet runner — the injected typecheck/lint/test exec (the harness
+   *  `runChecks` in production). `green` picks whether the build+test suite passes. */
+  function buildRunner(green: boolean): GauntletRunner {
+    return (): GauntletLikeResult =>
+      green
+        ? {
+            passed: true,
+            checks: [
+              { name: 'typecheck', status: 'passed' },
+              { name: 'test', status: 'passed' },
+            ],
+          }
+        : {
+            passed: false,
+            failedCheck: 'test',
+            checks: [
+              { name: 'typecheck', status: 'passed' },
+              { name: 'test', status: 'failed', output: 'build output red: 2 tests fail' },
+            ],
+          };
+  }
+
+  test('the registered Coding preset is a debate-the-plan, build-then-gate council', () => {
+    // Debate the PLAN only, then build + gate on build/test — the same stage sequence as the
+    // UI-bug preset but with the `build` (typecheck/lint/test) gate, not a repro.
+    expect(CODING_COUNCIL_PRESET.objectiveGate).toBe('build');
+    expect(CODING_COUNCIL_PRESET.stages.map((s) => s.stage)).toEqual([
+      'frame',
+      'propose',
+      'debate',
+      'build',
+      'converge',
+    ]);
+    // The whole real preset validates (the build ⟺ gate invariants, #367/#368).
+    expect(validateCouncilPreset(CODING_COUNCIL_PRESET)).toEqual({ valid: true });
+  });
+
+  test('a RED build/test OVERRIDES debate consensus even when every seat agrees on the plan', async () => {
+    const { driver, calls } = recordingDriver();
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('we all agree on this plan: ship it')),
+      buildDriver: driver,
+      gauntletRunner: buildRunner(false), // the build/test suite is RED (plan insufficient)
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-coding-red',
+      preset: CODING_COUNCIL_PRESET,
+      objective: 'add the export button',
+    });
+
+    // EXACTLY ONE writer wrote, and it is the conductor-elected proposer, not the critic
+    // (safety #5/#1) — the debated plan has one implementer, never a keystroke from a seat.
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.writer.role).toBe('proposer');
+
+    // The gate was built DATA-DRIVEN from the preset's `build` marker (no fixed gate wired)
+    // and is RED.
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(false);
+
+    // Debate consensus cannot be adopted over the red build/test: `accept` is refused, the run
+    // stays parked (safety #6 — the gate, not the debate, decides).
+    const seat = result.pendingDecision!.positions[0]!.seatId;
+    const refused = conductor.resolveConverge('run-coding-red', { kind: 'accept', seatId: seat });
+    expect(refused.ok).toBe(false);
+    expect(conductor.isAwaitingConverge('run-coding-red')).toBe(true);
+
+    // The human stays terminal (safety #7): a deliberate override adopts it, audited.
+    const override = conductor.resolveConverge('run-coding-red', {
+      kind: 'accept',
+      seatId: seat,
+      overrideGate: true,
+    });
+    expect(override.ok).toBe(true);
+    expect(override.entry?.content).toContain('OVERRODE the red objective gate');
+  });
+
+  test("a GREEN build/test over the writer's worktree lets consensus stand (pending the human)", async () => {
+    const { driver } = recordingDriver();
+    let judgedCwd: string | undefined = 'unset';
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan the change')),
+      buildDriver: driver,
+      gauntletRunner: (context): GauntletLikeResult => {
+        judgedCwd = context.cwd;
+        return { passed: true, checks: [{ name: 'test', status: 'passed' }] };
+      },
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-coding-green',
+      preset: CODING_COUNCIL_PRESET,
+      objective: 'o',
+      cwd: '/project',
+    });
+
+    // The build/test ran over the BUILD OUTPUT (the writer's isolated worktree), not the run
+    // cwd (safety #6): the implemented plan lives in the worktree, and that is what is judged.
+    expect(judgedCwd).toBe(WORKTREE);
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(true);
+    // A green build/test no longer blocks adoption — the human remains terminal.
+    const seat = result.pendingDecision!.positions[0]!.seatId;
+    expect(
+      conductor.resolveConverge('run-coding-green', { kind: 'accept', seatId: seat }).ok,
+    ).toBe(true);
+  });
+
+  test('the writer is elected from DEBATERS only — never a judge seat — even for a build + judge-agent preset (#380/#370 carry-forward)', async () => {
+    // Watch-point #2 (#380 gate): the SHARED Build path must draw the writer from debaters,
+    // never a dedicated `judge` seat, even for a preset that pairs a `build` stage with a
+    // `judge-agent` convergence. This hand-built Coding-shaped preset combines them — the
+    // election must still pick a proposer to author the plan the judge (and the gate) rules on.
+    const buildJudgePreset: CouncilPreset = {
+      ...CODING_COUNCIL_PRESET,
+      convergence: 'judge-agent',
+      seats: [
+        { id: 'proposer-opus', role: 'proposer', model: 'claude-opus-4-8' },
+        { id: 'proposer-sonnet', role: 'proposer', model: 'claude-sonnet-4-6' },
+        { id: 'judge-haiku', role: 'judge', model: 'claude-haiku-4-5' },
+      ],
+    };
+    // It is a well-formed preset (one judge seat, debaters present, build ⟺ gate).
+    expect(validateCouncilPreset(buildJudgePreset)).toEqual({ valid: true });
+
+    const { driver, calls } = recordingDriver();
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('plan the change')),
+      buildDriver: driver,
+      gauntletRunner: buildRunner(true),
+    });
+
+    await conductor.run({
+      councilRunId: 'run-coding-judge',
+      preset: buildJudgePreset,
+      objective: 'o',
+    });
+
+    // EXACTLY ONE writer wrote, and it is a PROPOSER — the judge seat never authors the code
+    // it would (via the gate) judge (safety #5/#1).
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.writer.role).toBe('proposer');
+    expect(calls[0]?.writer.seatId).not.toBe('judge-haiku');
+  });
+
+  test('DORMANT in production: no buildDriver + no gauntletRunner ⇒ the Coding council debates the plan but never writes/gates', async () => {
+    // The production Conductor is built WITHOUT a writer or a gauntlet runner (the real
+    // write-capable driver is deferred to #383), so a Coding council debates an implementation
+    // plan and parks for the human — it never writes code and no build/test runs (a council
+    // debates plans, it never types keystrokes).
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: new RecordingDriver(() => turn('debate the implementation plan')),
+    });
+
+    const result = await conductor.run({
+      councilRunId: 'run-coding-dormant',
+      preset: CODING_COUNCIL_PRESET,
       objective: 'o',
     });
 
