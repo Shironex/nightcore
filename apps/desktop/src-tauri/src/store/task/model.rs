@@ -791,6 +791,17 @@ mod tests {
             TaskKind::Decompose,
             TaskKind::Tdd,
         ] {
+            // Exhaustiveness tripwire: a new TaskKind variant breaks this match until
+            // it is also added to the array above, so the persistence-side
+            // serialize↔as_wire consistency check can never silently skip a kind
+            // (mirrors the generated↔hand parity guard in `contracts::mod`).
+            match kind {
+                TaskKind::Build
+                | TaskKind::Research
+                | TaskKind::Review
+                | TaskKind::Decompose
+                | TaskKind::Tdd => {}
+            }
             let json = serde_json::to_string(&kind).unwrap();
             assert_eq!(json, format!("\"{}\"", kind.as_wire()));
             let back: TaskKind = serde_json::from_str(&json).unwrap();
