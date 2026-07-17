@@ -13,7 +13,7 @@
  * The state machine (not free chat):
  *
  *   Frame → Propose (blind, parallel) → Debate (≤2 rounds, early-stop) → [Build (SINGLE
- *   writer, isolated worktree)] → Converge (gate → HUMAN)
+ *   writer, isolated worktree)] → [Review (adversarial)] → Converge (gate → HUMAN)
  *
  *  - **Frame**: reject an invalid preset up front (`validateCouncilPreset`), else seed
  *    the run (a frame note + a broadcast of the objective).
@@ -26,6 +26,11 @@
  *    debate converges, ONE elected writer executes the plan on an ISOLATED worktree,
  *    write-capable-but-sandboxed; every other seat stays read-only (`conductor-build.ts`).
  *    Runs ONLY when the preset declares a `build` stage AND a `buildDriver` is injected.
+ *  - **Review** (issue #369, P2, safety #2/#6/#7 — DORMANT unless a preset opts in): a
+ *    SEPARATE reviewer adversarially critiques the writer's Build diff (reusing the PR
+ *    phase-4 diff reviewer) before acceptance (`conductor-review.ts`). Runs ONLY when the
+ *    preset declares a `review` stage AND a `reviewDriver` is injected AND a Build ran. Its
+ *    verdict is ADVISORY scanned data — the objective gate outranks it, the human is terminal.
  *  - **Converge**: run the OBJECTIVE GATE (issue #365, safety #6) when configured — a
  *    deterministic tests/repro/build check whose RED verdict OVERRIDES consensus (a seat
  *    answer can't be adopted without an explicit human override); when a Build ran, the
@@ -52,6 +57,7 @@ import {
 } from './conductor-converge.js';
 import { buildResult, driveCouncil } from './conductor-drive.js';
 import { observeBus } from './conductor-observer.js';
+import type { ReviewDriver } from './conductor-review.js';
 import {
   applyRoutingDirective,
   type RunRoutingRuntime,
@@ -105,6 +111,13 @@ export interface ConductorDeps {
    *  writer runs write-capable-but-sandboxed on an ISOLATED worktree; the objective gate
    *  then judges the build output and can reject it. See `conductor-build.ts`. */
   readonly buildDriver?: BuildDriver;
+  /** The adversarial Review driver (issue #369, safety #2/#6/#7). Injected ONLY by a
+   *  Build+Review preset alongside a `review` stage; ABSENT in production today, so the
+   *  Review stage is dormant. It REUSES the PR phase-4 diff reviewer (read-only per-lens
+   *  passes + merge verdict) to independently critique the writer's Build diff before
+   *  acceptance. Its verdict is ADVISORY scanned data — the objective gate outranks it and
+   *  the human is terminal; it never gates acceptance. See `conductor-review.ts`. */
+  readonly reviewDriver?: ReviewDriver;
 }
 
 /** The inputs one council run is configured from. */

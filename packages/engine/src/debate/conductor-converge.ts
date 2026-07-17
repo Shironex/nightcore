@@ -23,6 +23,7 @@ import type { CouncilRunInput } from './conductor.js';
 // consumes the run's inputs the Conductor already assembled, and the Build stage's
 // outcome (the worktree the objective gate judges).
 import type { BuildOutcome } from './conductor-build.js';
+import type { ReviewVerdict } from './conductor-review.js';
 import type {
   ConvergeDecision,
   ConvergeResolution,
@@ -60,6 +61,11 @@ export interface RunConvergeInput {
    *  a failing gate then REJECTS the build. Absent ⇒ a pure-reasoning run (gate, if any,
    *  runs in the run cwd, as in P1). */
   readonly buildOutput?: BuildOutcome;
+  /** The adversarial Review verdict, when a Review ran over the Build's diff (issue #369).
+   *  ADVISORY: it rides the parked decision so the human weighs it beside the gate verdict,
+   *  but it never gates acceptance and never relaxes the objective gate (safety #6). Absent
+   *  ⇒ no review ran (dormant). */
+  readonly reviewVerdict?: ReviewVerdict;
 }
 
 /**
@@ -108,6 +114,7 @@ export async function runConverge(
     successCriterion: run.preset.successCriterion,
     rounds: input.rounds,
     ...(gateVerdict !== undefined ? { gateVerdict } : {}),
+    ...(input.reviewVerdict !== undefined ? { reviewVerdict: input.reviewVerdict } : {}),
   });
 }
 
@@ -128,6 +135,11 @@ export interface ParkConvergeInput {
    * rides the parked decision so a RED gate can OVERRIDE consensus at resolution.
    */
   readonly gateVerdict?: ObjectiveGateVerdict;
+  /** The adversarial Review verdict (issue #369), when a Review ran. ADVISORY — it rides
+   *  the parked decision so the human sees it beside the gate verdict, but it never gates
+   *  acceptance (only {@link gateVerdict} does — safety #6). Its verdict was already
+   *  recorded onto the transcript by the Review stage (`conductor-review.ts`). */
+  readonly reviewVerdict?: ReviewVerdict;
 }
 
 /** Record the objective-gate verdict (when present) + the Converge note, build the
@@ -167,6 +179,7 @@ export function parkConverge(input: ParkConvergeInput): PendingConvergeDecision 
     successCriterion: input.successCriterion,
     positions,
     ...(input.gateVerdict !== undefined ? { gateVerdict: input.gateVerdict } : {}),
+    ...(input.reviewVerdict !== undefined ? { reviewVerdict: input.reviewVerdict } : {}),
   };
   input.parked.set(input.councilRunId, { bus: input.bus, pending });
   return pending;
