@@ -418,6 +418,8 @@ pub enum NightcoreEvent {
         message: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         detail: Option<ErrorDetail>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        council: Option<bool>,
     },
     #[serde(rename_all = "camelCase")]
     SessionStatus {

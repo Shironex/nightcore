@@ -221,10 +221,10 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
 
     let session_id = event.get("sessionId").and_then(Value::as_u64);
 
-    // Council SEAT carve-out (issue #364). A debate seat session is driven INSIDE the
-    // engine by the Conductor — NOT launched via the board's `start_session` command —
-    // so it pushed no pending-launch slot in the board-task FIFO. It self-identifies with
-    // `council: true` on its `session-started`. For any seat event we must SKIP the FIFO
+    // Council SEAT carve-out (issue #364, extended by #374). A debate seat session is driven
+    // INSIDE the engine by the Conductor — NOT launched via the board's `start_session`
+    // command — so it pushed no pending-launch slot in the board-task FIFO. It self-identifies
+    // with `council: true` on its `session-started`. For any seat event we must SKIP the FIFO
     // correlation below: `correlate` would otherwise find an empty FIFO and warn (the
     // "correlation desync" flood) or — under concurrent board+council use — POP a
     // still-pending board task's slot and mis-bind the seat to it, poisoning that task's
@@ -232,11 +232,17 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
     // stream (run-id-keyed, forwarded above), so the raw seat `nc:session` stream is
     // intentionally dropped here. Registered on `session-started`; every later seat event
     // short-circuits on the id set; the terminal deregisters so the set can't grow.
+    //
+    // #374: a PREFLIGHT-REFUSED seat (autonomy/governance) emits ONLY a `session-failed` —
+    // no `session-started` to note — so we ALSO skip any event that carries the `council`
+    // marker itself, not just ids already noted. A refused BOARD session's `session-failed`
+    // has no marker, so it still correlates (to fail its own task); only a marked seat
+    // terminal is carved out.
     if let Some(sid) = session_id {
         if is_council_session_start(event_type, &event) {
             provider.note_council_session(sid);
         }
-        if provider.is_council_session(sid) {
+        if provider.is_council_session(sid) || event_is_council_marked(&event) {
             if matches!(event_type, "session-completed" | "session-failed") {
                 provider.forget(sid);
             }
@@ -595,7 +601,15 @@ pub(crate) async fn handle_event(app: &AppHandle, event: Value) {
 /// task). Any non-`session-started` type, or a `session-started` without the flag, is a
 /// normal board/scan session (false), so this leaves every non-council path unchanged.
 fn is_council_session_start(event_type: &str, event: &Value) -> bool {
-    event_type == "session-started" && event.get("council").and_then(Value::as_bool) == Some(true)
+    event_type == "session-started" && event_is_council_marked(event)
+}
+
+/// Whether an event carries the Council SEAT marker (`council: true`). The engine stamps it on
+/// a seat's `session-started` AND on a preflight-refused seat's `session-failed` (issue #374),
+/// so a refused seat's terminal — which had no `session-started` to note — is still skipped
+/// from board-FIFO correlation. A normal board/scan session never carries it.
+fn event_is_council_marked(event: &Value) -> bool {
+    event.get("council").and_then(Value::as_bool) == Some(true)
 }
 
 /// A terminal event is STALE when the task is currently bound to a *different*
@@ -668,13 +682,38 @@ mod tests {
         });
         assert!(!is_council_session_start("session-started", &board_false));
 
-        // The marker only means "seat" on `session-started`: a later seat event carries
-        // no marker, so it is recognized via the tracked id set, not this predicate.
+        // `is_council_session_start` only REGISTERS a seat on `session-started`; a later
+        // terminal is recognized via the tracked id set (or, for a refused seat, the marker
+        // — see `event_is_council_marked` below), never via this predicate.
         let later = json!({ "type": "session-completed", "sessionId": 209, "council": true });
         assert!(
             !is_council_session_start("session-completed", &later),
-            "only session-started registers a seat; later events route via the id set"
+            "only session-started registers a seat; later events route via the id set / marker"
         );
+    }
+
+    #[test]
+    fn council_marker_is_recognized_on_any_event_type() {
+        // #374: a preflight-refused seat emits ONLY a marked `session-failed` (no
+        // `session-started` was ever noted), so the marker itself — on any event type — must
+        // carve the event out of board-FIFO correlation.
+        let refused = json!({
+            "type": "session-failed", "sessionId": 77, "reason": "runner-crash",
+            "message": "autonomy not permitted", "council": true
+        });
+        assert!(event_is_council_marked(&refused));
+
+        // A refused BOARD session's `session-failed` carries NO marker, so it still
+        // correlates (to fail its own task) — the distinction that keeps board failures working.
+        let board_fail = json!({
+            "type": "session-failed", "sessionId": 3, "reason": "runner-crash",
+            "message": "boom"
+        });
+        assert!(!event_is_council_marked(&board_fail));
+
+        // Explicit `council: false` is not a seat marker.
+        let board_false = json!({ "type": "session-failed", "sessionId": 4, "council": false });
+        assert!(!event_is_council_marked(&board_false));
     }
 
     #[test]

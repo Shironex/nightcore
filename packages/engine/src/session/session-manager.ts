@@ -30,10 +30,6 @@ import type {
   AgentProvider,
   AgentSession,
 } from '../providers/agent-provider.js';
-import {
-  AutonomyNotPermittedError,
-  GovernanceNotSupportedError,
-} from '../providers/agent-provider.js';
 import { SessionApi } from '../providers/claude/session-api.js';
 import {
   buildProviderRegistry,
@@ -41,6 +37,7 @@ import {
 } from '../providers/provider-factory.js';
 import { ScanRouter } from '../scans/scan-router.js';
 import { probeModels } from './session-models.js';
+import { refusalEvent } from './session-preflight-refusal.js';
 import { handleSessionQuery } from './session-query.js';
 import { resolveStartSessionParams } from './session-start-params.js';
 
@@ -271,16 +268,14 @@ export class SessionManager {
         this.logger?.child(`session-${id}`),
       );
     } catch (error) {
-      if (error instanceof AutonomyNotPermittedError) {
-        return this.refuseSession(id, error.message, 'autonomy not permitted', {
-          providerId: error.providerId,
-          autonomy: error.autonomy,
-        });
-      }
-      if (error instanceof GovernanceNotSupportedError) {
-        return this.refuseSession(id, error.message, 'governance not supported', {
-          providerId: error.providerId,
-        });
+      // A preflight refusal (autonomy/governance) becomes a terminal `session-failed`. A
+      // refused COUNCIL seat echoes the marker onto it — `command.council` is the same flag
+      // its `session-started` would have carried — so the reader carves the refused seat out
+      // of board-FIFO correlation (issue #374). A non-refusal error rethrows.
+      const refusal = refusalEvent(id, error, command.council === true, this.logger);
+      if (refusal !== null) {
+        this.emit(refusal);
+        return id;
       }
       throw error;
     }
@@ -324,19 +319,6 @@ export class SessionManager {
     // floating promise here is safe and keeps dispatch() non-blocking.
     void runner.run().finally(() => this.retire(id));
 
-    return id;
-  }
-
-  /** Log + emit `session-failed` for a preflight-refused run (autonomy or
-   *  governance) — no runner started, so unlike a crash no slot was taken. */
-  private refuseSession(
-    id: number,
-    message: string,
-    reason: string,
-    logContext: Record<string, unknown>,
-  ): number {
-    this.logger?.warn(`session refused: ${reason}`, { id, ...logContext });
-    this.emit({ type: 'session-failed', sessionId: id, reason: 'runner-crash', message });
     return id;
   }
 
