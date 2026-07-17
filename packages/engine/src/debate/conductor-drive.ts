@@ -23,6 +23,7 @@ import { type ParkedConverge, runConverge } from './conductor-converge.js';
 import { debateMaxRounds, stageDispatchConfig } from './conductor-dispatch.js';
 import { debatePrompt, proposePrompt } from './conductor-prompts.js';
 import { runProposeStage } from './conductor-propose.js';
+import { runReview } from './conductor-review.js';
 import type {
   BudgetHaltCause,
   CouncilRunResult,
@@ -165,9 +166,30 @@ export async function driveCouncil(
     return buildResult(deps, councilRunId, buildHalt.status, governor, buildHalt.haltedBy);
   }
 
+  // ── Review (ADVERSARIAL — issue #369, safety #2/#6/#7). DORMANT unless the preset
+  // declares a `review` stage AND a reviewDriver is injected AND a Build produced a diff;
+  // then a SEPARATE reviewer independently critiques the writer's diff (reusing the PR
+  // phase-4 diff reviewer). Its verdict is ADVISORY scanned+quoted DATA recorded through the
+  // mediated bus — the objective gate still OUTRANKS it (a passing Review can't relax a red
+  // gate) and the human is terminal; it never gates acceptance. ────────────────────────
+  const reviewVerdict = await runReview({
+    bus,
+    driver: deps.reviewDriver,
+    preset,
+    run: input,
+    build: buildOutcome,
+    governor,
+    logger: deps.logger,
+  });
+  const reviewHalt = governorStatus(governor);
+  if (reviewHalt !== null) {
+    return buildResult(deps, councilRunId, reviewHalt.status, governor, reviewHalt.haltedBy);
+  }
+
   // ── Converge: run the OBJECTIVE GATE (safety #6; a red verdict overrides
   // consensus) — over the BUILD OUTPUT when a build ran — then park the debaters'
-  // positions for the human judge (non-human convergence may auto-adopt, #370). ─
+  // positions for the human judge (non-human convergence may auto-adopt, #370). The
+  // adversarial Review verdict rides the parked decision as advisory data (#369). ─
   const pending = await runConverge({
     parked,
     bus,
@@ -179,6 +201,7 @@ export async function driveCouncil(
     signal: governor.signal,
     logger: deps.logger,
     ...(buildOutcome !== null ? { buildOutput: buildOutcome } : {}),
+    ...(reviewVerdict !== null ? { reviewVerdict } : {}),
   });
 
   // ── Non-human convergence (issue #370): a judge-agent rules or the seats vote.

@@ -28,6 +28,7 @@ import type { Logger } from '@nightcore/shared';
 import type { BuildDriver } from './build-writer.js';
 import { DebateBus } from './bus.js';
 import { Conductor } from './conductor.js';
+import type { ReviewDriver } from './conductor-review.js';
 import type {
   ConvergeDecision,
   ConvergeResolution,
@@ -57,6 +58,13 @@ export interface CouncilManagerDeps {
    *  The production driver REUSES the isolated-worktree + confinement + `CommitLease`
    *  machinery — no new exec sink. See `conductor-build.ts` / `build-writer.ts`. */
   readonly buildDriver?: BuildDriver;
+  /** The adversarial Review driver (issue #369, safety #2/#6/#7). Injected ONLY by a
+   *  Build+Review preset alongside a `review` stage; ABSENT in production today, so the
+   *  Review stage stays DORMANT. It REUSES the PR phase-4 diff reviewer to independently
+   *  critique the writer's Build diff before acceptance — no new exec sink. Its verdict is
+   *  ADVISORY scanned data (the objective gate outranks it, the human is terminal). See
+   *  `conductor-review.ts`. */
+  readonly reviewDriver?: ReviewDriver;
   readonly logger?: Logger;
 }
 
@@ -83,6 +91,7 @@ export class CouncilManager {
         ? { objectiveGate: deps.objectiveGate }
         : {}),
       ...(deps.buildDriver !== undefined ? { buildDriver: deps.buildDriver } : {}),
+      ...(deps.reviewDriver !== undefined ? { reviewDriver: deps.reviewDriver } : {}),
       ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
     });
   }

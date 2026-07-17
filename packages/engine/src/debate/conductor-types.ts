@@ -23,6 +23,7 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 
+import type { ReviewVerdict } from './conductor-review.js';
 import type { ObjectiveGateVerdict } from './objective-gate.js';
 import type { CouncilPresetIssue } from './preset-validator.js';
 
@@ -133,6 +134,15 @@ export interface PendingConvergeDecision {
    * judge for objective tasks (see {@link ConvergeDecision.overrideGate}).
    */
   readonly gateVerdict?: ObjectiveGateVerdict;
+  /**
+   * The adversarial Review verdict, when a Review ran over the Build's diff (issue #369,
+   * P2). Absent ⇒ no review (a pure-reasoning run, no build, or a dormant reviewer). It is
+   * ADVISORY DATA surfaced beside {@link gateVerdict} so the human weighs both: it does NOT
+   * gate acceptance and does NOT relax the objective gate (safety #6 — the gate outranks
+   * it), and the human remains terminal (safety #7). Its finding text was injection-scanned
+   * (safety #2) — see {@link ReviewVerdict.injectionFlags}.
+   */
+  readonly reviewVerdict?: ReviewVerdict;
 }
 
 /** Running spend totals for a council run. */

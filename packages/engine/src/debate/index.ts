@@ -50,6 +50,14 @@ export { RunGovernor } from './conductor-budget.js';
 export type { BuildOutcome, RunBuildInput } from './conductor-build.js';
 export { presetHasBuildStage, runBuild } from './conductor-build.js';
 export type {
+  ReviewContext,
+  ReviewDriver,
+  ReviewResult,
+  ReviewVerdict,
+  RunReviewInput,
+} from './conductor-review.js';
+export { presetHasReviewStage, runReview } from './conductor-review.js';
+export type {
   BudgetHaltCause,
   ConvergeDecision,
   ConvergeResolution,

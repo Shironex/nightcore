@@ -20,7 +20,7 @@
  * as `Infinity`-free (it never trusts an absent cap as "unlimited" — it is charged
  * defensively). Pure and deterministic: no clock, no I/O.
  */
-import type { CouncilBudget } from '@nightcore/contracts';
+import type { CouncilBudget, TokenUsage } from '@nightcore/contracts';
 
 import type {
   BudgetHaltCause,
@@ -75,20 +75,28 @@ export class RunGovernor {
   /** Charge one seat turn's spend against the run. Called after every turn. Every
    *  token field the SDK reported counts toward the total-token ceiling. */
   chargeTurn(result: SeatTurnResult): void {
+    this.chargeSpend(result.usage, result.costUsd);
+  }
+
+  /** Charge a NON-seat-turn session's spend against the run — the Build writer's turn and
+   *  the Review reviewer's session (issues #366 / #369) are real sessions that cost budget
+   *  but aren't seat `runTurn`s. Every token field counts toward the total-token ceiling,
+   *  exactly as {@link chargeTurn}, so a build/review can trip a hard cap (safety #4). */
+  chargeSpend(usage: TokenUsage, costUsd: number): void {
     const {
       inputTokens,
       outputTokens,
       cacheReadTokens,
       cacheCreationTokens,
       reasoningOutputTokens,
-    } = result.usage;
+    } = usage;
     this.tokens +=
       inputTokens +
       outputTokens +
       cacheReadTokens +
       cacheCreationTokens +
       reasoningOutputTokens;
-    this.cost += result.costUsd;
+    this.cost += costUsd;
   }
 
   /**
