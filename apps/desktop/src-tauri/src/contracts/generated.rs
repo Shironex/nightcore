@@ -215,6 +215,18 @@ pub enum SurfaceCommand {
         run_id: String,
         edges: Vec<CouncilRoutingEdge>,
     },
+    #[serde(rename_all = "camelCase")]
+    ResolveWorktreeOp {
+        request_id: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        worktree_path: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gauntlet_passed: Option<bool>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        gauntlet_summary: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+    },
 }
 
 // === Surface → engine queries (Rust SERIALIZES these; replies arrive as the
@@ -709,6 +721,12 @@ pub enum NightcoreEvent {
     DebateEntry {
         run_id: String,
         entry: DebateTranscriptEntry,
+    },
+    #[serde(rename_all = "camelCase")]
+    WorktreeOpRequired {
+        request_id: String,
+        op: WorktreeOpRequiredOpEnum,
+        council_run_id: String,
     },
 }
 
@@ -1757,6 +1775,14 @@ pub enum WorkspaceTool {
     Cargo,
     Single,
     Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum WorktreeOpRequiredOpEnum {
+    Allocate,
+    Commit,
+    Gauntlet,
 }
 
 // === Event channel registry (nc:*) — single-sourced from `CHANNELS`; the

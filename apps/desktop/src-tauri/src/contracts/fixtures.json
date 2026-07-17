@@ -269,6 +269,13 @@
           "to": "critic-opus"
         }
       ]
+    },
+    "resolve-worktree-op": {
+      "type": "resolve-worktree-op",
+      "requestId": "wt-1",
+      "worktreePath": "/proj/.nightcore/worktrees/council-run-1",
+      "gauntletPassed": true,
+      "gauntletSummary": "Structure-Lock gauntlet passed (2 check(s))."
     }
   },
   "queries": {
@@ -1165,6 +1172,12 @@
         "at": 1718900000000,
         "injectionFlags": []
       }
+    },
+    "worktree-op-required": {
+      "type": "worktree-op-required",
+      "requestId": "wt-1",
+      "op": "allocate",
+      "councilRunId": "council-run-1"
     },
     "query-result": {
       "type": "query-result",
