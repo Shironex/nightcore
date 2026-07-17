@@ -1146,6 +1146,13 @@ const COMMAND_INPUTS: Record<string, unknown> = {
       { from: 'proposer-sonnet', to: 'critic-opus' },
     ],
   },
+  'resolve-worktree-op': {
+    type: 'resolve-worktree-op',
+    requestId: 'wt-1',
+    worktreePath: '/proj/.nightcore/worktrees/council-run-1',
+    gauntletPassed: true,
+    gauntletSummary: 'Structure-Lock gauntlet passed (2 check(s)).',
+  },
 };
 
 /** A representative raw input per query variant (the request/reply stream). */
@@ -1920,6 +1927,12 @@ const EVENT_INPUTS: Record<string, unknown> = {
       at: 1718900000000,
       injectionFlags: [],
     },
+  },
+  'worktree-op-required': {
+    type: 'worktree-op-required',
+    requestId: 'wt-1',
+    op: 'allocate',
+    councilRunId: 'council-run-1',
   },
   'query-result': {
     type: 'query-result',

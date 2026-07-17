@@ -526,6 +526,41 @@ export const SetCouncilRoutingCommand = z.object({
   edges: z.array(CouncilRoutingEdgeSchema),
 });
 
+/**
+ * The host → engine RESOLUTION of a `worktree-op-required` event (issue #383) — the
+ * resolving half of the path-less, `councilRunId`-keyed worktree seam, modeled on the
+ * parked-permission seam (`permission-required` → `approve-permission`). The Rust host
+ * performs the requested worktree op against the path IT derived from the run id (never
+ * an engine-sent path — the escape guard), then dispatches THIS command so the engine
+ * resolves the driver / gauntlet call awaiting `requestId`.
+ *
+ * Deliberately FLAT + carries NO worktree path back FROM the host as an instruction: the
+ * only path field is `worktreePath`, the host-DERIVED allocation dir the elected writer
+ * runs in (returned so the engine points the writer's cwd + the objective gate at it) —
+ * it is trusted host output, not caller input. The fields are per-op: `worktreePath` for
+ * `allocate`; `gauntletPassed` + `gauntletSummary` for `gauntlet`; a present `error`
+ * marks any op that could not run (fail-closed at the awaiting call). `commit` success
+ * carries none of them (absent `error` ⇒ committed).
+ */
+export const ResolveWorktreeOpCommand = z.object({
+  type: z.literal('resolve-worktree-op'),
+  /** The `worktree-op-required` request this resolves (the correlation key). */
+  requestId: z.string(),
+  /** `allocate` only: the host-DERIVED isolated worktree dir (the writer's cwd + the
+   *  gate's run dir). Absent on `commit`/`gauntlet` and on any failure. */
+  worktreePath: z.string().optional(),
+  /** `gauntlet` only: whether the deterministic Structure-Lock gate passed. A `false`
+   *  OVERRIDES debate consensus (safety #6). Absent on `allocate`/`commit`. */
+  gauntletPassed: z.boolean().optional(),
+  /** `gauntlet` only: a one-line, human-readable gate summary (the failing check / pass
+   *  count) recorded onto the transcript beside the verdict. */
+  gauntletSummary: z.string().optional(),
+  /** Set when the op could not run (allocation failed, git error, the gauntlet could not
+   *  be launched). The awaiting engine call fails CLOSED on it. */
+  error: z.string().optional(),
+});
+export type ResolveWorktreeOpCommand = z.infer<typeof ResolveWorktreeOpCommand>;
+
 /** The discriminated union of every surface → engine command, keyed by `type`. */
 export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   StartSessionCommand,
@@ -549,6 +584,7 @@ export const SurfaceCommandSchema = z.discriminatedUnion('type', [
   KillCouncilCommand,
   ResolveCouncilConvergeCommand,
   SetCouncilRoutingCommand,
+  ResolveWorktreeOpCommand,
 ]);
 export type SurfaceCommand = z.infer<typeof SurfaceCommandSchema>;
 

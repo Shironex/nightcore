@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { PermissionModeSchema } from './config.js';
-import { DebateEntryEvent } from './debate.js';
+import { DebateEntryEvent, WorktreeOpRequiredEvent } from './debate.js';
 import { TokenUsageSchema } from './event-fragments.js';
 import {
   HarnessCategoryCompletedEvent,
@@ -523,6 +523,7 @@ export const NightcoreEventSchema = z.discriminatedUnion('type', [
   IssueValidationFailedEvent,
   IssueValidationConvertedEvent,
   DebateEntryEvent,
+  WorktreeOpRequiredEvent,
 ]);
 export type NightcoreEvent = z.infer<typeof NightcoreEventSchema>;
 

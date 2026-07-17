@@ -122,3 +122,48 @@ export const DebateEntryEvent = z.object({
   entry: DebateTranscriptEntrySchema,
 });
 export type DebateEntryEvent = z.infer<typeof DebateEntryEvent>;
+
+/**
+ * The three worktree operations a build-capable Council's in-engine driver asks the
+ * Rust host to perform on its behalf (issue #383) — the ONLY verbs the engine↔host
+ * worktree seam exposes:
+ *  - `allocate` — allocate the run's isolated worktree (the elected writer's cwd + the
+ *    objective gate's run dir).
+ *  - `commit`   — persist the writer's edits onto the run's `nc/<runId>` branch so the
+ *    human has something to merge (never a merge — merge/discard stay human-only).
+ *  - `gauntlet` — run the deterministic Structure-Lock gate over the worktree (safety
+ *    #6). The host loads the manifest from the TRUSTED project root and runs the checks
+ *    in the worktree, reusing the board's audited gauntlet — no new engine exec sink.
+ * The op is a CLOSED enum so a compromised engine can never name an unknown verb.
+ */
+export const WorktreeOpKindSchema = z.enum(['allocate', 'commit', 'gauntlet']);
+export type WorktreeOpKind = z.infer<typeof WorktreeOpKindSchema>;
+
+/**
+ * The engine → host worktree-op REQUEST (issue #383) — the ONE new outbound event the
+ * write-capable Council `SessionBuildDriver` / objective gate emit to reach Rust's
+ * already-audited `crate::worktree` + Structure-Lock gauntlet across the sidecar process
+ * boundary. It is deliberately PATH-LESS and keyed ONLY on `councilRunId`: the host
+ * DERIVES the worktree path from the run id via `crate::worktree::path` against the
+ * project root IT recorded at `start-council`, and NEVER trusts an engine-sent path. That
+ * is what makes this a MESSAGE TYPE, not a write/exec sink — an injection-compromised
+ * engine cannot redirect a worktree op outside `.nightcore/worktrees/<runId>`.
+ *
+ * Correlated by `requestId` back to the awaiting engine call via the resolving
+ * `resolve-worktree-op` command — modeled on the parked-permission seam. Carries NO
+ * `sessionId`: like `debate-entry`, it correlates by `councilRunId`, so the reader routes
+ * it BEFORE the session-id correlation and consumes it internally (never forwarded to the
+ * web — it rides no `nc:*` channel).
+ */
+export const WorktreeOpRequiredEvent = z.object({
+  type: z.literal('worktree-op-required'),
+  /** The correlation id the resolving `resolve-worktree-op` command echoes back. */
+  requestId: z.string(),
+  /** Which worktree verb to perform — a closed enum (never a caller-supplied path). */
+  op: WorktreeOpKindSchema,
+  /** The council run the op is scoped to. The host maps THIS to the trusted project root
+   *  it recorded at `start-council` and derives the worktree path from it — the sole
+   *  input; no path ever crosses the wire (the escape guard, path.rs). */
+  councilRunId: z.string(),
+});
+export type WorktreeOpRequiredEvent = z.infer<typeof WorktreeOpRequiredEvent>;
