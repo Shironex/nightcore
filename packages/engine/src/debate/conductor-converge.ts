@@ -18,9 +18,11 @@ import type { DebateTranscriptEntry } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
 import type { ConductorBus } from './bus.js';
-// Type-only import (erased at runtime — no import cycle): the Converge orchestration
-// consumes the run's inputs the Conductor already assembled.
 import type { CouncilRunInput } from './conductor.js';
+// Type-only imports (erased at runtime — no import cycle): the Converge orchestration
+// consumes the run's inputs the Conductor already assembled, and the Build stage's
+// outcome (the worktree the objective gate judges).
+import type { BuildOutcome } from './conductor-build.js';
 import type {
   ConvergeDecision,
   ConvergeResolution,
@@ -52,6 +54,12 @@ export interface RunConvergeInput {
   /** The run's abort signal — a kill/budget halt cancels an in-flight gate check. */
   readonly signal: AbortSignal;
   readonly logger: Logger | undefined;
+  /** The Build stage's outcome, when a build ran (issue #366, safety #6). When present
+   *  with a `worktreePath`, the objective gate judges the BUILD OUTPUT (it runs its
+   *  deterministic build/test check in the writer's isolated worktree), not the run cwd —
+   *  a failing gate then REJECTS the build. Absent ⇒ a pure-reasoning run (gate, if any,
+   *  runs in the run cwd, as in P1). */
+  readonly buildOutput?: BuildOutcome;
 }
 
 /**
@@ -68,11 +76,16 @@ export async function runConverge(
   const { run } = input;
   let gateVerdict: ObjectiveGateVerdict | undefined;
   if (input.gate !== undefined) {
+    // When a Build ran, the gate judges the BUILD OUTPUT: point its deterministic
+    // build/test check at the writer's ISOLATED worktree, not the run cwd (safety #6,
+    // issue #366) — so a failing build/test REJECTS the build. No build ⇒ the run cwd
+    // (P1 pure-reasoning behaviour).
+    const gateCwd = input.buildOutput?.worktreePath ?? run.cwd;
     gateVerdict = await input.gate.evaluate({
       councilRunId: run.councilRunId,
       objective: run.objective,
       successCriterion: run.preset.successCriterion,
-      ...(run.cwd !== undefined ? { cwd: run.cwd } : {}),
+      ...(gateCwd !== undefined ? { cwd: gateCwd } : {}),
       positions: input.seats.map((seat) => ({
         seatId: seat.seatId,
         role: seat.role,

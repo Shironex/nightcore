@@ -23,6 +23,12 @@ export {
   DEFAULT_SEAT_TIMEOUT_MS,
 } from './broadcast-collector.js';
 export type {
+  BuildContext,
+  BuildDriver,
+  BuildResult,
+} from './build-writer.js';
+export { BUILD_WRITER_HARDENING, electWriter } from './build-writer.js';
+export type {
   ConductorBus,
   DeliveryOutcome,
   InterSeatDelivery,
@@ -33,6 +39,8 @@ export { DebateBus } from './bus.js';
 export type { ConductorDeps, CouncilRunInput } from './conductor.js';
 export { Conductor } from './conductor.js';
 export { RunGovernor } from './conductor-budget.js';
+export type { BuildOutcome, RunBuildInput } from './conductor-build.js';
+export { presetHasBuildStage, runBuild } from './conductor-build.js';
 export type {
   BudgetHaltCause,
   ConvergeDecision,

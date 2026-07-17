@@ -25,6 +25,7 @@ import type {
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
+import type { BuildDriver } from './build-writer.js';
 import { DebateBus } from './bus.js';
 import { Conductor } from './conductor.js';
 import type {
@@ -33,6 +34,7 @@ import type {
   SeatDriver,
 } from './conductor-types.js';
 import type { RoutingUpdate } from './council-routing.js';
+import type { ObjectiveGate } from './objective-gate.js';
 import { resolveCouncilPreset } from './preset-registry.js';
 
 export interface CouncilManagerDeps {
@@ -45,6 +47,16 @@ export interface CouncilManagerDeps {
    *  `NightcoreEvent`. Absent ⇒ transcript entries stay in-engine (captured in the
    *  store + run result, so the run is still auditable — safety #7). */
   readonly emit?: (councilRunId: string, entry: DebateTranscriptEntry) => void;
+  /** The objective gate run at Converge (issue #365, safety #6). Injected ONLY by an
+   *  objective-task preset (#367/#368); ABSENT in production today, so P1 councils are
+   *  pure-reasoning (the human decides alone). See {@link Conductor}. */
+  readonly objectiveGate?: ObjectiveGate;
+  /** The SINGLE-writer Build driver (issue #366, safety #5). Injected ONLY by a
+   *  Build-capable preset (#367/#368) alongside a `build` stage; ABSENT in production
+   *  today, so the Build stage stays DORMANT (a council debates plans, it never writes).
+   *  The production driver REUSES the isolated-worktree + confinement + `CommitLease`
+   *  machinery — no new exec sink. See `conductor-build.ts` / `build-writer.ts`. */
+  readonly buildDriver?: BuildDriver;
   readonly logger?: Logger;
 }
 
@@ -67,6 +79,10 @@ export class CouncilManager {
       bus: deps.bus ?? new DebateBus(),
       seatDriver: deps.seatDriver,
       ...(deps.emit !== undefined ? { onEntry: deps.emit } : {}),
+      ...(deps.objectiveGate !== undefined
+        ? { objectiveGate: deps.objectiveGate }
+        : {}),
+      ...(deps.buildDriver !== undefined ? { buildDriver: deps.buildDriver } : {}),
       ...(deps.logger !== undefined ? { logger: deps.logger } : {}),
     });
   }

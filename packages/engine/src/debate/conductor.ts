@@ -12,18 +12,25 @@
  *
  * The state machine (not free chat):
  *
- *   Frame → Propose (blind, parallel) → Debate (≤2 rounds, early-stop) → Converge (gate → HUMAN)
+ *   Frame → Propose (blind, parallel) → Debate (≤2 rounds, early-stop) → [Build (SINGLE
+ *   writer, isolated worktree)] → Converge (gate → HUMAN)
  *
  *  - **Frame**: reject an invalid preset up front (`validateCouncilPreset`), else seed
  *    the run (a frame note + a broadcast of the objective).
  *  - **Propose** (BLIND, parallel): each seat proposes from the objective ALONE — no
- *    peer content enters a Propose prompt, so diversity survives into Debate.
+ *    peer content enters a Propose prompt, so diversity survives into Debate
+ *    (`conductor-propose.ts`).
  *  - **Debate** (`≤2` rounds): seats react to peers' prior outputs, but ONLY via the
  *    mediated quoted path; early-stop when positions stabilize (`debate-round.ts`).
+ *  - **Build** (issue #366, P2, safety #5 — DORMANT unless a preset opts in): after the
+ *    debate converges, ONE elected writer executes the plan on an ISOLATED worktree,
+ *    write-capable-but-sandboxed; every other seat stays read-only (`conductor-build.ts`).
+ *    Runs ONLY when the preset declares a `build` stage AND a `buildDriver` is injected.
  *  - **Converge**: run the OBJECTIVE GATE (issue #365, safety #6) when configured — a
  *    deterministic tests/repro/build check whose RED verdict OVERRIDES consensus (a seat
- *    answer can't be adopted without an explicit human override) — then park the final
- *    positions for the human judge (safety #7). No gate ⇒ human-only, as in P1.
+ *    answer can't be adopted without an explicit human override); when a Build ran, the
+ *    gate judges the BUILD OUTPUT (the worktree). Then park the final positions for the
+ *    human judge (safety #7). No gate ⇒ human-only, as in P1.
  *
  * Hard budget/round caps + a kill switch are enforced throughout by a per-run
  * {@link RunGovernor} (safety #4). The whole machine + its safety invariants are
@@ -37,9 +44,10 @@ import type {
 } from '@nightcore/contracts';
 import type { Logger } from '@nightcore/shared';
 
-import { collectBroadcast } from './broadcast-collector.js';
+import type { BuildDriver } from './build-writer.js';
 import type { ConductorBus, DebateBus } from './bus.js';
 import { RunGovernor } from './conductor-budget.js';
+import { runBuild } from './conductor-build.js';
 import {
   type ParkedConverge,
   resolveParkedConverge,
@@ -51,6 +59,7 @@ import {
 } from './conductor-dispatch.js';
 import { observeBus } from './conductor-observer.js';
 import { debatePrompt, proposePrompt } from './conductor-prompts.js';
+import { runProposeStage } from './conductor-propose.js';
 import {
   applyRoutingDirective,
   type RunRoutingRuntime,
@@ -102,6 +111,12 @@ export interface ConductorDeps {
    *  without a new distinct position → route to Converge). A STRICT SHORTENER — only ends a
    *  run sooner, never extends it (safety #4). Default: `DEFAULT_NO_PROGRESS_ROUNDS`. */
   readonly noProgressRounds?: number;
+  /** The SINGLE-writer Build driver (issue #366, safety #5). Injected ONLY by a
+   *  Build-capable preset (#367/#368) alongside a `build` stage; ABSENT in production
+   *  today, so the Build stage is dormant (a council debates plans, it never writes). The
+   *  writer runs write-capable-but-sandboxed on an ISOLATED worktree; the objective gate
+   *  then judges the build output and can reject it. See `conductor-build.ts`. */
+  readonly buildDriver?: BuildDriver;
 }
 
 /** The inputs one council run is configured from. */
@@ -230,7 +245,15 @@ export class Conductor {
     );
 
     // ── Propose (BLIND, parallel): no peer content enters a Propose prompt. ─────
-    const proposeOutputs = await this.propose(input, bus, governor, seats);
+    const proposeOutputs = await runProposeStage({
+      bus,
+      seats,
+      governor,
+      dispatch: stageDispatchConfig(preset, seats, this.deps),
+      buildPrompt: (seat) => proposePrompt(objective, seat),
+      runTurn: (seat, prompt, signal) =>
+        this.runTurn(input, seat, 'propose', prompt, signal),
+    });
     const proposeHalt = this.governorStatus(governor);
     if (proposeHalt !== null) {
       return this.result(councilRunId, proposeHalt.status, governor, proposeHalt.haltedBy);
@@ -260,8 +283,28 @@ export class Conductor {
       return this.result(councilRunId, status, governor, debate.halt.cause);
     }
 
+    // ── Build (SINGLE writer, isolated worktree — issue #366, safety #5). DORMANT
+    // unless the preset declares a `build` stage AND a buildDriver is injected; then
+    // ONE elected writer executes the plan write-capable-but-sandboxed and the
+    // objective gate below judges the BUILD OUTPUT. ─────────────────────────────
+    const buildOutcome = await runBuild({
+      bus,
+      driver: this.deps.buildDriver,
+      preset,
+      run: input,
+      seats,
+      finalOutputs: debate.finalOutputs,
+      governor,
+      logger: this.deps.logger,
+    });
+    const buildHalt = this.governorStatus(governor);
+    if (buildHalt !== null) {
+      return this.result(councilRunId, buildHalt.status, governor, buildHalt.haltedBy);
+    }
+
     // ── Converge: run the OBJECTIVE GATE (safety #6; a red verdict overrides
-    // consensus), then park the positions for the human judge. ──────────────────
+    // consensus) — over the BUILD OUTPUT when a build ran — then park the positions
+    // for the human judge. ─────────────────────────────────────────────────────
     const pending = await runConverge({
       parked: this.parked,
       bus,
@@ -272,55 +315,9 @@ export class Conductor {
       rounds: governor.totals.rounds,
       signal: governor.signal,
       logger: this.deps.logger,
+      ...(buildOutcome !== null ? { buildOutput: buildOutcome } : {}),
     });
     return { ...this.result(councilRunId, 'converged', governor), pendingDecision: pending };
-  }
-
-  /** Propose stage: drive every seat from the objective ALONE (blind) through the
-   *  broadcast collector — bounded concurrency, a per-seat timeout so a hung seat can't
-   *  stall the stage, and a pre-dispatch budget reservation so a parallel Propose can't
-   *  overshoot the caps (#351, LOW-A). Records each responder's proposal onto the bus
-   *  and returns the proposals keyed by seat id (a timed-out seat contributes none). */
-  private async propose(
-    input: CouncilRunInput,
-    bus: ConductorBus,
-    governor: RunGovernor,
-    seats: SeatContext[],
-  ): Promise<Map<string, string>> {
-    const { broadcastId } = bus.broadcast(
-      'propose',
-      'Propose your best answer independently. You cannot see other seats yet.',
-    );
-
-    const broadcast = await collectBroadcast<SeatContext>({
-      broadcastId,
-      seats,
-      governor,
-      ...stageDispatchConfig(input.preset, seats, this.deps),
-      signal: governor.signal,
-      run: (seat, dispatch) =>
-        this.runTurn(
-          input,
-          seat,
-          'propose',
-          proposePrompt(input.objective, seat),
-          dispatch.signal,
-        ),
-    });
-
-    const outputs = new Map<string, string>();
-    for (const outcome of broadcast.responders) {
-      const content = outcome.result?.content ?? '';
-      bus.postSeatMessage({
-        stage: 'propose',
-        seatId: outcome.seat.seatId,
-        role: outcome.seat.role,
-        content,
-        broadcastId,
-      });
-      outputs.set(outcome.seat.seatId, content);
-    }
-    return outputs;
   }
 
   /** Whether a run is parked at Converge, awaiting the human judge's verdict. */
