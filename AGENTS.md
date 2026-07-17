@@ -15,6 +15,7 @@ Read this before editing. These are hard guardrails, enforced by `bun run lint`,
 ## Contracts & codegen — regenerate, never hand-edit
 - `@nightcore/contracts` (zod) is the single source of truth at the sidecar boundary and the dependency-graph leaf (zod only). Add new wire fields to the zod schema FIRST.
 - Both contract boundaries are code-generated: zod→Rust via `tools/codegen/gen-rust-contracts.ts` (`bun run codegen:contracts`), and Rust serde→web TS via ts-rs (`cargo test`). NEVER hand-edit `apps/web/src/lib/generated/**` or `apps/desktop/src-tauri/src/contracts/generated.rs`. Change the schema/struct and regenerate.
+- After any contract change, `bun run codegen:check` verifies ALL generated artifacts are in sync in one command — zod→Rust drift, the TS codegen canaries + cross-boundary conformance, and the Rust→web ts-rs bindings + contract parity/round-trip. (These individual gates also run in `lint`/`test:node`/`check:rust` + CI; this is the local one-shot.)
 - Persisted/wire structs are serde-additive: every new field is `Option` (Rust) / optional (zod) with a `None`/absent default in its own additive block, plus a field-absent pinning test. Never add a breaking required field.
 
 ## Naming
