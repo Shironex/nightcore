@@ -933,6 +933,47 @@ describe('SessionManager fail-closed autonomy invariant', () => {
     expect(events.some((e) => e.type === 'session-started')).toBe(false);
   });
 
+  test('a refused COUNCIL seat echoes the council marker onto session-failed; a board refusal does not (issue #374)', async () => {
+    // A council seat refused at preflight emits ONLY session-failed — no session-started
+    // carried the marker — so the marker must ride the terminal, or the Rust reader would
+    // board-FIFO-correlate it and pop a concurrently-pending board task's slot.
+    const council = new SessionManager(
+      makeConfig(),
+      undefined,
+      new DegradedProvider(),
+    );
+    const councilEvents: NightcoreEvent[] = [];
+    council.on((e) => councilEvents.push(e));
+    await council.dispatch({
+      type: 'start-session',
+      prompt: 'seat',
+      autonomy: 'bypass',
+      council: true,
+    });
+    const councilFailed = councilEvents.find(isFailed);
+    expect(councilFailed).toBeDefined();
+    expect(councilEvents.some((e) => e.type === 'session-started')).toBe(false);
+    if (councilFailed?.type === 'session-failed') {
+      expect(councilFailed.council).toBe(true);
+    }
+
+    // A refused BOARD session (no council flag) does NOT carry the marker — its
+    // session-failed still correlates, to fail its own task.
+    const board = new SessionManager(
+      makeConfig(),
+      undefined,
+      new DegradedProvider(),
+    );
+    const boardEvents: NightcoreEvent[] = [];
+    board.on((e) => boardEvents.push(e));
+    await board.dispatch({ type: 'start-session', prompt: 'x', autonomy: 'bypass' });
+    const boardFailed = boardEvents.find(isFailed);
+    expect(boardFailed).toBeDefined();
+    if (boardFailed?.type === 'session-failed') {
+      expect(boardFailed.council).toBeUndefined();
+    }
+  });
+
   test('STARTS at a non-elevated autonomy on the same degraded provider', async () => {
     const manager = new SessionManager(
       makeConfig(),

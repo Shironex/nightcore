@@ -347,6 +347,15 @@ export const SessionFailedEvent = z.object({
    *  `detail.category` to decide fatal-stop (auth/disk-full) vs. the tolerant
    *  sliding window (rate-limit/runner-crash/unknown). */
   detail: ErrorDetailSchema.optional(),
+  /** Council SEAT marker (issue #374, mirrors {@link SessionStartedEvent.council}). A
+   *  debate seat is driven inside the engine, so it pushed no board pending-launch FIFO
+   *  slot. A PREFLIGHT-REFUSED seat (autonomy/governance) emits ONLY this `session-failed`
+   *  — no prior `session-started` to carry the marker — so the marker is echoed here too,
+   *  letting the Rust reader SKIP board-FIFO correlation for it. Without it, the refused
+   *  seat's terminal would `correlate` and could pop a concurrently-pending BOARD task's
+   *  slot, mis-binding the seat to it. Absent ⇒ a normal board/scan session (whose
+   *  `session-failed` DOES correlate, to fail its own task). */
+  council: z.boolean().optional(),
 });
 
 /** Session status transitioned (for surfaces that render a status line). */
