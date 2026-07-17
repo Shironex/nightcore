@@ -23,6 +23,7 @@ import type {
   TokenUsage,
 } from '@nightcore/contracts';
 
+import type { ObjectiveGateVerdict } from './objective-gate.js';
 import type { CouncilPresetIssue } from './preset-validator.js';
 
 /**
@@ -124,6 +125,14 @@ export interface PendingConvergeDecision {
   readonly successCriterion: string;
   /** Each seat's final position, side-by-side (disagreement is the product). */
   readonly positions: readonly SeatPosition[];
+  /**
+   * The objective gate's verdict, when the run ran one at Converge (issue #365, safety
+   * #6). Absent ⇒ no objective gate (a pure-reasoning task; the human decides alone). A
+   * PRESENT-and-failed verdict OVERRIDES debate consensus: a plain `accept` is refused
+   * unless the human explicitly overrides the gate — the gate is the DEFAULT terminal
+   * judge for objective tasks (see {@link ConvergeDecision.overrideGate}).
+   */
+  readonly gateVerdict?: ObjectiveGateVerdict;
 }
 
 /** Running spend totals for a council run. */
@@ -165,6 +174,15 @@ export interface ConvergeDecision {
   readonly kind: CouncilConvergeDecision;
   readonly seatId?: string;
   readonly note?: string;
+  /**
+   * The human's EXPLICIT override of a failing objective gate (issue #365, safety #6).
+   * When the parked decision's {@link PendingConvergeDecision.gateVerdict} is red, an
+   * `accept` (adopting a seat's debated position) is REFUSED unless this is `true` — the
+   * objective gate outranks the debate by default, and only the human's deliberate
+   * override supersedes it (the human is the ultimate authority, safety #7). Ignored for
+   * `reject`/`judge` (neither adopts the debate's answer) and when the gate passed.
+   */
+  readonly overrideGate?: boolean;
 }
 
 /**

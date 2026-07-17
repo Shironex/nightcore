@@ -12,7 +12,7 @@
  *
  * The state machine (not free chat):
  *
- *   Frame → Propose (blind, parallel) → Debate (≤2 rounds, early-stop) → Converge (HUMAN)
+ *   Frame → Propose (blind, parallel) → Debate (≤2 rounds, early-stop) → Converge (gate → HUMAN)
  *
  *  - **Frame**: reject an invalid preset up front (`validateCouncilPreset`), else seed
  *    the run (a frame note + a broadcast of the objective).
@@ -20,8 +20,10 @@
  *    peer content enters a Propose prompt, so diversity survives into Debate.
  *  - **Debate** (`≤2` rounds): seats react to peers' prior outputs, but ONLY via the
  *    mediated quoted path; early-stop when positions stabilize (`debate-round.ts`).
- *  - **Converge**: HUMAN judge only in P1 — the Conductor parks the seats' final
- *    positions for a human to accept/reject (safety #7). No agent-judge, no vote.
+ *  - **Converge**: run the OBJECTIVE GATE (issue #365, safety #6) when configured — a
+ *    deterministic tests/repro/build check whose RED verdict OVERRIDES consensus (a seat
+ *    answer can't be adopted without an explicit human override) — then park the final
+ *    positions for the human judge (safety #7). No gate ⇒ human-only, as in P1.
  *
  * Hard budget/round caps + a kill switch are enforced throughout by a per-run
  * {@link RunGovernor} (safety #4). The whole machine + its safety invariants are
@@ -38,9 +40,9 @@ import { collectBroadcast } from './broadcast-collector.js';
 import type { ConductorBus, DebateBus } from './bus.js';
 import { RunGovernor } from './conductor-budget.js';
 import {
-  parkConverge,
   type ParkedConverge,
   resolveParkedConverge,
+  runConverge,
 } from './conductor-converge.js';
 import { observeBus } from './conductor-observer.js';
 import { debatePrompt, proposePrompt } from './conductor-prompts.js';
@@ -56,6 +58,7 @@ import type {
   TurnEstimate,
 } from './conductor-types.js';
 import { runDebateRounds } from './debate-round.js';
+import type { ObjectiveGate } from './objective-gate.js';
 import { validateCouncilPreset } from './preset-validator.js';
 
 export interface ConductorDeps {
@@ -81,6 +84,10 @@ export interface ConductorDeps {
    *  the collector's {@link
    *  import('./broadcast-collector.js').DEFAULT_SEAT_TIMEOUT_MS}. */
   readonly seatTimeoutMs?: number;
+  /** The objective gate run at Converge (issue #365, safety #6): a DETERMINISTIC
+   *  tests/repro/build check whose RED verdict OVERRIDES debate consensus. Absent ⇒ a
+   *  pure-reasoning run — the human decides the parked positions alone (P1 behaviour). */
+  readonly objectiveGate?: ObjectiveGate;
 }
 
 /** The inputs one council run is configured from. */
@@ -206,8 +213,20 @@ export class Conductor {
       return this.result(councilRunId, status, governor, debate.halt.cause);
     }
 
-    // ── Converge: HUMAN judge only — park the final positions for a human. ──────
-    return this.converge(input, bus, governor, seats, debate.finalOutputs);
+    // ── Converge: run the OBJECTIVE GATE (safety #6; a red verdict overrides
+    // consensus), then park the positions for the human judge. ──────────────────
+    const pending = await runConverge({
+      parked: this.parked,
+      bus,
+      gate: this.deps.objectiveGate,
+      run: input,
+      seats,
+      finalOutputs: debate.finalOutputs,
+      rounds: governor.totals.rounds,
+      signal: governor.signal,
+      logger: this.deps.logger,
+    });
+    return { ...this.result(councilRunId, 'converged', governor), pendingDecision: pending };
   }
 
   /** Propose stage: drive every seat from the objective ALONE (blind) through the
@@ -255,29 +274,6 @@ export class Conductor {
       outputs.set(outcome.seat.seatId, content);
     }
     return outputs;
-  }
-
-  /** Converge stage (HUMAN): PARK the seats' final positions for the human judge and
-   *  surface the pending decision on the run result. No agent-judge, no vote (P1). The
-   *  parked run is later closed by {@link resolveConverge} when the human rules. */
-  private converge(
-    input: CouncilRunInput,
-    bus: ConductorBus,
-    governor: RunGovernor,
-    seats: SeatContext[],
-    finalOutputs: Map<string, string>,
-  ): CouncilRunResult {
-    const pending = parkConverge({
-      parked: this.parked,
-      bus,
-      councilRunId: input.councilRunId,
-      seats,
-      finalOutputs,
-      successCriterion: input.preset.successCriterion,
-      rounds: governor.totals.rounds,
-    });
-    const base = this.result(input.councilRunId, 'converged', governor);
-    return { ...base, pendingDecision: pending };
   }
 
   /** Whether a run is parked at Converge, awaiting the human judge's verdict. */

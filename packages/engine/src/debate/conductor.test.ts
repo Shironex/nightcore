@@ -14,6 +14,7 @@ import type {
   SeatTurnRequest,
   SeatTurnResult,
 } from './conductor-types.js';
+import type { ObjectiveGate } from './objective-gate.js';
 import { RESEARCH_COUNCIL_PRESET } from './preset-registry.js';
 import { quoteForSeat } from './quoted-delivery.js';
 
@@ -555,5 +556,114 @@ describe('Conductor — resolveConverge closes the parked run (the human gavel, 
     const driver = new FakeSeatDriver(() => ({ content: 'x' }));
     const { conductor } = makeConductor(driver);
     expect(conductor.resolveConverge('nope', { kind: 'reject' }).ok).toBe(false);
+  });
+});
+
+// ── Converge objective gate (issue #365, safety #6 — gates outrank debate) ──────
+
+describe('Conductor — the objective gate is the terminal judge at Converge (safety #6)', () => {
+  /** A deterministic gate that always returns the same verdict, recording every context. */
+  function fixedGate(passed: boolean, summary: string): ObjectiveGate {
+    return { evaluate: () => Promise.resolve({ passed, summary }) };
+  }
+
+  function run(gate: ObjectiveGate, runId: string) {
+    const driver = new FakeSeatDriver((req) => ({ content: `final-${req.seat.seatId}` }));
+    const conductor = new Conductor({
+      bus: new DebateBus(),
+      seatDriver: driver,
+      objectiveGate: gate,
+    });
+    return conductor
+      .run({ councilRunId: runId, preset: preset(), objective: 'o' })
+      .then((result) => ({ conductor, result }));
+  }
+
+  test('a PASSING gate rides the pending decision and lets accept proceed with no override', async () => {
+    const { conductor, result } = await run(fixedGate(true, 'all checks green'), 'run-gate-green');
+
+    expect(result.status).toBe('converged');
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(true);
+    // The gate verdict is recorded on the append-only transcript as a conductor note.
+    expect(
+      result.transcript.some(
+        (e) =>
+          e.stage === 'converge' &&
+          e.role === 'conductor' &&
+          e.content.includes('Objective gate PASSED'),
+      ),
+    ).toBe(true);
+
+    // A green gate greenlights consensus: accept needs no override.
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    expect(conductor.resolveConverge('run-gate-green', { kind: 'accept', seatId: adopted }).ok).toBe(
+      true,
+    );
+  });
+
+  test('a FAILING gate OVERRIDES consensus: a plain accept is refused, the run stays parked', async () => {
+    const { conductor, result } = await run(
+      fixedGate(false, 'repro still red: 2 tests fail'),
+      'run-gate-red',
+    );
+
+    expect(result.status).toBe('converged');
+    expect(result.pendingDecision?.gateVerdict?.passed).toBe(false);
+    // The RED verdict is recorded through the mediated bus (never a direct store write).
+    expect(
+      result.transcript.some(
+        (e) =>
+          e.stage === 'converge' &&
+          e.role === 'conductor' &&
+          e.content.includes('Objective gate FAILED') &&
+          e.content.includes('OVERRIDDEN'),
+      ),
+    ).toBe(true);
+
+    // Adopting a seat's debated answer over a red gate is REFUSED — records nothing, the
+    // run stays parked (the gate outranks the debate).
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    const refused = conductor.resolveConverge('run-gate-red', { kind: 'accept', seatId: adopted });
+    expect(refused.ok).toBe(false);
+    expect(refused.reason).toContain('objective gate is red');
+    expect(conductor.isAwaitingConverge('run-gate-red')).toBe(true);
+  });
+
+  test('the human remains ultimate authority: an explicit override adopts consensus anyway', async () => {
+    const { conductor, result } = await run(fixedGate(false, 'build broken'), 'run-gate-override');
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+
+    const override = conductor.resolveConverge('run-gate-override', {
+      kind: 'accept',
+      seatId: adopted,
+      overrideGate: true,
+    });
+
+    expect(override.ok).toBe(true);
+    // The override is audited on the transcript, never silent.
+    expect(override.entry?.content).toContain('OVERRODE the red objective gate');
+    expect(conductor.isAwaitingConverge('run-gate-override')).toBe(false);
+  });
+
+  test('a red gate does NOT block reject or judge (neither adopts the debate answer)', async () => {
+    const { conductor } = await run(fixedGate(false, 'tests red'), 'run-gate-reject');
+    expect(conductor.resolveConverge('run-gate-reject', { kind: 'reject' }).ok).toBe(true);
+
+    const { conductor: c2 } = await run(fixedGate(false, 'tests red'), 'run-gate-judge');
+    expect(
+      c2.resolveConverge('run-gate-judge', { kind: 'judge', note: 'ship a smaller fix' }).ok,
+    ).toBe(true);
+  });
+
+  test('with NO gate wired the run is human-only (the P1 behaviour is unchanged)', async () => {
+    const driver = new FakeSeatDriver((req) => ({ content: `final-${req.seat.seatId}` }));
+    const { conductor } = makeConductor(driver);
+    const result = await conductor.run({ councilRunId: 'run-no-gate', preset: preset(), objective: 'o' });
+
+    expect(result.pendingDecision?.gateVerdict).toBeUndefined();
+    const adopted = result.pendingDecision!.positions[0]!.seatId;
+    expect(conductor.resolveConverge('run-no-gate', { kind: 'accept', seatId: adopted }).ok).toBe(
+      true,
+    );
   });
 });
