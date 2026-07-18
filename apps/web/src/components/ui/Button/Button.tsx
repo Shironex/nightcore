@@ -2,6 +2,7 @@
 import type { ButtonHTMLAttributes, ReactNode } from 'react';
 
 import { m } from '../motion';
+import { Spinner } from '../Spinner';
 
 /** Visual style of a {@link Button}. */
 type ButtonVariant = 'primary' | 'secondary' | 'ghost' | 'danger';
@@ -16,6 +17,9 @@ interface ButtonProps
   > {
   children: ReactNode;
   variant?: ButtonVariant;
+  /** In-flight state: disables the button, sets `aria-busy`, and renders a
+   *  leading spinner. Composes with `disabled` (either one inerts the button). */
+  busy?: boolean;
 }
 
 const VARIANTS: Record<ButtonVariant, string> = {
@@ -32,23 +36,27 @@ const VARIANTS: Record<ButtonVariant, string> = {
 export function Button({
   children,
   variant = 'primary',
+  busy = false,
   className,
   type = 'button',
   disabled,
   ...rest
 }: ButtonProps) {
+  const inert = disabled === true || busy;
   return (
     <m.button
       type={type}
-      disabled={disabled}
+      disabled={inert}
+      aria-busy={busy || undefined}
       // Motion owns the press/hover transform (so `transform` is dropped from the
       // CSS `transition-[…]` list to avoid a double-animation); gestures are gated
-      // off while disabled so an inert button never lifts or scales.
-      whileHover={disabled === true ? undefined : { y: -1 }}
-      whileTap={disabled === true ? undefined : { scale: 0.97 }}
+      // off while inert so a disabled/busy button never lifts or scales.
+      whileHover={inert ? undefined : { y: -1 }}
+      whileTap={inert ? undefined : { scale: 0.97 }}
       className={`inline-flex shrink-0 items-center justify-center gap-1.5 whitespace-nowrap rounded-[9px] px-4 py-1.5 text-sm font-semibold transition-[filter,background,border-color] disabled:cursor-not-allowed disabled:opacity-40 ${VARIANTS[variant]} ${className ?? ''}`}
       {...rest}
     >
+      {busy && <Spinner size={14} />}
       {children}
     </m.button>
   );

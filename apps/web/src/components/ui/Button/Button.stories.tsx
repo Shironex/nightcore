@@ -25,6 +25,8 @@ export const Danger: Story = { args: { variant: 'danger', children: 'Delete' } }
 
 export const Disabled: Story = { args: { disabled: true } };
 
+export const Busy: Story = { args: { busy: true, children: 'Saving…' } };
+
 /** Play test: clicking the button invokes onClick. */
 export const FiresOnClick: Story = {
   play: async ({ args, canvasElement }) => {

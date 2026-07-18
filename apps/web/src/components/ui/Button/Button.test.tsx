@@ -5,7 +5,7 @@ import { render } from 'vitest-browser-react';
 import { MotionProvider } from '../motion';
 import * as stories from './Button.stories';
 
-const { Primary, FiresOnClick } = composeStories(stories);
+const { Primary, FiresOnClick, Busy } = composeStories(stories);
 
 test('renders button label', async () => {
   const screen = render(
@@ -25,4 +25,15 @@ test('click invokes onClick', async () => {
   );
   await screen.getByRole('button', { name: 'Save' }).click();
   expect(onClick).toHaveBeenCalled();
+});
+
+test('busy disables the button and marks it aria-busy', async () => {
+  const screen = render(
+    <MotionProvider>
+      <Busy />
+    </MotionProvider>,
+  );
+  const button = screen.getByRole('button', { name: 'Saving…' });
+  await expect.element(button).toBeDisabled();
+  await expect.element(button).toHaveAttribute('aria-busy', 'true');
 });
