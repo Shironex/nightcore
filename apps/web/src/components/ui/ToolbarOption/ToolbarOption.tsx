@@ -56,8 +56,7 @@ export function ToolbarOption({
         <div
           role="group"
           aria-label={resolvedSettingsLabel}
-          className="absolute right-0 top-full z-20 mt-1.5 w-72 rounded-nc border border-border bg-popover p-3 shadow-2xl"
-          style={{ animation: 'nc-rise .14s cubic-bezier(.22,1,.36,1)' }}
+          className="nc-popover-rise absolute right-0 top-full z-20 mt-1.5 w-72 rounded-nc border border-border bg-popover p-3 shadow-2xl"
         >
           {settings}
         </div>

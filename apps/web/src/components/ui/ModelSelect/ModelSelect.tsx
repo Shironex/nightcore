@@ -78,8 +78,7 @@ export function ModelSelect({
                 role="listbox"
                 id={v.listboxId}
                 aria-label={label}
-                className="absolute top-full z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-nc border border-border bg-popover p-1 shadow-2xl"
-                style={{ animation: 'nc-rise .14s cubic-bezier(.22,1,.36,1)' }}
+                className="nc-popover-rise absolute top-full z-20 mt-1 max-h-72 w-full overflow-y-auto rounded-nc border border-border bg-popover p-1 shadow-2xl"
               >
                 <ModelOptionRow
                   row={v.inheritRow}
