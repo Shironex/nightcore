@@ -76,7 +76,10 @@ export const AddsAnHttpServer: Story = {
     await userEvent.type(modal.getByLabelText('Server name'), 'linear');
     await userEvent.click(modal.getByRole('radio', { name: 'HTTP' }));
     await userEvent.type(modal.getByLabelText('URL'), 'https://mcp.linear.app/sse');
-    await userEvent.click(modal.getByRole('button', { name: 'Add server' }));
+    // Scope to the dialog: the opener button in the card now shares the exact
+    // "Add server" name with the editor's confirm.
+    const dialog = within(modal.getByRole('dialog'));
+    await userEvent.click(dialog.getByRole('button', { name: 'Add server' }));
     await expect(args.onChange).toHaveBeenCalledTimes(1);
     const call = (args.onChange as ReturnType<typeof fn>).mock.calls[0];
     const next = (call?.[0] ?? []) as McpServerEntry[];
