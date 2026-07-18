@@ -1,6 +1,8 @@
 /** Presentational sub-parts for ModelSelect: the grouped option rows, the
  *  provider group headings, the inline effort radiogroup, and the loading/error
  *  catalog states. No state — every value arrives via props. */
+import { rovingKeydown } from '@/lib/roving-keydown';
+
 import { BrainIcon, CheckIcon, RefreshIcon } from '../icons';
 import type { KnownProviderId } from '../ProviderIcon';
 import { ProviderIcon } from '../ProviderIcon';
@@ -135,7 +137,9 @@ function EffortChip({
       aria-label={label}
       title={title}
       disabled={disabled}
+      tabIndex={selected ? 0 : -1}
       onClick={onClick}
+      onKeyDown={rovingKeydown}
       className={effortChipClass(selected)}
     >
       {label}

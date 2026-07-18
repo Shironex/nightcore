@@ -1,6 +1,7 @@
 /** The Standard/Deep 2-chip radio shared by the scan families' CONFIGURE screens
  *  (issue #294). One presentational toggle so Insight/Harness/PR-Review render the
  *  deep-mode opt-in identically; the hint reads in each family's unit noun. */
+import { rovingKeydown } from '@/lib/roving-keydown';
 import { deepModeMeta } from '@/lib/scan-run';
 
 import { chipClass } from './LensChipGrid';
@@ -30,7 +31,9 @@ export function ScanModeToggle({ deep, onToggle, unitNoun }: ScanModeToggleProps
             role="radio"
             aria-checked={deep === (m === 'deep')}
             title={meta[m].hint}
+            tabIndex={deep === (m === 'deep') ? 0 : -1}
             onClick={() => onToggle(m === 'deep')}
+            onKeyDown={rovingKeydown}
             className={chipClass(deep === (m === 'deep'))}
           >
             {meta[m].label}
