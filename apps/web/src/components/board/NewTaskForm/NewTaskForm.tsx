@@ -271,7 +271,11 @@ export function NewTaskForm({ open, planGateDefault, onCreate, onClose }: NewTas
         </div>
         <div className="flex items-center justify-end gap-2 border-t border-border bg-black/15 px-5 py-3.5">
           {error !== null ? (
-            <span role="alert" className="mr-auto min-w-0 truncate text-xs text-destructive">
+            <span
+              role="alert"
+              title={error}
+              className="mr-auto min-w-0 truncate text-xs text-destructive"
+            >
               {error}
             </span>
           ) : (

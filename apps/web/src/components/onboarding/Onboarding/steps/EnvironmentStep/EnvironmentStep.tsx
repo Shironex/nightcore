@@ -105,7 +105,10 @@ function EnvironmentRow({
             )}
           </div>
         </div>
-        <span className={`max-w-[460px] truncate font-mono text-xs-plus2 ${detailClass}`}>
+        <span
+          title={row.detail}
+          className={`max-w-[460px] truncate font-mono text-xs-plus2 ${detailClass}`}
+        >
           {checking ? 'checking...' : row.detail}
         </span>
       </div>

@@ -68,7 +68,10 @@ function IssueRow({
     >
       <div className="flex items-baseline gap-2">
         <span className="font-mono text-2xs text-muted-foreground">#{issue.number}</span>
-        <span className="min-w-0 flex-1 truncate text-xs-plus2 font-medium text-foreground">
+        <span
+          className="min-w-0 flex-1 truncate text-xs-plus2 font-medium text-foreground"
+          title={issue.title}
+        >
           {issue.title}
         </span>
         {badge !== undefined && <ValidationChip badge={badge} />}

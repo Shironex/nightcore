@@ -25,6 +25,18 @@ export function containerClass(status: string, running: boolean, selected: boole
   return `${base} shadow-[0_8px_22px_-14px_oklch(0%_0_0_/_.9)]`;
 }
 
+/** The branch / main-mode meta chip: monospace, muted, and truncating so a long
+ *  branch name or context ellipsizes instead of overflowing the card. */
+export const META_CHIP =
+  'flex min-w-0 max-w-full items-center gap-1 rounded-md bg-white/[0.03] px-1.5 py-0.5 font-mono text-4xs-plus text-muted-foreground';
+
+/** Base for the small status chips (reviewing / needs-approval / conflict /
+ *  blocked / error); each appends its own tone fill + text class. */
+export const STATUS_CHIP = 'flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-4xs-plus';
+
+/** The header elapsed-timer chip (running vs verifying differ only by tone). */
+export const TIMER_CHIP = 'flex items-center gap-1 font-mono text-3xs-plus font-semibold tabular-nums';
+
 export const ACTION_BASE =
   'inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-[filter,background] disabled:cursor-not-allowed';
 export const ACTION_PRIMARY = 'flex-1 bg-primary text-primary-foreground hover:brightness-110';

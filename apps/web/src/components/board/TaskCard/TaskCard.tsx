@@ -33,6 +33,9 @@ import {
   ACTION_PRIMARY,
   CARD_BASE,
   containerClass,
+  META_CHIP,
+  STATUS_CHIP,
+  TIMER_CHIP,
 } from './TaskCard.appearance';
 import { useElapsed, useTaskCardView, useTaskDraggable } from './TaskCard.hooks';
 import type { TaskCardProps } from './TaskCard.types';
@@ -121,14 +124,8 @@ function TaskCardImpl({
             {badge.label}
           </span>
           <span className="ml-auto flex items-center gap-2">
-            {running && (
-              <span className="flex items-center gap-1 font-mono text-3xs-plus font-semibold tabular-nums text-warning">
-                <ClockIcon size={12} />
-                {elapsed}
-              </span>
-            )}
-            {verifying && (
-              <span className="flex items-center gap-1 font-mono text-3xs-plus font-semibold tabular-nums text-primary">
+            {(running || verifying) && (
+              <span className={`${TIMER_CHIP} ${running ? 'text-warning' : 'text-primary'}`}>
                 <ClockIcon size={12} />
                 {elapsed}
               </span>
@@ -150,7 +147,10 @@ function TaskCardImpl({
           </span>
         </div>
 
-        <div className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight text-foreground">
+        <div
+          className="line-clamp-2 text-sm font-semibold leading-snug tracking-tight text-foreground"
+          title={task.title || 'Untitled task'}
+        >
           {task.title || 'Untitled task'}
         </div>
         {task.description.trim().length > 0 && (
@@ -168,51 +168,51 @@ function TaskCardImpl({
           task.status === 'failed') && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {showBranch && (
-              <span className="flex min-w-0 max-w-full items-center gap-1 truncate rounded-md bg-white/[0.03] px-1.5 py-0.5 font-mono text-4xs-plus text-muted-foreground">
+              <span className={META_CHIP} title={branch ?? undefined}>
                 <BranchIcon size={11} />
-                {branch}
+                <span className="min-w-0 truncate">{branch}</span>
               </span>
             )}
             {showMainChip && (
-              <span
-                className="flex min-w-0 max-w-full items-center gap-1 truncate rounded-md bg-white/[0.03] px-1.5 py-0.5 font-mono text-4xs-plus text-muted-foreground"
-                title="Runs on the project directory — no worktree"
-              >
+              <span className={META_CHIP} title="Runs on the project directory — no worktree">
                 <BoardIcon size={11} />
-                main
+                <span className="min-w-0 truncate">main</span>
               </span>
             )}
             {verifying && (
-              <span className="flex items-center gap-1 rounded-md bg-primary/[0.14] px-1.5 py-0.5 font-mono text-4xs-plus text-primary">
+              <span className={`${STATUS_CHIP} bg-primary/[0.14] text-primary`}>
                 <SparkIcon size={11} />
                 reviewing
               </span>
             )}
             {needsApproval && (
-              <span className="flex items-center gap-1 rounded-md bg-warning/[0.14] px-1.5 py-0.5 font-mono text-4xs-plus text-warning">
+              <span className={`${STATUS_CHIP} bg-warning/[0.14] text-warning`}>
                 <AlertIcon size={11} />
                 needs approval
               </span>
             )}
             {task.conflict && (
-              <span className="flex items-center gap-1 rounded-md bg-destructive/[0.12] px-1.5 py-0.5 font-mono text-4xs-plus text-destructive">
+              <span className={`${STATUS_CHIP} bg-destructive/[0.12] text-destructive`}>
                 <AlertIcon size={11} />
                 merge conflict
               </span>
             )}
             {blocked && (
               <span
-                className="flex max-w-full items-center gap-1 truncate rounded-md bg-warning/[0.12] px-1.5 py-0.5 font-mono text-4xs-plus text-warning"
+                className={`${STATUS_CHIP} max-w-full bg-warning/[0.12] text-warning`}
                 title={depChip.tooltip}
               >
                 <LockIcon size={11} />
-                {depChip.label}
+                <span className="min-w-0 truncate">{depChip.label}</span>
               </span>
             )}
             {task.status === 'failed' && task.error !== null && (
-              <span className="flex max-w-full items-center gap-1 truncate rounded-md bg-destructive/[0.12] px-1.5 py-0.5 font-mono text-4xs-plus text-destructive">
+              <span
+                className={`${STATUS_CHIP} max-w-full bg-destructive/[0.12] text-destructive`}
+                title={task.error}
+              >
                 <AlertIcon size={11} />
-                {task.error}
+                <span className="min-w-0 truncate">{task.error}</span>
               </span>
             )}
           </div>

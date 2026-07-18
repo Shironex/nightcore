@@ -46,7 +46,9 @@ function HistoryRow({
       className="flex w-full items-center gap-3 px-4 py-3 text-left transition-colors hover:bg-white/[0.03]"
     >
       <Badge>{FAMILY_LABEL[run.family]}</Badge>
-      <span className="min-w-0 flex-1 truncate text-xs-plus2 text-foreground">{run.title}</span>
+      <span className="min-w-0 flex-1 truncate text-xs-plus2 text-foreground" title={run.title}>
+        {run.title}
+      </span>
       <span
         className="shrink-0 tabular-nums font-mono text-2xs text-muted-foreground/80"
         title={run.model.length > 0 ? `Model: ${run.model}` : undefined}

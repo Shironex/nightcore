@@ -64,12 +64,18 @@ function ProposalCard({
           </span>
         )}
         {proposal.verifyCommand !== null && (
-          <span className="rounded-md border border-border bg-white/[0.03] px-1.5 py-0.5 font-mono">
+          <span
+            className="max-w-full truncate rounded-md border border-border bg-white/[0.03] px-1.5 py-0.5 font-mono"
+            title={proposal.verifyCommand}
+          >
             verify: {proposal.verifyCommand}
           </span>
         )}
         {proposal.harnessCheck !== null && (
-          <span className="rounded-md border border-border bg-white/[0.03] px-1.5 py-0.5 font-mono">
+          <span
+            className="max-w-full truncate rounded-md border border-border bg-white/[0.03] px-1.5 py-0.5 font-mono"
+            title={proposal.harnessCheck.command}
+          >
             arms: {proposal.harnessCheck.command}
           </span>
         )}

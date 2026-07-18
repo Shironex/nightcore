@@ -23,7 +23,9 @@ function Row({ label, value }: { label: string; value: string }) {
       <span className="font-mono text-3xs-plus uppercase tracking-[0.1em] text-muted-foreground">
         {label}
       </span>
-      <span className="min-w-0 truncate text-foreground">{value}</span>
+      <span className="min-w-0 truncate text-foreground" title={value}>
+        {value}
+      </span>
     </div>
   );
 }

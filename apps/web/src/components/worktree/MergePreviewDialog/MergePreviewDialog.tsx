@@ -9,6 +9,7 @@ import {
   Spinner,
   useLastPresent,
 } from '@/components/ui';
+import { splitPathLeaf } from '@/lib/path-display';
 
 import {
   isBehindBase,
@@ -121,11 +122,19 @@ export function MergePreviewDialog({
             {shownPreview.status === 'conflicts' && (
               <div className="flex flex-col gap-1.5">
                 <ul className="flex flex-col gap-0.5 rounded-nc border border-destructive/30 bg-destructive/[0.08] px-3 py-2">
-                  {shownPreview.conflictFiles.map((path) => (
-                    <li key={path} className="truncate font-mono text-xs-flat text-destructive">
-                      {path}
-                    </li>
-                  ))}
+                  {shownPreview.conflictFiles.map((path) => {
+                    const { dir, leaf } = splitPathLeaf(path);
+                    return (
+                      <li
+                        key={path}
+                        title={path}
+                        className="flex font-mono text-xs-flat text-destructive"
+                      >
+                        {dir.length > 0 && <span className="truncate opacity-70">{dir}</span>}
+                        <span className="shrink-0">{leaf}</span>
+                      </li>
+                    );
+                  })}
                 </ul>
                 <p className="text-xs-flat leading-snug text-muted-foreground">
                   Resolve these files in the worktree, commit, then merge again.
