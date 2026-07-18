@@ -9,6 +9,7 @@ import {
   Spinner,
   useLastPresent,
 } from '@/components/ui';
+import { pluralize } from '@/lib/formatters';
 import { splitPathLeaf } from '@/lib/path-display';
 
 import {
@@ -99,7 +100,7 @@ export function MergePreviewDialog({
             </div>
 
             <p className="text-xs-flat text-muted-foreground">
-              {shownPreview.files.length} files,{' '}
+              {pluralize(shownPreview.files.length, 'file')},{' '}
               <span className="text-success">+{shownPreview.additions}</span>{' '}
               <span className="text-destructive">−{shownPreview.deletions}</span>,{' '}
               {shownPreview.ahead} ahead / {shownPreview.behind} behind
@@ -115,7 +116,8 @@ export function MergePreviewDialog({
             {terminalSessions > 0 && (
               <p className="flex items-center gap-1.5 text-xs-flat font-medium text-warning">
                 <AlertIcon size={13} className="shrink-0" />
-                {terminalSessions} terminal session(s) open in this worktree will be closed.
+                {pluralize(terminalSessions, 'terminal session')} open in this worktree will be
+                closed.
               </p>
             )}
 

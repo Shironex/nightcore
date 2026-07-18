@@ -14,6 +14,7 @@ import {
   Toolbar,
   ToolbarOption,
 } from '@/components/ui';
+import { pluralize } from '@/lib/formatters';
 import { useWorktreesContext } from '@/lib/worktrees-context';
 
 import { AutoModeOptions } from '../AutoModeOptions';
@@ -71,7 +72,7 @@ export function BoardHeader({
             <div className="flex items-center gap-2.5">
               <h1 className="text-[21px] font-semibold tracking-tight">Kanban Board</h1>
               <span className="rounded-md border border-border bg-white/[0.04] px-2 py-0.5 font-mono text-2xs text-muted-foreground">
-                {taskCount} tasks
+                {pluralize(taskCount, 'task')}
               </span>
             </div>
             <div className="mt-1.5 flex items-center gap-2 font-mono text-2xs-plus text-muted-foreground">

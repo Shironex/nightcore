@@ -78,14 +78,14 @@ test('fires onClose from the close affordance', async () => {
 test('warns when live terminal sessions are open in the worktree', async () => {
   const screen = render(<WithTerminalSessions />);
   await expect
-    .element(screen.getByText(/3 terminal session\(s\) open in this worktree will be closed\./i))
+    .element(screen.getByText(/3 terminal sessions open in this worktree will be closed\./i))
     .toBeInTheDocument();
 });
 
 test('shows no terminal-session notice when none are open', async () => {
   const screen = render(<Ready />);
   await expect
-    .element(screen.getByText(/terminal session\(s\) open/i))
+    .element(screen.getByText(/terminal sessions? open/i))
     .not.toBeInTheDocument();
 });
 

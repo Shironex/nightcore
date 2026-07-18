@@ -14,6 +14,7 @@ import {
   RetryIcon,
   TrashIcon,
 } from '@/components/ui';
+import { pluralize } from '@/lib/formatters';
 
 import { PROPOSAL_KIND_META } from '../harness.constants';
 import type { HarnessProposalVM } from '../harness.types';
@@ -148,7 +149,7 @@ export function ProposalDetailPanel({
             )}
 
             {shown.artifactIds.length > 0 && (
-              <DetailSection title={`Bundles ${shown.artifactIds.length} artifact(s)`}>
+              <DetailSection title={`Bundles ${pluralize(shown.artifactIds.length, 'artifact')}`}>
                 <p className="text-xs-flat text-muted-foreground">
                   <span className="font-semibold text-foreground">Apply bundle</span>{' '}
                   writes all {shown.artifactIds.length}{' '}

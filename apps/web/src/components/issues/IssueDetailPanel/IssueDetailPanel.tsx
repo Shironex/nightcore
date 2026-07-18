@@ -9,7 +9,7 @@ import {
   Markdown,
   Skeleton,
 } from '@/components/ui';
-import { formatRelativeTime } from '@/lib/formatters';
+import { formatRelativeTimeAgo } from '@/lib/formatters';
 
 import type { IssueDetailPanelProps } from './IssueDetailPanel.types';
 
@@ -30,7 +30,7 @@ export function IssueDetailPanel({ issue, detail, loading, error }: IssueDetailP
     );
   }
 
-  const age = formatRelativeTime(issue.updatedAt);
+  const age = formatRelativeTimeAgo(issue.updatedAt);
 
   return (
     <div className="flex flex-col gap-4 px-5 py-4">
@@ -50,7 +50,7 @@ export function IssueDetailPanel({ issue, detail, loading, error }: IssueDetailP
           {age !== '' && (
             <>
               <span aria-hidden>·</span>
-              <span>updated {age} ago</span>
+              <span>updated {age}</span>
             </>
           )}
           <span aria-hidden>·</span>
@@ -128,10 +128,10 @@ export function IssueDetailPanel({ issue, detail, loading, error }: IssueDetailP
               >
                 <div className="mb-1.5 flex items-center gap-2 font-mono text-3xs-plus text-muted-foreground">
                   <span className="text-foreground/80">{comment.author}</span>
-                  {formatRelativeTime(comment.createdAt) !== '' && (
+                  {formatRelativeTimeAgo(comment.createdAt) !== '' && (
                     <>
                       <span aria-hidden>·</span>
-                      <span>{formatRelativeTime(comment.createdAt)} ago</span>
+                      <span>{formatRelativeTimeAgo(comment.createdAt)}</span>
                     </>
                   )}
                 </div>
