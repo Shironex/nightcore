@@ -154,4 +154,6 @@ export { Toolbar } from './Toolbar';
 export type { ToolbarProps } from './Toolbar/Toolbar.types';
 export type { ToolbarOptionProps } from './ToolbarOption';
 export { ToolbarOption } from './ToolbarOption';
+export type { TooltipProps } from './Tooltip';
+export { Tooltip } from './Tooltip';
 export { UsageLimitBanner } from './UsageLimitBanner';
