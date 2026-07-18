@@ -33,6 +33,7 @@ import {
   ACTION_PRIMARY,
   CARD_BASE,
   containerClass,
+  LOGS_COUNT,
   META_CHIP,
   STATUS_CHIP,
   TIMER_CHIP,
@@ -264,7 +265,7 @@ function TaskCardImpl({
             >
               <LogsIcon size={13} />
               Logs
-              <span className="rounded bg-black/20 px-1.5 font-mono text-3xs">{logCount}</span>
+              <span className={LOGS_COUNT}>{logCount}</span>
             </button>
             <button
               type="button"

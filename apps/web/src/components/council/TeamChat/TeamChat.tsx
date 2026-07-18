@@ -30,7 +30,7 @@ export function TeamChat({ chat }: TeamChatProps) {
       <header className="flex items-center gap-2 border-b border-border px-4 py-2.5">
         <LogsIcon size={14} className="text-primary" aria-hidden />
         <h2 className="text-sm-flat font-semibold text-foreground">Team chat</h2>
-        <span className="ml-auto text-2xs text-muted-foreground">
+        <span className="ml-auto text-2xs tabular-nums text-muted-foreground">
           {chat.length} {chat.length === 1 ? 'entry' : 'entries'}
         </span>
       </header>

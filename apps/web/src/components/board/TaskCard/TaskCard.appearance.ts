@@ -37,6 +37,9 @@ export const STATUS_CHIP = 'flex items-center gap-1 rounded-md px-1.5 py-0.5 fon
 /** The header elapsed-timer chip (running vs verifying differ only by tone). */
 export const TIMER_CHIP = 'flex items-center gap-1 font-mono text-3xs-plus font-semibold tabular-nums';
 
+/** The Logs-button running tally (tabular so the count doesn't jitter as it grows). */
+export const LOGS_COUNT = 'rounded bg-black/20 px-1.5 font-mono text-3xs tabular-nums';
+
 export const ACTION_BASE =
   'inline-flex items-center justify-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-semibold transition-[filter,background] disabled:cursor-not-allowed';
 export const ACTION_PRIMARY = 'flex-1 bg-primary text-primary-foreground hover:brightness-110';

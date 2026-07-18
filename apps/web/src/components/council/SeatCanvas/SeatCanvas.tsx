@@ -113,7 +113,7 @@ export function SeatCanvas({ seats, phase, routing }: SeatCanvasProps) {
               <footer className="flex items-center gap-2 border-t border-border px-3 py-1.5 text-2xs text-muted-foreground">
                 <span className="capitalize">{seat.latestStage}</span>
                 <span aria-hidden>·</span>
-                <span>
+                <span className="tabular-nums">
                   {seat.messages.length} turn{seat.messages.length === 1 ? '' : 's'}
                 </span>
               </footer>
