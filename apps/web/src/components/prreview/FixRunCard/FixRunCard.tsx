@@ -33,6 +33,7 @@ export function FixRunCard({
   onRequestPush,
   onReReview,
   onDismiss,
+  onTryAgain,
 }: FixRunCardProps) {
   if (fix.status === 'running') {
     return (
@@ -146,14 +147,24 @@ export function FixRunCard({
             ? `Fix failed: ${fix.error}`
             : 'Fix failed.'}
         </span>
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label="Dismiss fix status"
-          className="ml-auto shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
-        >
-          <CloseIcon size={14} />
-        </button>
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {/* Retry re-arms the address gate (the ConfirmDialog reopens) so a
+              failed fix can be re-run on the current selection. */}
+          {onTryAgain !== undefined && (
+            <Button variant="secondary" onClick={onTryAgain}>
+              <RetryIcon size={13} />
+              Try again
+            </Button>
+          )}
+          <button
+            type="button"
+            onClick={onDismiss}
+            aria-label="Dismiss fix status"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-white/[0.06] hover:text-foreground"
+          >
+            <CloseIcon size={14} />
+          </button>
+        </div>
       </div>
     );
   }
