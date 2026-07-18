@@ -12,7 +12,15 @@ export function Menu({ trigger, label, items, align = 'right' }: MenuProps) {
   const { open, rootRef, itemRefs, select, onItemKeyDown, toggleOpen } = useMenu(items);
 
   const triggerNode = isValidElement(trigger)
-    ? cloneElement(trigger, { onClick: toggleOpen })
+    ? cloneElement(trigger, {
+        'aria-haspopup': 'menu',
+        'aria-expanded': open,
+        // Compose, don't clobber: fire the trigger's own onClick before toggling.
+        onClick: () => {
+          trigger.props.onClick?.();
+          toggleOpen();
+        },
+      })
     : trigger;
 
   return (
