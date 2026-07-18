@@ -27,7 +27,13 @@ export function Checkbox({ checked, onChange, label, disabled = false }: Checkbo
             : 'border-border bg-white/[0.02]'
         }`}
       >
-        {checked && <CheckIcon size={12} />}
+        {/* Kept mounted and scaled in/out so the check springs on toggle (CSS-only). */}
+        <CheckIcon
+          size={12}
+          className={`transition-[transform,opacity] duration-[var(--nc-motion-instant)] ${
+            checked ? 'scale-100 opacity-100' : 'scale-0 opacity-0'
+          }`}
+        />
       </span>
       <span>{label}</span>
     </label>
