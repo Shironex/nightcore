@@ -45,7 +45,7 @@ export function KindPicker({ value, onChange, compact = false, disabled = false 
               </span>
               <span className="text-xs-plus2 font-semibold text-foreground">{option.label}</span>
               {!option.enabled && (
-                <span className="ml-auto rounded bg-white/[0.06] px-1 py-px font-mono text-[8px] uppercase tracking-[0.04em] text-muted-foreground">
+                <span className="ml-auto rounded bg-white/[0.06] px-1 py-px font-mono text-4xs uppercase tracking-[0.04em] text-muted-foreground">
                   soon
                 </span>
               )}

@@ -57,7 +57,7 @@ export function ActivityLog({ sessions, isRunning }: ActivityLogProps) {
         <p className="text-sm text-muted-foreground">
           {isRunning
             ? 'Waiting for first token…'
-            : 'No activity yet — run this task to stream its transcript.'}
+            : 'No activity yet. Run this task to stream its transcript.'}
         </p>
       ) : sessions.length === 1 ? (
         // A single session needs no collapsible chrome — render it inline.
